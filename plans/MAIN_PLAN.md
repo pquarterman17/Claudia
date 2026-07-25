@@ -10,6 +10,10 @@ does not).
 **Created:** 2026-07-25
 **Updated:** 2026-07-25
 
+All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
+genuinely new work or was deliberately deferred for a decision. 141 tests, clean typecheck.
+Everything so far was built and verified on Windows only — see #13.
+
 ---
 
 ## Context
@@ -64,34 +68,32 @@ desktop and a MacBook at different times, so the app must run natively on both �
 
 ## Tier 1 — High Impact
 
-2. **Session lifecycle** — resume from `claudeSessionId`, per-session model picker, interrupt
-   button in the UI (server + protocol already support interrupt/stop)
-3. **Feed view fidelity** — map tool_use/tool_result to the prototype's step feed (icon, title, meta, duration); raw message log as fallback view
+2. **Session resume** — reattach to a previous session via `claudeSessionId` (the SDK supports
+   `resume` / `forkSession`; nothing in the UI exposes it yet). Also a per-session model picker.
+13. **Verify on macOS** — everything below was built and checked on Windows only. The per-OS
+    paths are unit-tested (`pmset`, `osascript`, POSIX separators) but never executed there:
+    the folder picker's `osascript choose folder`, the notify and sleep commands, and the ⌘
+    modifier all need one real pass on the MacBook.
 
 ## Tier 2 — Medium Impact
 
-4. **Controller tile follow-ups** — per-session interrupt/stop buttons, and a "require approvals
-   everywhere" banner when any session is running with `bypassPermissions`
-5. **Usage panel** — spend, burn rate, per-project rows, remaining-vs-plan bars
-   - [ ] Runtime tier picker (Pro / Max 5x / Max 20x / custom) — owner switches tiers often,
-         so this must be a setting, never a rebuild
-   - [ ] Optional: let the user enter real ceilings once they've calibrated them by observing
-         when they actually get limited (the tier buttons currently apply unverified estimates)
-6. **Persistence** — SQLite (better-sqlite3): sessions, history, usage rollups, settings
-7. **Trigger engine follow-ups** — implement "commit + push all" (currently disabled in the UI
-   rather than firing as a silent no-op; needs per-repo rules before it pushes unreviewed work),
-   and make the countdown length configurable
-8. **Hooks monitor tier** — global hook POSTs to server so plain-terminal sessions appear as read-only tiles
+7. **"Commit + push all" finish action** — deliberately disabled in the UI rather than shipped
+   as a silent no-op. Needs per-repo rules before it pushes unreviewed work: which repos are
+   eligible, what to do with a dirty tree, whether to open a PR instead of pushing.
+8. **Hooks monitor tier** — global hook POSTs to server so plain-terminal sessions appear as
+   read-only tiles. The only way to see sessions Claudia did not launch. Requires editing the
+   owner's global `~/.claude/settings.json`, so ask before touching it.
+14. **Usage: real ceilings** — let the user enter ceilings they have actually calibrated by
+    noticing when they get limited. The tier buttons currently apply unverified estimates; the
+    default (compare against your own history) needs no numbers at all.
 
 ## Tier 3 — Nice-to-Have
 
-9. **Palette + shortcuts** — Ctrl/⌘K, Ctrl+1..6 jump, Ctrl+⏎ approve
-10. **Cross-platform correctness** — runs natively on Windows and macOS (not federated between
-    them). Path display normalised but native for exec, per-OS shell, notifications, and the
-    finish-action command table (`pmset` vs `rundll32`, `shutdown -h` vs `shutdown /s`).
-    Verify on both machines rather than treating it as one milestone.
+9. **Command palette** — `Ctrl/⌘K`. The jump/approve/usage chords already exist.
 11. **Tauri wrap** — native window/tray/notifications around the web UI
 12. **Diff peek + per-project auto-approve rules**
+15. **Feed detail view** — click a step to see the full tool input and result, rather than the
+    one-line summary. Raw message log as a fallback view.
 
 ## Completed
 
@@ -174,6 +176,30 @@ to estimates — is the only "closer to true" option; worth a look if the bars f
   a day or two, so it is not usable for spend — it was not used. And JSONL `output_tokens` are
   **real** (median 418 on a live session, no placeholders); only the SDK's streaming assistant
   messages carry the placeholder.
+
+- ~~**#3 Feed fidelity**~~ (2026-07-25) — tool steps start `running` and are patched with a
+  duration and OK/ERR when their result lands. Matching is by `tool_use_id`, not order: results
+  genuinely arrive out of order (verified with two parallel Bash calls where the second returned
+  first, an approval interleaved between them). Steps still open when a session dies are marked
+  abandoned so nothing spins forever.
+- ~~**#4 Controller follow-ups**~~ (2026-07-25) — per-session interrupt, a skip-perms toggle on
+  every tile that switches a *live* session's permission mode, and a controller banner counting
+  unprompted sessions with one-click "require approvals".
+- ~~**#6 Persistence**~~ (2026-07-25) — plan tier, finish action, grace period and recent
+  directories survive restarts. Plain JSON, not the planned SQLite: nothing here is relational
+  or large, so a flat file keeps dependencies at zero and stays hand-editable. Written via temp
+  file + rename so a crash cannot truncate it. Session history is **not** persisted — Claude Code
+  already owns the transcripts. The armed state is never restored, since silently re-arming a
+  shutdown across a restart is exactly the wrong surprise.
+- ~~**#9 Shortcuts**~~ / ~~**#10 Cross-platform**~~ (2026-07-25) — `Ctrl/⌘+1–9` jump,
+  `Ctrl/⌘+⏎` approves the longest-waiting approval, `Ctrl/⌘+U` toggles usage; modifier and
+  footer hints follow the platform the server reports. Per-OS command tables and path handling
+  are unit-tested for both. See #13 — not yet *run* on macOS.
+- ~~**Folder picker**~~ (2026-07-25, unplanned) — a Browse button opens the host's native folder
+  dialog. It must be server-side: browsers never reveal filesystem paths, and
+  `showDirectoryPicker` returns a handle, not a path. Pasting works too, including the quoted
+  form Windows "Copy as path" produces, and a bad path is rejected up front with a readable
+  message instead of failing obscurely inside the SDK.
 
 ### Resolved decisions (2026-07-25, round 2)
 

@@ -44,12 +44,23 @@ browser (React, Nocturne DS) ── WebSocket ── server (Node/TS)
 - No attach path to already-running interactive terminals; hooks (`Notification`, `Stop`,
   `PreToolUse`) POSTing to the server are the only telemetry from outside sessions (Tier 2 item).
 
+### Scope correction — single machine, two operating systems (2026-07-25)
+
+Conductor supervises sessions on **one machine at a time**. The owner works from a Windows
+desktop and a MacBook at different times, so the app must run natively on both — it does
+**not** federate sessions across them. Consequences:
+
+- No remote agent, no mTLS pairing, no host scoping. The prototype's "Both hosts /
+  macbook-pro / win-desktop" selector and per-tile host chips are **cut**.
+- What replaces it: cross-platform correctness (item 10) — path display, shell selection,
+  notifications, and the finish-action command table per OS.
+- Multi-host federation is explicitly out of scope. Do not reintroduce it without a new ask.
+
 ### Dependency map
 
-- Items 1–3 are the walking skeleton — sequential.
-- Items 4, 5, 6 are independent after 3.
+- Items 4, 5, 6 are independent of each other.
 - Item 7 (trigger engine) needs 4. Item 8 (hooks monitor) is independent of everything.
-- Item 10 (second host) last — touches transport.
+- Item 10 (cross-platform) is continuous, not a milestone — verify on both OSes as you go.
 
 ## Tier 1 — High Impact
 
@@ -68,7 +79,10 @@ browser (React, Nocturne DS) ── WebSocket ── server (Node/TS)
 ## Tier 3 — Nice-to-Have
 
 9. **Palette + shortcuts** — Ctrl/⌘K, Ctrl+1..6 jump, Ctrl+⏎ approve
-10. **Second host** — headless server on the other machine, browser connects to either; later mTLS pairing
+10. **Cross-platform correctness** — runs natively on Windows and macOS (not federated between
+    them). Path display normalised but native for exec, per-OS shell, notifications, and the
+    finish-action command table (`pmset` vs `rundll32`, `shutdown -h` vs `shutdown /s`).
+    Verify on both machines rather than treating it as one milestone.
 11. **Tauri wrap** — native window/tray/notifications around the web UI
 12. **Diff peek + per-project auto-approve rules**
 
@@ -96,9 +110,14 @@ browser (React, Nocturne DS) ── WebSocket ── server (Node/TS)
 - Sessions inherit `~/.claude/settings.json` (81 allow rules here), so most Bash commands
   auto-approve. To exercise the approval path, use something outside the allowlist (`docker`).
 
+### Resolved decisions (2026-07-25, round 2)
+
+- **Worktrees get one tile each** — no grouping layer, no special-casing. A worktree is just a
+  session with its own cwd, which is already how the server treats it.
+- **Single machine, two OSes** — see the scope correction above. Item 10 rewritten.
+- **Plan tier is Max 20x but changes up and down**, so limits must be trivially switchable at
+  runtime — a tier picker in settings, not a config-file edit or a rebuild.
+
 ### Owner gates
 
-- Real plan limits to calibrate the usage bars (item 5) — placeholders are $12/5h, $40 weekly,
-  $14 Opus weekly.
-- Worktrees: one tile each, or grouped under a project?
-- Is the Windows box worked at directly, or headless? Decides whether item 10 needs a full UI there.
+- None open.

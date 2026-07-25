@@ -8,13 +8,19 @@ terminals. That means state is structured, not guessed: a permission prompt is a
 
 ## Run it
 
+Double-click **`start-claudia.bat`** on Windows or **`start-claudia.command`** on macOS. Either
+one installs dependencies on first run, starts both processes, and opens the browser — and if
+Claudia is already running it just opens the existing instance instead of failing on the port.
+
+Or by hand:
+
 ```bash
 npm install
 npm run dev
 ```
 
-Server on `127.0.0.1:4317`, UI on `127.0.0.1:4318`. Open the UI, enter a working directory
-and a first prompt, pick a permission mode, hit Launch.
+Server on `127.0.0.1:4317`, UI on `127.0.0.1:4318`. Open the UI, pick a working directory
+(paste a path or hit Browse), type a first prompt, choose a permission mode, hit Launch.
 
 ## Layout
 

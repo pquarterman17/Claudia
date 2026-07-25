@@ -6,3 +6,5 @@ dist/
 Conductor for parallel Claude Code projects/
 # local data
 data/
+dist-types/
+*.tsbuildinfo

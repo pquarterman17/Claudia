@@ -1,0 +1,23 @@
+{
+  "name": "claudia",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Conductor — one window over every parallel Claude Code session",
+  "workspaces": [
+    "shared",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "npm-run-all --parallel dev:server dev:web",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w shared && npm run build -w server && npm run build -w web",
+    "typecheck": "tsc -b shared server web",
+    "test": "npm run test -w server"
+  },
+  "devDependencies": {
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.6.0"
+  }
+}

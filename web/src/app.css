@@ -1,0 +1,146 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+@keyframes claudia-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #3f424d;
+  border-radius: 8px;
+}
+
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #2c2f3d;
+  background: #191b28;
+}
+
+.board {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+
+.tile {
+  height: 420px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #2c2f3d;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #1a1c28;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.tile.awaiting {
+  border-color: #5d5294;
+  outline: 1px solid rgba(145, 132, 217, 0.22);
+  outline-offset: 2px;
+}
+
+.tile.error {
+  border-color: #5c3b3b;
+}
+
+.tile-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  border-bottom: 1px solid #2c2f3d;
+  background: #1d1f2c;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.tile-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 9px 11px;
+  background: #12141f;
+  gap: 7px;
+}
+
+.composer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  border-top: 1px solid #2c2f3d;
+  background: #181a26;
+}
+
+.composer input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--color-text);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.approval-banner {
+  flex: none;
+  padding: 9px 11px;
+  background: #221f31;
+  border-top: 1px solid #423a6a;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+.kicker {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #75798c;
+}

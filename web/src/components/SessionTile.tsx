@@ -1,0 +1,122 @@
+import type { FeedStep, SessionSummary } from '@claudia/shared';
+import { useState } from 'react';
+import { elapsed, fmtCost, fmtTokens } from '../format';
+import { send } from '../store';
+import { statusOf } from '../status';
+import { ApprovalBanner } from './ApprovalBanner';
+import { SessionFeed } from './SessionFeed';
+
+interface Props {
+  session: SessionSummary;
+  steps: FeedStep[];
+  now: number;
+}
+
+/** One session: header chips, activity feed, approval banner, composer. */
+export function SessionTile({ session, steps, now }: Props) {
+  const [draft, setDraft] = useState('');
+  const status = statusOf(session.state);
+  const yolo = session.permissionMode === 'bypassPermissions';
+
+  const submit = () => {
+    const text = draft.trim();
+    if (!text) return;
+    send({ type: 'send_prompt', sessionId: session.id, text });
+    setDraft('');
+  };
+
+  const cls = ['tile', session.pendingApproval ? 'awaiting' : '', session.state === 'error' ? 'error' : '']
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <div className={cls} style={yolo ? { borderColor: '#5c3b3b', boxShadow: 'inset 0 2px 0 #8a4f4f' } : undefined}>
+      <div className="tile-head">
+        <span
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: '50%',
+            background: status.dot,
+            flex: 'none',
+            animation: status.pulse ? 'claudia-pulse 1.6s ease-in-out infinite' : 'none',
+          }}
+        />
+        <span style={{ flex: 'none', fontWeight: 500, fontSize: 13, letterSpacing: '-.01em' }}>{session.name}</span>
+        <span
+          className="mono"
+          title={session.cwd}
+          style={{ flex: '1 1 auto', minWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 10.5, color: '#75798c' }}
+        >
+          {session.cwd}
+        </span>
+        <span title={status.label} style={{ flex: 'none', fontSize: 10.5, color: status.color }}>
+          {status.short}
+        </span>
+        <span style={{ flex: 'none', fontSize: 10.5, color: '#75798c', fontVariantNumeric: 'tabular-nums' }}>
+          {elapsed(session.startedAt, now)}
+        </span>
+        <span
+          style={{
+            flex: 'none',
+            fontSize: 10,
+            color: '#9397ab',
+            border: `1px solid ${yolo ? '#8a4f4f' : '#33364a'}`,
+            background: yolo ? '#2e2226' : 'transparent',
+            borderRadius: 4,
+            padding: '1px 5px',
+          }}
+        >
+          {session.model?.split(/[-\s]/)[0] ?? '—'}
+          {yolo ? ' ⚠' : ''}
+        </span>
+        <button
+          className="btn btn-ghost"
+          title="Stop this session"
+          style={{ flex: 'none', fontSize: 10, padding: '2px 6px', color: '#75798c' }}
+          onClick={() => send({ type: 'remove_session', sessionId: session.id })}
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="tile-body">
+        <SessionFeed steps={steps} />
+      </div>
+
+      {session.pendingApproval && (
+        <ApprovalBanner
+          approval={session.pendingApproval}
+          now={now}
+          onApprove={() =>
+            send({ type: 'approve', sessionId: session.id, requestId: session.pendingApproval!.requestId })
+          }
+          onDeny={() => send({ type: 'deny', sessionId: session.id, requestId: session.pendingApproval!.requestId })}
+        />
+      )}
+
+      <div className="composer">
+        <span className="mono" style={{ color: status.color, fontSize: 12 }}>
+          ›
+        </span>
+        <input
+          value={draft}
+          placeholder={session.state === 'idle' ? 'send a new task…' : 'queue a message…'}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              submit();
+            }
+          }}
+        />
+        <span style={{ flex: 'none', fontSize: 10, color: '#75798c', fontVariantNumeric: 'tabular-nums' }}>
+          {fmtTokens(session.inputTokens + session.outputTokens)}
+        </span>
+        <span style={{ flex: 'none', fontSize: 10, color: '#b5abfc', fontVariantNumeric: 'tabular-nums' }}>
+          {fmtCost(session.costUsd)}
+        </span>
+      </div>
+    </div>
+  );
+}

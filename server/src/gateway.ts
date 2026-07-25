@@ -1,23 +1,31 @@
-import type { ClientCommand, ServerEvent } from '@claudia/shared';
+import type { ClientCommand, HostPlatform, ServerEvent } from '@claudia/shared';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { SessionManager } from './session-manager.js';
+import type { TriggerEngine } from './trigger-engine.js';
 
 /** WS fan-out plus command dispatch. One gateway serves every connected browser. */
 export class Gateway {
   private wss: WebSocketServer;
   private manager!: SessionManager;
+  private trigger!: TriggerEngine;
 
-  constructor(wss: WebSocketServer) {
+  constructor(
+    wss: WebSocketServer,
+    private readonly platform: HostPlatform,
+  ) {
     this.wss = wss;
   }
 
-  attach(manager: SessionManager): void {
+  attach(manager: SessionManager, trigger: TriggerEngine): void {
     this.manager = manager;
+    this.trigger = trigger;
     this.wss.on('connection', (socket) => {
       this.sendTo(socket, {
         type: 'hello',
         sessions: manager.summaries(),
         feeds: manager.feedSnapshot(),
+        trigger: trigger.status(),
+        platform: this.platform,
       });
       socket.on('message', (raw) => {
         let cmd: ClientCommand;
@@ -78,6 +86,30 @@ export class Gateway {
       case 'remove_session':
         this.manager.remove(cmd.sessionId);
         return;
+      case 'select_finish_action':
+        this.trigger.selectAction(cmd.action);
+        return;
+      case 'arm_trigger':
+        this.trigger.arm(cmd.confirmDestructive);
+        return;
+      case 'disarm_trigger':
+        this.trigger.disarm();
+        return;
+      case 'bulk':
+        this.runBulk(cmd.op);
+        return;
+    }
+  }
+
+  private runBulk(op: 'approve_all' | 'interrupt_all'): void {
+    for (const summary of this.manager.summaries()) {
+      const session = this.manager.get(summary.id);
+      if (!session) continue;
+      if (op === 'approve_all') {
+        if (summary.pendingApproval) session.approve(summary.pendingApproval.requestId);
+      } else if (summary.state === 'working' || summary.state === 'starting') {
+        void session.interrupt();
+      }
     }
   }
 }

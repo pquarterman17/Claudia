@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
+import { ControllerTile } from './components/ControllerTile';
 import { LaunchBar } from './components/LaunchBar';
 import { SessionTile } from './components/SessionTile';
 import { TopBar } from './components/TopBar';
 import { store, useClaudia } from './store';
 
 export function App() {
-  const { sessions, feeds, connected, lastError } = useClaudia();
+  const { sessions, feeds, connected, lastError, trigger } = useClaudia();
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -30,6 +31,7 @@ export function App() {
         </div>
       )}
       <div className="board">
+        {trigger && <ControllerTile trigger={trigger} sessions={sessions} />}
         {ordered.map((session) => (
           <SessionTile key={session.id} session={session} steps={feeds[session.id] ?? []} now={now} />
         ))}

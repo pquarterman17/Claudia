@@ -1,4 +1,12 @@
-import { CLAUDIA_PORT, type ClientCommand, type FeedStep, type ServerEvent, type SessionSummary } from '@claudia/shared';
+import {
+  CLAUDIA_PORT,
+  type ClientCommand,
+  type FeedStep,
+  type HostPlatform,
+  type ServerEvent,
+  type SessionSummary,
+  type TriggerStatus,
+} from '@claudia/shared';
 import { useSyncExternalStore } from 'react';
 
 /**
@@ -16,6 +24,8 @@ export interface ClaudiaState {
   connected: boolean;
   sessions: SessionSummary[];
   feeds: Record<string, FeedStep[]>;
+  trigger?: TriggerStatus;
+  platform?: HostPlatform;
   lastError?: string;
 }
 
@@ -62,7 +72,16 @@ class Store {
   private handle(event: ServerEvent): void {
     switch (event.type) {
       case 'hello':
-        this.set({ sessions: event.sessions, feeds: event.feeds });
+        this.set({
+          sessions: event.sessions,
+          feeds: event.feeds,
+          trigger: event.trigger,
+          platform: event.platform,
+          lastError: undefined,
+        });
+        return;
+      case 'trigger_status':
+        this.set({ trigger: event.trigger });
         return;
       case 'session_upsert': {
         const rest = this.state.sessions.filter((s) => s.id !== event.session.id);

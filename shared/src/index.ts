@@ -69,13 +69,44 @@ export interface SessionSummary {
   errorMessage?: string;
 }
 
+// ---------- finish trigger ----------
+
+export type FinishActionKey = 'notify' | 'commit' | 'sleep' | 'shutdown' | 'script';
+
+export type TriggerState = 'disarmed' | 'armed' | 'counting' | 'fired';
+
+export interface TriggerStatus {
+  state: TriggerState;
+  action: FinishActionKey;
+  /** Seconds left before firing; present only while counting. */
+  countdownSec?: number;
+  /** Human-readable reason the trigger is held. Absent when nothing blocks it. */
+  blockedBy?: string;
+  firedAt?: number;
+  /** Outcome of the last firing — success text or the error. */
+  lastResult?: string;
+  /** The actual command that will run on this host, shown in the UI. */
+  command: string;
+  /** Destructive actions require an explicit confirm before they can be armed. */
+  destructive: boolean;
+}
+
+export type HostPlatform = 'win32' | 'darwin' | 'linux';
+
 // ---------- server → client ----------
 
 export type ServerEvent =
-  | { type: 'hello'; sessions: SessionSummary[]; feeds: Record<string, FeedStep[]> }
+  | {
+      type: 'hello';
+      sessions: SessionSummary[];
+      feeds: Record<string, FeedStep[]>;
+      trigger: TriggerStatus;
+      platform: HostPlatform;
+    }
   | { type: 'session_upsert'; session: SessionSummary }
   | { type: 'session_removed'; sessionId: string }
   | { type: 'feed_append'; sessionId: string; step: FeedStep }
+  | { type: 'trigger_status'; trigger: TriggerStatus }
   | { type: 'server_error'; message: string };
 
 // ---------- client → server ----------
@@ -93,6 +124,11 @@ export type ClientCommand =
   | { type: 'deny'; sessionId: string; requestId: string; message?: string }
   | { type: 'interrupt'; sessionId: string }
   | { type: 'stop_session'; sessionId: string }
-  | { type: 'remove_session'; sessionId: string };
+  | { type: 'remove_session'; sessionId: string }
+  | { type: 'select_finish_action'; action: FinishActionKey }
+  /** `confirmDestructive` must be true to arm shutdown — the server re-checks. */
+  | { type: 'arm_trigger'; confirmDestructive?: boolean }
+  | { type: 'disarm_trigger' }
+  | { type: 'bulk'; op: 'approve_all' | 'interrupt_all' };
 
 export const CLAUDIA_PORT = 4317;

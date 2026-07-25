@@ -70,7 +70,8 @@ desktop and a MacBook at different times, so the app must run natively on both �
 
 ## Tier 2 — Medium Impact
 
-4. **Controller tile** — aggregate settled/total, segmented status bar, bulk approve/pause, launch-mode selector (ask / acceptEdits / bypassPermissions with red warnings)
+4. **Controller tile follow-ups** — per-session interrupt/stop buttons, and a "require approvals
+   everywhere" banner when any session is running with `bypassPermissions`
 5. **Usage panel** — spend, burn rate, per-project rows, remaining-vs-plan bars
    - [ ] Runtime tier picker (Pro / Max 5x / Max 20x / custom) — owner switches tiers often,
          so this must be a setting, never a rebuild
@@ -80,7 +81,9 @@ desktop and a MacBook at different times, so the app must run natively on both �
          a JSONL reader as the fallback of record
    - [ ] Label the bars as **estimates** in the UI (see below) — do not imply server truth
 6. **Persistence** — SQLite (better-sqlite3): sessions, history, usage rollups, settings
-7. **Trigger engine** — arm/countdown/fire (notify → commit+push → sleep → shutdown → script), per-OS command table, blocked-session gate
+7. **Trigger engine follow-ups** — implement "commit + push all" (currently disabled in the UI
+   rather than firing as a silent no-op; needs per-repo rules before it pushes unreviewed work),
+   and make the countdown length configurable
 8. **Hooks monitor tier** — global hook POSTs to server so plain-terminal sessions appear as read-only tiles
 
 ## Tier 3 — Nice-to-Have
@@ -145,6 +148,17 @@ to estimates — is the only "closer to true" option; worth a look if the bars f
 - `tsx watch` cannot rebind a held port. A stale server survived a `pkill` on Windows and
   silently served old code to a smoke test — the new process had already died on `EADDRINUSE`.
   Check `netstat -ano | grep :4317` before trusting a behavioural test.
+
+- ~~**#4 Controller tile**~~ (2026-07-25) — finish-action selector, arm/disarm with live
+  countdown, hold reason, bulk approve/interrupt. Aggregate counts stayed in the top bar
+  rather than being duplicated here.
+- ~~**#7 Trigger engine**~~ (2026-07-25) — `trigger-engine.ts` + per-OS `finish-actions.ts`,
+  server-ticked once a second. 18 unit tests on the state machine. Verified live in-browser:
+  armed with no sessions → held ("no sessions to wait for"); launched a session → held
+  ("1 session still working"); settled → counted 30→0 → **fired a real Windows toast** and
+  disarmed itself. A prompt sent mid-countdown cancelled it back to `armed` and the countdown
+  later restarted from full, not from where it stopped. Shutdown selected → armed refused
+  without a second confirming click, with `shutdown.exe /s /t 0` shown in red.
 
 ### Resolved decisions (2026-07-25, round 2)
 

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.local
+.env
+# original design export folder (locked by design app; copied to design/)
+Conductor for parallel Claude Code projects/
+# local data
+data/

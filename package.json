@@ -2,7 +2,7 @@
   "name": "claudia",
   "private": true,
   "version": "0.1.0",
-  "description": "Conductor — one window over every parallel Claude Code session",
+  "description": "Claudia — one window over every parallel Claude Code session",
   "workspaces": [
     "shared",
     "server",

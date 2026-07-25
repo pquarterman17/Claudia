@@ -1,4 +1,4 @@
-# Claudia (Conductor) — Main Plan
+# Claudia — Main Plan
 
 One window over every Claude Code session running in parallel. Sessions are owned by a local
 Node server via the Claude Agent SDK (`query()`), rendered in a React web UI at localhost.
@@ -46,7 +46,7 @@ browser (React, Nocturne DS) ── WebSocket ── server (Node/TS)
 
 ### Scope correction — single machine, two operating systems (2026-07-25)
 
-Conductor supervises sessions on **one machine at a time**. The owner works from a Windows
+Claudia supervises sessions on **one machine at a time**. The owner works from a Windows
 desktop and a MacBook at different times, so the app must run natively on both — it does
 **not** federate sessions across them. Consequences:
 

@@ -27,7 +27,7 @@ export function TopBar({ sessions, connected }: Props) {
   return (
     <div className="topbar">
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, flex: 'none' }}>
-        <span style={{ fontWeight: 500, fontSize: 15, letterSpacing: '-.01em' }}>Conductor</span>
+        <span style={{ fontWeight: 500, fontSize: 15, letterSpacing: '-.01em' }}>Claudia</span>
         <span className="kicker">parallel claude code</span>
       </div>
 

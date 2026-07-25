@@ -1,5 +1,16 @@
-import type { ClientCommand, FeedStep, ServerEvent, SessionSummary } from '@claudia/shared';
+import { CLAUDIA_PORT, type ClientCommand, type FeedStep, type ServerEvent, type SessionSummary } from '@claudia/shared';
 import { useSyncExternalStore } from 'react';
+
+/**
+ * Talk to the server directly on its own port rather than through Vite's dev
+ * proxy. The proxy silently stops forwarding the WS upgrade once the upstream
+ * has restarted a few times, which looks exactly like a dead server; going
+ * direct removes that failure mode and behaves identically in a built app.
+ */
+function serverUrl(): string {
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${scheme}://${location.hostname}:${CLAUDIA_PORT}/ws`;
+}
 
 export interface ClaudiaState {
   connected: boolean;
@@ -29,8 +40,7 @@ class Store {
 
   connect(): void {
     if (this.ws) return;
-    const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(serverUrl());
     this.ws = ws;
     ws.onopen = () => {
       this.retryMs = 500;

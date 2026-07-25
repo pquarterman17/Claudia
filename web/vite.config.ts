@@ -3,11 +3,6 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   plugins: [react()],
-  server: {
-    port: 4318,
-    proxy: {
-      '/ws': { target: 'ws://127.0.0.1:4317', ws: true },
-      '/health': 'http://127.0.0.1:4317',
-    },
-  },
+  // No proxy: the UI talks to the server directly on CLAUDIA_PORT (see web/src/store.ts).
+  server: { port: 4318 },
 });

@@ -1,4 +1,4 @@
-# Claudia — Conductor
+# Claudia
 
 One window over every Claude Code session running in parallel.
 
@@ -27,7 +27,7 @@ and a first prompt, pick a permission mode, hit Launch.
 | `server/src/session-manager.ts` | Registry + feed history |
 | `server/src/gateway.ts` | WS fan-out and command dispatch |
 | `web/src/components/` | One component per job — tile, feed, approval, launch, topbar |
-| `design/conductor-prototype/` | The Claude Design prototype this is built from |
+| `design/conductor-prototype/` | The Claude Design prototype this is built from (named "Conductor" at design time; the app is Claudia) |
 | `plans/MAIN_PLAN.md` | Tiered plan; the authoritative work list |
 
 ## Conventions

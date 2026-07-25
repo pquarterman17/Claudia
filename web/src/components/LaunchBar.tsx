@@ -8,7 +8,7 @@ const MODES: Array<{ key: PermissionLaunchMode; label: string; danger?: boolean 
   { key: 'bypassPermissions', label: 'Skip all permissions', danger: true },
 ];
 
-/** Launch a new Conductor-owned session: cwd + first prompt + permission mode. */
+/** Launch a new Claudia-owned session: cwd + first prompt + permission mode. */
 export function LaunchBar() {
   const [cwd, setCwd] = useState('');
   const [prompt, setPrompt] = useState('');

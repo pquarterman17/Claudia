@@ -53,13 +53,8 @@ browser (React, Nocturne DS) ── WebSocket ── server (Node/TS)
 
 ## Tier 1 — High Impact
 
-1. **Walking skeleton** — repo scaffold, npm workspaces (server/web/shared), WS round-trip
-   - [ ] Fastify + ws server with session registry (in-memory)
-   - [ ] SessionManager: launch `query()` with streaming input, map SDK messages → WS events
-   - [ ] canUseTool → `awaiting_approval` state + approve/deny commands
-   - [ ] Vite/React shell with Nocturne tokens, session tile grid, live feed rendering
-   - [ ] Composer: send prompt to new or running session
-2. **Session lifecycle done right** — interrupt, stop, resume, error surfacing, per-session model/permission-mode/cwd at launch
+2. **Session lifecycle** — resume from `claudeSessionId`, per-session model picker, interrupt
+   button in the UI (server + protocol already support interrupt/stop)
 3. **Feed view fidelity** — map tool_use/tool_result to the prototype's step feed (icon, title, meta, duration); raw message log as fallback view
 
 ## Tier 2 — Medium Impact
@@ -79,4 +74,31 @@ browser (React, Nocturne DS) ── WebSocket ── server (Node/TS)
 
 ## Completed
 
-*(nothing yet)*
+- ~~**#1 Walking skeleton**~~ (2026-07-25) — npm workspaces (shared/server/web), WS gateway,
+  SessionManager over Agent SDK `query()`, ApprovalGate resolving `canUseTool`, React UI on
+  Nocturne tokens. Verified in-browser: two concurrent sessions, live feed, follow-up prompts
+  with session continuity, cost/token aggregation. Approval round-trip verified via
+  `scripts/smoke.mjs` (`starting → working → awaiting_approval → working → idle`).
+  36 unit tests; 400-line size ratchet in place.
+
+### Resolved decisions (2026-07-25)
+
+- **SDK-owned sessions, not PTY.** State comes from structured SDK events; the design plan's
+  PTY + heuristic-parsing risk is designed out rather than mitigated.
+- **Local web app, not Tauri.** Faster iteration and the second host gets a view for free by
+  pointing a browser at it. Tauri stays available as a later wrapper (item 11).
+- **Repo is `Claudia/`**, design prototype preserved under `design/conductor-prototype/`.
+
+### Gotchas found the hard way
+
+- **Pin the SDK to `^0.3.x`.** `^0.1.0` resolves to 0.1.77, where *every* tool call dies with
+  `tool_use ids must be unique`. Cost an hour; the fix is the version, not the code.
+- Sessions inherit `~/.claude/settings.json` (81 allow rules here), so most Bash commands
+  auto-approve. To exercise the approval path, use something outside the allowlist (`docker`).
+
+### Owner gates
+
+- Real plan limits to calibrate the usage bars (item 5) — placeholders are $12/5h, $40 weekly,
+  $14 Opus weekly.
+- Worktrees: one tile each, or grouped under a project?
+- Is the Windows box worked at directly, or headless? Decides whether item 10 needs a full UI there.

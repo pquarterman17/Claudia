@@ -1,6 +1,6 @@
 import type { PermissionLaunchMode } from '@claudia/shared';
-import { useState } from 'react';
-import { send } from '../store';
+import { useEffect, useState } from 'react';
+import { onFolderPicked, send } from '../store';
 
 const MODES: Array<{ key: PermissionLaunchMode; label: string; danger?: boolean }> = [
   { key: 'default', label: 'Ask each time' },
@@ -13,6 +13,17 @@ export function LaunchBar() {
   const [cwd, setCwd] = useState('');
   const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<PermissionLaunchMode>('default');
+  const [browsing, setBrowsing] = useState(false);
+
+  // The native dialog runs on the server; its answer arrives over the socket.
+  useEffect(
+    () =>
+      onFolderPicked((path) => {
+        setBrowsing(false);
+        if (path) setCwd(path);
+      }),
+    [],
+  );
 
   const launch = () => {
     if (!cwd.trim() || !prompt.trim()) return;
@@ -41,9 +52,29 @@ export function LaunchBar() {
         className="input mono"
         value={cwd}
         onChange={(e) => setCwd(e.target.value)}
-        placeholder="working directory (absolute path)"
-        style={{ flex: '0 1 320px', fontSize: 11.5, padding: '4px 8px' }}
+        // Windows "Copy as path" wraps in quotes; strip them so a paste just works.
+        onPaste={(e) => {
+          const pasted = e.clipboardData.getData('text').trim().replace(/^["']|["']$/g, '');
+          if (pasted) {
+            e.preventDefault();
+            setCwd(pasted);
+          }
+        }}
+        placeholder="paste a path, or browse…"
+        style={{ flex: '0 1 300px', fontSize: 11.5, padding: '4px 8px' }}
       />
+      <button
+        className="btn btn-secondary"
+        disabled={browsing}
+        title="Open a folder picker on this machine"
+        onClick={() => {
+          setBrowsing(true);
+          send({ type: 'browse_folder' });
+        }}
+        style={{ flex: 'none', fontSize: 11.5, padding: '4px 10px', borderColor: '#3f424d', color: '#9397ab' }}
+      >
+        {browsing ? 'Choosing…' : 'Browse'}
+      </button>
       <input
         className="input"
         value={prompt}

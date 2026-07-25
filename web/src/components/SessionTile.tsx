@@ -2,7 +2,7 @@ import type { FeedStep, SessionSummary } from '@claudia/shared';
 import { useState } from 'react';
 import { elapsed, fmtCost, fmtTokens } from '../format';
 import { send } from '../store';
-import { statusOf } from '../status';
+import { COLORS, statusOf } from '../status';
 import { ApprovalBanner } from './ApprovalBanner';
 import { SessionFeed } from './SessionFeed';
 
@@ -70,9 +70,19 @@ export function SessionTile({ session, steps, now }: Props) {
           {session.model?.split(/[-\s]/)[0] ?? '—'}
           {yolo ? ' ⚠' : ''}
         </span>
+        {(session.state === 'working' || session.state === 'starting') && (
+          <button
+            className="btn btn-ghost"
+            title="Interrupt this session"
+            style={{ flex: 'none', fontSize: 10, padding: '2px 6px', color: COLORS.warn }}
+            onClick={() => send({ type: 'interrupt', sessionId: session.id })}
+          >
+            ⏸
+          </button>
+        )}
         <button
           className="btn btn-ghost"
-          title="Stop this session"
+          title="Stop and remove this session"
           style={{ flex: 'none', fontSize: 10, padding: '2px 6px', color: '#75798c' }}
           onClick={() => send({ type: 'remove_session', sessionId: session.id })}
         >
@@ -96,6 +106,35 @@ export function SessionTile({ session, steps, now }: Props) {
       )}
 
       <div className="composer">
+        <button
+          title={
+            yolo
+              ? 'Permissions skipped — click to require approvals again'
+              : 'Click to run this session without permission prompts'
+          }
+          onClick={() =>
+            send({
+              type: 'set_permission_mode',
+              sessionId: session.id,
+              mode: yolo ? 'default' : 'bypassPermissions',
+            })
+          }
+          style={{
+            flex: 'none',
+            cursor: 'pointer',
+            borderRadius: 5,
+            padding: '1px 6px',
+            fontFamily: 'var(--font-body)',
+            fontSize: 9.5,
+            letterSpacing: '.06em',
+            textTransform: 'uppercase',
+            border: `1px solid ${yolo ? '#5c3b3b' : '#33364a'}`,
+            background: yolo ? '#2e2226' : 'transparent',
+            color: yolo ? COLORS.err : '#595d6c',
+          }}
+        >
+          skip perms
+        </button>
         <span className="mono" style={{ color: status.color, fontSize: 12 }}>
           ›
         </span>

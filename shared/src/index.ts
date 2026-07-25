@@ -107,6 +107,8 @@ export type ServerEvent =
   | { type: 'session_removed'; sessionId: string }
   | { type: 'feed_append'; sessionId: string; step: FeedStep }
   | { type: 'trigger_status'; trigger: TriggerStatus }
+  /** Result of a browse_folder request; path is null if the user cancelled. */
+  | { type: 'folder_picked'; path: string | null }
   | { type: 'server_error'; message: string };
 
 // ---------- client → server ----------
@@ -125,6 +127,12 @@ export type ClientCommand =
   | { type: 'interrupt'; sessionId: string }
   | { type: 'stop_session'; sessionId: string }
   | { type: 'remove_session'; sessionId: string }
+  /** Opens a native folder dialog on the server host; replies with folder_picked. */
+  | { type: 'browse_folder' }
+  /** Change a live session's permission mode — how you revoke skip-permissions. */
+  | { type: 'set_permission_mode'; sessionId: string; mode: PermissionLaunchMode }
+  /** Put every session back on standard approvals. */
+  | { type: 'require_approvals_everywhere' }
   | { type: 'select_finish_action'; action: FinishActionKey }
   /** `confirmDestructive` must be true to arm shutdown — the server re-checks. */
   | { type: 'arm_trigger'; confirmDestructive?: boolean }

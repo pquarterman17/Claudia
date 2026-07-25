@@ -30,6 +30,7 @@ export function ControllerTile({ trigger, sessions }: Props) {
   const [confirming, setConfirming] = useState(false);
   const waiting = sessions.filter((s) => s.pendingApproval).length;
   const busy = sessions.filter((s) => s.state === 'working' || s.state === 'starting').length;
+  const unprompted = sessions.filter((s) => s.permissionMode === 'bypassPermissions').length;
   const armed = trigger.state === 'armed' || trigger.state === 'counting';
 
   // A pending confirm must not survive switching to a different action.
@@ -75,6 +76,33 @@ export function ControllerTile({ trigger, sessions }: Props) {
       </div>
 
       <div className="tile-body" style={{ background: 'transparent', gap: 12, justifyContent: 'flex-start' }}>
+        {unprompted > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '7px 9px',
+              border: '1px solid #5c3b3b',
+              borderRadius: 7,
+              background: '#2a2027',
+            }}
+          >
+            <span style={{ color: COLORS.err, fontSize: 12 }}>⚠</span>
+            <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: COLORS.warn }}>
+              {unprompted} {unprompted === 1 ? 'session runs' : 'sessions run'} unprompted — every tool call
+              executes without asking
+            </span>
+            <button
+              className="btn btn-ghost"
+              onClick={() => send({ type: 'require_approvals_everywhere' })}
+              style={{ fontSize: 11, padding: '2px 8px', color: '#9397ab' }}
+            >
+              Require approvals
+            </button>
+          </div>
+        )}
+
         <section>
           <div className="kicker" style={{ marginBottom: 6 }}>
             When everything finishes

@@ -44,6 +44,7 @@ export class ClaudiaSession {
     private readonly opts: LaunchOptions,
     private readonly cb: SessionCallbacks,
   ) {
+    // opts.permissionMode is mutable — setPermissionMode updates it in place.
     this.model = opts.model;
   }
 
@@ -142,6 +143,21 @@ export class ClaudiaSession {
     this.lastActivityAt = Date.now();
     this.cb.onFeed(this.id, infoStep('Prompt sent', text.length > 160 ? `${text.slice(0, 159)}…` : text));
     if (this.state === 'idle') this.setState('working');
+  }
+
+  /** Change permissions on a live session — the escape hatch from skip-permissions. */
+  async setPermissionMode(mode: PermissionLaunchMode): Promise<void> {
+    if (this.opts.permissionMode === mode) return;
+    const q = this.q as { setPermissionMode?: (m: PermissionLaunchMode) => Promise<void> } | null;
+    await q?.setPermissionMode?.(mode).catch(() => undefined);
+    this.opts.permissionMode = mode;
+    this.cb.onFeed(
+      this.id,
+      mode === 'bypassPermissions'
+        ? errorStep('Permissions skipped', 'every tool call now runs without asking')
+        : infoStep('Permission mode', mode === 'acceptEdits' ? 'edits auto-accepted' : 'approvals required'),
+    );
+    this.cb.onUpdate(this.summary());
   }
 
   async interrupt(): Promise<void> {

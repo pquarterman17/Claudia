@@ -40,6 +40,13 @@ class Store {
   private listeners = new Set<Listener>();
   private ws: WebSocket | null = null;
   private retryMs = 500;
+  /** One-off replies (folder picker) that aren't part of the rendered snapshot. */
+  private folderListeners = new Set<(path: string | null) => void>();
+
+  onFolderPicked = (fn: (path: string | null) => void): (() => void) => {
+    this.folderListeners.add(fn);
+    return () => this.folderListeners.delete(fn);
+  };
 
   getSnapshot = (): ClaudiaState => this.state;
 
@@ -83,6 +90,9 @@ class Store {
       case 'trigger_status':
         this.set({ trigger: event.trigger });
         return;
+      case 'folder_picked':
+        for (const listener of this.folderListeners) listener(event.path);
+        return;
       case 'session_upsert': {
         const rest = this.state.sessions.filter((s) => s.id !== event.session.id);
         const existing = this.state.sessions.find((s) => s.id === event.session.id);
@@ -122,3 +132,4 @@ export function useClaudia(): ClaudiaState {
 }
 
 export const send = (cmd: ClientCommand): void => store.send(cmd);
+export const onFolderPicked = store.onFolderPicked;

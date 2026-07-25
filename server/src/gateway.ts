@@ -1,5 +1,6 @@
 import type { ClientCommand, HostPlatform, ServerEvent } from '@claudia/shared';
 import { WebSocket, WebSocketServer } from 'ws';
+import { assertUsableDirectory, normalizePath, pickFolder } from './folder-picker.js';
 import type { SessionManager } from './session-manager.js';
 import type { TriggerEngine } from './trigger-engine.js';
 
@@ -36,7 +37,7 @@ export class Gateway {
           return;
         }
         try {
-          this.dispatch(cmd);
+          this.dispatch(cmd, socket);
         } catch (err) {
           this.sendTo(socket, {
             type: 'server_error',
@@ -58,15 +59,28 @@ export class Gateway {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event));
   }
 
-  private dispatch(cmd: ClientCommand): void {
+  private dispatch(cmd: ClientCommand, socket: WebSocket): void {
     switch (cmd.type) {
-      case 'launch_session':
+      case 'launch_session': {
+        const cwd = normalizePath(cmd.cwd);
+        assertUsableDirectory(cwd);
         this.manager.launch({
-          cwd: cmd.cwd,
+          cwd,
           prompt: cmd.prompt,
           model: cmd.model,
           permissionMode: cmd.permissionMode ?? 'default',
         });
+        return;
+      }
+      case 'browse_folder':
+        pickFolder(this.platform)
+          .then((path) => this.sendTo(socket, { type: 'folder_picked', path }))
+          .catch((err: unknown) =>
+            this.sendTo(socket, {
+              type: 'server_error',
+              message: `Folder picker failed: ${err instanceof Error ? err.message : String(err)}`,
+            }),
+          );
         return;
       case 'send_prompt':
         this.manager.get(cmd.sessionId)?.sendPrompt(cmd.text);
@@ -85,6 +99,14 @@ export class Gateway {
         return;
       case 'remove_session':
         this.manager.remove(cmd.sessionId);
+        return;
+      case 'set_permission_mode':
+        void this.manager.get(cmd.sessionId)?.setPermissionMode(cmd.mode);
+        return;
+      case 'require_approvals_everywhere':
+        for (const s of this.manager.summaries()) {
+          if (s.permissionMode !== 'default') void this.manager.get(s.id)?.setPermissionMode('default');
+        }
         return;
       case 'select_finish_action':
         this.trigger.selectAction(cmd.action);

@@ -50,6 +50,7 @@ class Store {
   private listeners = new Set<Listener>();
   private ws: WebSocket | null = null;
   private retryMs = 500;
+  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   /** One-off replies (folder picker) that aren't part of the rendered snapshot. */
   private folderListeners = new Set<(path: string | null) => void>();
 
@@ -65,25 +66,60 @@ class Store {
     return () => this.listeners.delete(listener);
   };
 
+  /**
+   * Opens the socket, replacing any previous one.
+   *
+   * Every handler checks it is still the live socket first. Without that, a
+   * server restart can leave an orphaned socket whose handlers keep firing
+   * while sends go to a different one — the UI reads "connected" but silently
+   * stops reflecting reality until a reload. Observed after a dev-server
+   * restart, and worth guarding for real restarts too.
+   */
   connect(): void {
-    if (this.ws) return;
+    const live = this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING;
+    if (live) return;
+    if (this.reconnectTimer !== undefined) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        /* already gone */
+      }
+    }
+
     const ws = new WebSocket(serverUrl());
     this.ws = ws;
+    const isCurrent = (): boolean => this.ws === ws;
+
     ws.onopen = () => {
+      if (!isCurrent()) return;
       this.retryMs = 500;
       this.set({ connected: true });
     };
-    ws.onmessage = (ev) => this.handle(JSON.parse(ev.data as string) as ServerEvent);
+    ws.onmessage = (ev) => {
+      if (!isCurrent()) return;
+      this.handle(JSON.parse(ev.data as string) as ServerEvent);
+    };
     ws.onclose = () => {
+      if (!isCurrent()) return;
       this.ws = null;
       this.set({ connected: false });
-      setTimeout(() => this.connect(), this.retryMs);
+      this.reconnectTimer = setTimeout(() => this.connect(), this.retryMs);
       this.retryMs = Math.min(this.retryMs * 2, 8000);
     };
   }
 
+  /** Reports rather than silently swallowing a command sent while offline. */
   send(cmd: ClientCommand): void {
-    this.ws?.send(JSON.stringify(cmd));
+    if (this.ws?.readyState !== WebSocket.OPEN) {
+      this.set({ lastError: 'Not connected to the server — that action was not sent.' });
+      this.connect();
+      return;
+    }
+    this.ws.send(JSON.stringify(cmd));
   }
 
   private handle(event: ServerEvent): void {

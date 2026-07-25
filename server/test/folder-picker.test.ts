@@ -15,7 +15,7 @@ describe('normalizePath', () => {
   });
 
   it('strips single quotes and surrounding whitespace', () => {
-    expect(normalizePath("  '/home/me/project'  ")).toBe('/home/me/project');
+    expect(normalizePath("  '/home/me/project'  ", 'linux')).toBe('/home/me/project');
   });
 
   it('leaves an ordinary path alone, including inner spaces', () => {
@@ -24,6 +24,24 @@ describe('normalizePath', () => {
 
   it('does not strip a lone quote at one end', () => {
     expect(normalizePath('"weird')).toBe('"weird');
+  });
+
+  it('canonicalises separators on Windows so one folder is one entry', () => {
+    // Both forms address the same directory; without this the recents list
+    // accumulates a duplicate every time the other form is used.
+    expect(normalizePath('C:/Users/me/project', 'win32')).toBe('C:\\Users\\me\\project');
+    expect(normalizePath('C:\\Users\\me\\project', 'win32')).toBe('C:\\Users\\me\\project');
+  });
+
+  it('leaves POSIX separators alone', () => {
+    expect(normalizePath('/home/me/project', 'linux')).toBe('/home/me/project');
+  });
+
+  it('drops a trailing separator but keeps a bare root', () => {
+    expect(normalizePath('C:\\x\\', 'win32')).toBe('C:\\x');
+    expect(normalizePath('/home/me/', 'linux')).toBe('/home/me');
+    expect(normalizePath('C:\\', 'win32')).toBe('C:\\');
+    expect(normalizePath('/', 'linux')).toBe('/');
   });
 });
 

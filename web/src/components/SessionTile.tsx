@@ -10,10 +10,12 @@ interface Props {
   session: SessionSummary;
   steps: FeedStep[];
   now: number;
+  index: number;
+  focused: boolean;
 }
 
 /** One session: header chips, activity feed, approval banner, composer. */
-export function SessionTile({ session, steps, now }: Props) {
+export function SessionTile({ session, steps, now, index, focused }: Props) {
   const [draft, setDraft] = useState('');
   const status = statusOf(session.state);
   const yolo = session.permissionMode === 'bypassPermissions';
@@ -30,8 +32,23 @@ export function SessionTile({ session, steps, now }: Props) {
     .join(' ');
 
   return (
-    <div className={cls} style={yolo ? { borderColor: '#5c3b3b', boxShadow: 'inset 0 2px 0 #8a4f4f' } : undefined}>
+    <div
+      id={`session-${session.id}`}
+      className={cls}
+      style={{
+        ...(yolo ? { borderColor: '#5c3b3b', boxShadow: 'inset 0 2px 0 #8a4f4f' } : {}),
+        ...(focused ? { outline: '1px solid #796cbf', outlineOffset: 2 } : {}),
+      }}
+    >
       <div className="tile-head">
+        {index < 9 && (
+          <span
+            title={`jump with the modifier and ${index + 1}`}
+            style={{ flex: 'none', fontSize: 9, color: '#4f5364', fontVariantNumeric: 'tabular-nums' }}
+          >
+            {index + 1}
+          </span>
+        )}
         <span
           style={{
             width: 7,

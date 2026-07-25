@@ -57,12 +57,20 @@ export function pickFolder(platform: HostPlatform): Promise<string | null> {
 /**
  * Cleans a path the user pasted. Windows "Copy as path" wraps it in quotes, and
  * dragged or copied paths often carry stray whitespace.
+ *
+ * Separators are also canonicalised on Windows, where both slashes work: without
+ * it `C:\x` and `C:/x` are the same directory but compare unequal, so the recents
+ * list accumulates duplicate entries for one folder.
  */
-export function normalizePath(raw: string): string {
+export function normalizePath(raw: string, platform: NodeJS.Platform = process.platform): string {
   let p = raw.trim();
   if ((p.startsWith('"') && p.endsWith('"')) || (p.startsWith("'") && p.endsWith("'"))) {
     p = p.slice(1, -1).trim();
   }
+  if (platform === 'win32') p = p.replace(/\//g, '\\');
+  // Drop a trailing separator so `C:\x` and `C:\x\` are one entry, but keep a
+  // bare root (`C:\`, `/`) intact.
+  if (p.length > 1 && /[\\/]$/.test(p) && !/^[a-zA-Z]:[\\/]$/.test(p)) p = p.slice(0, -1);
   return p;
 }
 

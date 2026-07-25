@@ -8,6 +8,11 @@ export interface Settings {
   /** Ordered chain of finish actions. */
   finishChain: FinishActionKey[];
   countdownSec: number;
+  /**
+   * Seconds after the last browser closes before sessions are stopped.
+   * 0 disables it and leaves sessions running headless.
+   */
+  stopSessionsWhenClosedSec: number;
   /** Remembered so relaunching in the same repo doesn't mean retyping the path. */
   recentDirectories: string[];
   defaultPermissionMode: PermissionLaunchMode;
@@ -17,6 +22,9 @@ const DEFAULTS: Settings = {
   planTier: 'auto',
   finishChain: ['notify'],
   countdownSec: 30,
+  // Long enough to ride out a page reload, short enough that a closed tab does
+  // not leave sessions spending tokens unattended.
+  stopSessionsWhenClosedSec: 30,
   recentDirectories: [],
   defaultPermissionMode: 'default',
 };

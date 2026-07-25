@@ -166,6 +166,7 @@ export type ServerEvent =
       usage: UsageSnapshot;
       recentDirectories: string[];
       countdownSec: number;
+      stopSessionsWhenClosedSec: number;
     }
   | { type: 'session_upsert'; session: SessionSummary }
   | { type: 'session_removed'; sessionId: string }
@@ -173,7 +174,12 @@ export type ServerEvent =
   | { type: 'feed_update'; sessionId: string; stepId: string; patch: FeedStepPatch }
   | { type: 'trigger_status'; trigger: TriggerStatus }
   | { type: 'usage'; usage: UsageSnapshot }
-  | { type: 'settings'; recentDirectories: string[]; countdownSec: number }
+  | {
+      type: 'settings';
+      recentDirectories: string[];
+      countdownSec: number;
+      stopSessionsWhenClosedSec: number;
+    }
   /** Result of a browse_folder request; path is null if the user cancelled. */
   | { type: 'folder_picked'; path: string | null }
   | { type: 'server_error'; message: string };
@@ -208,6 +214,19 @@ export type ClientCommand =
   | { type: 'disarm_trigger' }
   | { type: 'bulk'; op: 'approve_all' | 'interrupt_all' }
   | { type: 'set_plan_tier'; tier: PlanTier }
-  | { type: 'set_countdown'; seconds: number };
+  | { type: 'set_countdown'; seconds: number }
+  /** Seconds after the last browser closes before sessions stop; 0 disables. */
+  | { type: 'set_stop_on_close'; seconds: number }
+  /** Liveness beat from a page that is actually running. See CLIENT_PING_MS. */
+  | { type: 'ping' };
+
+/**
+ * How often a live page announces itself. A socket that stops beating is
+ * treated as gone even if TCP still looks connected — which happens for real:
+ * Firefox keeps a navigated-away page and its WebSocket alive in the
+ * back/forward cache, and a sleeping laptop leaves half-open sockets behind.
+ */
+export const CLIENT_PING_MS = 5_000;
+export const CLIENT_STALE_MS = 20_000;
 
 export const CLAUDIA_PORT = 4317;

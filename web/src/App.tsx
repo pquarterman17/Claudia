@@ -9,7 +9,7 @@ import { send, store, useClaudia } from './store';
 import { StatusFooter } from './components/StatusFooter';
 
 export function App() {
-  const { sessions, feeds, connected, lastError, trigger, usage, recentDirectories, countdownSec, platform } =
+  const { sessions, feeds, connected, lastError, trigger, usage, recentDirectories, countdownSec, platform, stopSessionsWhenClosedSec } =
     useClaudia();
   const [now, setNow] = useState(() => Date.now());
   const [usageOpen, setUsageOpen] = useState(false);
@@ -77,12 +77,42 @@ export function App() {
       {usageOpen && usage && <UsagePanel usage={usage} />}
       <LaunchBar recentDirectories={recentDirectories} />
       {lastError && (
-        <div style={{ flex: 'none', padding: '6px 16px', background: '#2a2027', color: '#d98484', fontSize: 11.5 }}>
-          {lastError}
+        <div
+          style={{
+            flex: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '6px 16px',
+            background: '#2a2027',
+            color: '#d98484',
+            fontSize: 11.5,
+          }}
+        >
+          <span style={{ flex: 1, minWidth: 0 }}>{lastError}</span>
+          <button
+            onClick={() => store.clearError()}
+            title="Dismiss"
+            style={{
+              cursor: 'pointer',
+              border: 0,
+              background: 'transparent',
+              color: '#9397ab',
+              fontSize: 12,
+              padding: '0 4px',
+            }}
+          >
+            ✕
+          </button>
         </div>
       )}
       <div className="board">
-        {trigger && <ControllerTile trigger={trigger} sessions={sessions} countdownSec={countdownSec} />}
+        {trigger && <ControllerTile
+            trigger={trigger}
+            sessions={sessions}
+            countdownSec={countdownSec}
+            stopOnCloseSec={stopSessionsWhenClosedSec}
+          />}
         {ordered.map((session, i) => (
           <SessionTile
             key={session.id}

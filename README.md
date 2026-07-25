@@ -56,6 +56,18 @@ Server on `127.0.0.1:4317`, UI on `127.0.0.1:4318`. Open the UI, pick a working 
 - Sessions inherit your `~/.claude/settings.json` allowlist, so the same commands
   auto-approve here as in your terminal. Everything else surfaces as an approval.
 
+## Closing the tab stops the sessions
+
+A session with no window on it is invisible work that still spends tokens — the exact thing
+this app exists to prevent. So when the last live browser goes away, sessions are stopped
+after a grace period (30s by default, adjustable in the controller; set it to 0 to leave them
+running). A page reload is well inside the grace period, so refreshing never kills work.
+
+"Live" means the page is actually running, not merely that a socket is open. Pages send a
+heartbeat, and a socket that stops beating counts as gone. This matters in practice: Firefox
+keeps a navigated-away page **and its WebSocket** alive in the back/forward cache, so going by
+socket state alone meant sessions were never stopped at all.
+
 ## Usage
 
 The panel reads Claude Code's own session logs, so it counts your terminal sessions too — not

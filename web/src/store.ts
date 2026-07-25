@@ -1,5 +1,6 @@
 import {
   CLAUDIA_PORT,
+  CLIENT_PING_MS,
   type ClientCommand,
   type FeedStep,
   type HostPlatform,
@@ -30,6 +31,7 @@ export interface ClaudiaState {
   usage?: UsageSnapshot;
   recentDirectories: string[];
   countdownSec: number;
+  stopSessionsWhenClosedSec: number;
   lastError?: string;
 }
 
@@ -46,11 +48,13 @@ class Store {
     feeds: {},
     recentDirectories: [],
     countdownSec: 30,
+    stopSessionsWhenClosedSec: 30,
   };
   private listeners = new Set<Listener>();
   private ws: WebSocket | null = null;
   private retryMs = 500;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private pingTimer: ReturnType<typeof setInterval> | undefined;
   /** One-off replies (folder picker) that aren't part of the rendered snapshot. */
   private folderListeners = new Set<(path: string | null) => void>();
 
@@ -98,6 +102,13 @@ class Store {
       if (!isCurrent()) return;
       this.retryMs = 500;
       this.set({ connected: true });
+      // Beat while this page is genuinely running. A frozen or bfcached page
+      // stops its timers, which is precisely how the server tells it has gone
+      // even though the socket still looks open.
+      if (this.pingTimer !== undefined) clearInterval(this.pingTimer);
+      this.pingTimer = setInterval(() => {
+        if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'ping' }));
+      }, CLIENT_PING_MS);
     };
     ws.onmessage = (ev) => {
       if (!isCurrent()) return;
@@ -105,12 +116,20 @@ class Store {
     };
     ws.onclose = () => {
       if (!isCurrent()) return;
+      if (this.pingTimer !== undefined) {
+        clearInterval(this.pingTimer);
+        this.pingTimer = undefined;
+      }
       this.ws = null;
       this.set({ connected: false });
       this.reconnectTimer = setTimeout(() => this.connect(), this.retryMs);
       this.retryMs = Math.min(this.retryMs * 2, 8000);
     };
   }
+
+  clearError = (): void => {
+    if (this.state.lastError !== undefined) this.set({ lastError: undefined });
+  };
 
   /** Reports rather than silently swallowing a command sent while offline. */
   send(cmd: ClientCommand): void {
@@ -119,6 +138,7 @@ class Store {
       this.connect();
       return;
     }
+    this.clearError();
     this.ws.send(JSON.stringify(cmd));
   }
 
@@ -133,11 +153,16 @@ class Store {
           usage: event.usage,
           recentDirectories: event.recentDirectories,
           countdownSec: event.countdownSec,
+          stopSessionsWhenClosedSec: event.stopSessionsWhenClosedSec,
           lastError: undefined,
         });
         return;
       case 'settings':
-        this.set({ recentDirectories: event.recentDirectories, countdownSec: event.countdownSec });
+        this.set({
+          recentDirectories: event.recentDirectories,
+          countdownSec: event.countdownSec,
+          stopSessionsWhenClosedSec: event.stopSessionsWhenClosedSec,
+        });
         return;
       case 'trigger_status':
         this.set({ trigger: event.trigger });

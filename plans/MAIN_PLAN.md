@@ -224,6 +224,32 @@ to estimates — is the only "closer to true" option; worth a look if the bars f
   already running they open the existing instance rather than dying on the port clash — the
   failure hit twice while building.
 
+- ~~**Stop sessions when the tab closes**~~ (2026-07-25) — when the last live browser goes away,
+  sessions stop after a grace period (default 30s, adjustable, 0 to disable). A reload is well
+  inside the grace, so refreshing never kills work.
+
+  **A socket being open is not proof anyone is watching.** The first implementation went by
+  socket state and never fired once: Firefox keeps a navigated-away page *and its WebSocket*
+  alive in the back/forward cache. Found only by using the app — the unit tests and the
+  feature's own logic were both "correct". Pages now send a heartbeat and a socket that stops
+  beating counts as gone, which also covers sleeping laptops and dropped networks. The decision
+  is a pure function (`client-liveness.ts`) so the case that fooled it is pinned by a test.
+
+  Also fixed here: `/health` reported total sessions including stopped ones, which actively hid
+  the bug — it now reports `live` separately.
+
+### Findings from dogfooding (2026-07-25)
+
+Running it for real, as the owner would, surfaced things no unit test did:
+
+- The error banner never cleared. A stale "No such directory" sat on screen through several
+  successful launches. Now dismissible, and any successful command retires it.
+- Repos are not all under `git/` — `quantized` lives under OneDrive. Mistyping a path is normal,
+  which is why the Browse button and the recent-directories autocomplete earn their place.
+- Four orphaned dev-server process trees had accumulated from manual restarts; `tsx watch`
+  cannot rebind a held port, so each failed silently and left its npm wrapper alive. The
+  launcher's already-running check exists for this.
+
 ### Resolved decisions (2026-07-25, round 2)
 
 - **Worktrees get one tile each** — no grouping layer, no special-casing. A worktree is just a

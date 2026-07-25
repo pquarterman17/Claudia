@@ -13,8 +13,19 @@ const platform = hostPlatform();
 
 const httpServer = createServer((req, res) => {
   if (req.url === '/health') {
+    const all = manager.summaries();
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, sessions: manager.summaries().length, platform }));
+    res.end(
+      JSON.stringify({
+        ok: true,
+        // `sessions` counts tiles on screen; `live` counts ones still holding a
+        // process. Reporting only the total hid a bug where sessions were never
+        // stopped, because a stopped session still has a tile.
+        sessions: all.length,
+        live: all.filter((s) => s.state !== 'stopped').length,
+        platform,
+      }),
+    );
     return;
   }
   res.writeHead(404).end();

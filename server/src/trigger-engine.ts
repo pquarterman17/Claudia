@@ -50,10 +50,24 @@ export class TriggerEngine {
   private firedAt: number | undefined;
   private lastResult: string | undefined;
   private blocked: string | null = null;
-  private readonly countdownSec: number;
+  private countdownSec: number;
 
   constructor(private readonly opts: TriggerEngineOptions) {
     this.countdownSec = opts.countdownSec ?? DEFAULT_COUNTDOWN_SEC;
+  }
+
+  /** Clamped: under 5s there is no realistic chance to cancel a shutdown. */
+  setCountdown(seconds: number): void {
+    this.countdownSec = Math.max(5, Math.min(600, Math.round(seconds)));
+    if (this.state === 'counting') {
+      this.state = 'armed';
+      this.countdown = undefined;
+    }
+    this.opts.onChange();
+  }
+
+  get countdownLength(): number {
+    return this.countdownSec;
   }
 
   status(): TriggerStatus {

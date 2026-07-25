@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
 import { SessionManager } from './session-manager.js';
+import { SettingsStore } from './settings-store.js';
 import { TriggerEngine } from './trigger-engine.js';
 import { UsageService } from './usage-service.js';
 
@@ -21,11 +22,19 @@ const httpServer = createServer((req, res) => {
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 const gateway = new Gateway(wss, platform);
 
+const settings = new SettingsStore();
+const saved = settings.get();
+
 const trigger = new TriggerEngine({
   platform,
   execute: executeFinishAction,
   onChange: () => gateway.broadcast({ type: 'trigger_status', trigger: trigger.status() }),
+  countdownSec: saved.countdownSec,
 });
+// Restore the last choice, but never restore an armed state — arming is a
+// deliberate act, and silently re-arming a shutdown across a restart is exactly
+// the kind of surprise this app should not have.
+trigger.selectAction(saved.finishAction);
 
 const manager = new SessionManager({
   onUpdate: (session) => gateway.broadcast({ type: 'session_upsert', session }),
@@ -36,8 +45,9 @@ const manager = new SessionManager({
 });
 
 const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: usage.snapshot() }));
+usage.setTier(saved.planTier);
 
-gateway.attach(manager, trigger, usage);
+gateway.attach(manager, trigger, usage, settings);
 usage.start();
 
 // One clock drives the countdown; the engine decides whether anything happens.

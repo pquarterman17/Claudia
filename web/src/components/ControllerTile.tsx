@@ -20,13 +20,14 @@ const ACTIONS: Array<{ key: FinishActionKey; label: string; unavailable?: string
 interface Props {
   trigger: TriggerStatus;
   sessions: SessionSummary[];
+  countdownSec: number;
 }
 
 /**
  * Global control: what happens when every session settles, and bulk actions.
  * The aggregate counts live in the top bar; this tile is the action surface.
  */
-export function ControllerTile({ trigger, sessions }: Props) {
+export function ControllerTile({ trigger, sessions, countdownSec }: Props) {
   const [confirming, setConfirming] = useState(false);
   const waiting = sessions.filter((s) => s.pendingApproval).length;
   const busy = sessions.filter((s) => s.state === 'working' || s.state === 'starting').length;
@@ -185,6 +186,25 @@ export function ControllerTile({ trigger, sessions }: Props) {
           >
             {armLabel}
           </button>
+        </section>
+
+        <section style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className="kicker">Grace period</span>
+          <input
+            type="number"
+            min={5}
+            max={600}
+            value={countdownSec}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n)) send({ type: 'set_countdown', seconds: n });
+            }}
+            className="input mono"
+            style={{ width: 62, fontSize: 11.5, padding: '3px 6px' }}
+          />
+          <span style={{ fontSize: 11, color: '#75798c' }}>
+            seconds to cancel before it fires
+          </span>
         </section>
 
         <section>

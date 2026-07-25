@@ -151,6 +151,8 @@ export type ServerEvent =
       trigger: TriggerStatus;
       platform: HostPlatform;
       usage: UsageSnapshot;
+      recentDirectories: string[];
+      countdownSec: number;
     }
   | { type: 'session_upsert'; session: SessionSummary }
   | { type: 'session_removed'; sessionId: string }
@@ -158,6 +160,7 @@ export type ServerEvent =
   | { type: 'feed_update'; sessionId: string; stepId: string; patch: FeedStepPatch }
   | { type: 'trigger_status'; trigger: TriggerStatus }
   | { type: 'usage'; usage: UsageSnapshot }
+  | { type: 'settings'; recentDirectories: string[]; countdownSec: number }
   /** Result of a browse_folder request; path is null if the user cancelled. */
   | { type: 'folder_picked'; path: string | null }
   | { type: 'server_error'; message: string };
@@ -189,6 +192,7 @@ export type ClientCommand =
   | { type: 'arm_trigger'; confirmDestructive?: boolean }
   | { type: 'disarm_trigger' }
   | { type: 'bulk'; op: 'approve_all' | 'interrupt_all' }
-  | { type: 'set_plan_tier'; tier: PlanTier };
+  | { type: 'set_plan_tier'; tier: PlanTier }
+  | { type: 'set_countdown'; seconds: number };
 
 export const CLAUDIA_PORT = 4317;

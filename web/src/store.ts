@@ -28,6 +28,8 @@ export interface ClaudiaState {
   trigger?: TriggerStatus;
   platform?: HostPlatform;
   usage?: UsageSnapshot;
+  recentDirectories: string[];
+  countdownSec: number;
   lastError?: string;
 }
 
@@ -38,7 +40,13 @@ type Listener = () => void;
  * Snapshots are replaced (never mutated) so useSyncExternalStore stays stable.
  */
 class Store {
-  private state: ClaudiaState = { connected: false, sessions: [], feeds: {} };
+  private state: ClaudiaState = {
+    connected: false,
+    sessions: [],
+    feeds: {},
+    recentDirectories: [],
+    countdownSec: 30,
+  };
   private listeners = new Set<Listener>();
   private ws: WebSocket | null = null;
   private retryMs = 500;
@@ -87,8 +95,13 @@ class Store {
           trigger: event.trigger,
           platform: event.platform,
           usage: event.usage,
+          recentDirectories: event.recentDirectories,
+          countdownSec: event.countdownSec,
           lastError: undefined,
         });
+        return;
+      case 'settings':
+        this.set({ recentDirectories: event.recentDirectories, countdownSec: event.countdownSec });
         return;
       case 'trigger_status':
         this.set({ trigger: event.trigger });

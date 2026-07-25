@@ -8,8 +8,12 @@ const MODES: Array<{ key: PermissionLaunchMode; label: string; danger?: boolean 
   { key: 'bypassPermissions', label: 'Skip all permissions', danger: true },
 ];
 
+interface Props {
+  recentDirectories: string[];
+}
+
 /** Launch a new Claudia-owned session: cwd + first prompt + permission mode. */
-export function LaunchBar() {
+export function LaunchBar({ recentDirectories }: Props) {
   const [cwd, setCwd] = useState('');
   const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<PermissionLaunchMode>('default');
@@ -60,9 +64,15 @@ export function LaunchBar() {
             setCwd(pasted);
           }
         }}
+        list="claudia-recent-dirs"
         placeholder="paste a path, or browse…"
         style={{ flex: '0 1 300px', fontSize: 11.5, padding: '4px 8px' }}
       />
+      <datalist id="claudia-recent-dirs">
+        {recentDirectories.map((d) => (
+          <option key={d} value={d} />
+        ))}
+      </datalist>
       <button
         className="btn btn-secondary"
         disabled={browsing}

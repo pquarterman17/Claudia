@@ -7,7 +7,8 @@ import { UsagePanel } from './components/UsagePanel';
 import { store, useClaudia } from './store';
 
 export function App() {
-  const { sessions, feeds, connected, lastError, trigger, usage } = useClaudia();
+  const { sessions, feeds, connected, lastError, trigger, usage, recentDirectories, countdownSec } =
+    useClaudia();
   const [now, setNow] = useState(() => Date.now());
   const [usageOpen, setUsageOpen] = useState(false);
 
@@ -33,14 +34,14 @@ export function App() {
         onToggleUsage={() => setUsageOpen((v) => !v)}
       />
       {usageOpen && usage && <UsagePanel usage={usage} />}
-      <LaunchBar />
+      <LaunchBar recentDirectories={recentDirectories} />
       {lastError && (
         <div style={{ flex: 'none', padding: '6px 16px', background: '#2a2027', color: '#d98484', fontSize: 11.5 }}>
           {lastError}
         </div>
       )}
       <div className="board">
-        {trigger && <ControllerTile trigger={trigger} sessions={sessions} />}
+        {trigger && <ControllerTile trigger={trigger} sessions={sessions} countdownSec={countdownSec} />}
         {ordered.map((session) => (
           <SessionTile key={session.id} session={session} steps={feeds[session.id] ?? []} now={now} />
         ))}

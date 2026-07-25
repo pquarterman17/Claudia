@@ -2,6 +2,7 @@ import type { ClientCommand, HostPlatform, ServerEvent } from '@claudia/shared';
 import { WebSocket, WebSocketServer } from 'ws';
 import { assertUsableDirectory, normalizePath, pickFolder } from './folder-picker.js';
 import type { SessionManager } from './session-manager.js';
+import type { SettingsStore } from './settings-store.js';
 import type { TriggerEngine } from './trigger-engine.js';
 import type { UsageService } from './usage-service.js';
 
@@ -11,6 +12,7 @@ export class Gateway {
   private manager!: SessionManager;
   private trigger!: TriggerEngine;
   private usage!: UsageService;
+  private settings!: SettingsStore;
 
   constructor(
     wss: WebSocketServer,
@@ -19,10 +21,16 @@ export class Gateway {
     this.wss = wss;
   }
 
-  attach(manager: SessionManager, trigger: TriggerEngine, usage: UsageService): void {
+  attach(
+    manager: SessionManager,
+    trigger: TriggerEngine,
+    usage: UsageService,
+    settings: SettingsStore,
+  ): void {
     this.manager = manager;
     this.trigger = trigger;
     this.usage = usage;
+    this.settings = settings;
     this.wss.on('connection', (socket) => {
       this.sendTo(socket, {
         type: 'hello',
@@ -31,6 +39,8 @@ export class Gateway {
         trigger: trigger.status(),
         platform: this.platform,
         usage: usage.snapshot(),
+        recentDirectories: settings.get().recentDirectories,
+        countdownSec: settings.get().countdownSec,
       });
       socket.on('message', (raw) => {
         let cmd: ClientCommand;
@@ -49,6 +59,15 @@ export class Gateway {
           });
         }
       });
+    });
+  }
+
+  private broadcastSettings(): void {
+    const s = this.settings.get();
+    this.broadcast({
+      type: 'settings',
+      recentDirectories: s.recentDirectories,
+      countdownSec: s.countdownSec,
     });
   }
 
@@ -74,6 +93,8 @@ export class Gateway {
           model: cmd.model,
           permissionMode: cmd.permissionMode ?? 'default',
         });
+        this.settings.rememberDirectory(cwd);
+        this.broadcastSettings();
         return;
       }
       case 'browse_folder':
@@ -114,6 +135,7 @@ export class Gateway {
         return;
       case 'select_finish_action':
         this.trigger.selectAction(cmd.action);
+        this.settings.update({ finishAction: cmd.action });
         return;
       case 'arm_trigger':
         this.trigger.arm(cmd.confirmDestructive);
@@ -126,6 +148,12 @@ export class Gateway {
         return;
       case 'set_plan_tier':
         this.usage.setTier(cmd.tier);
+        this.settings.update({ planTier: cmd.tier });
+        return;
+      case 'set_countdown':
+        this.trigger.setCountdown(cmd.seconds);
+        this.settings.update({ countdownSec: this.trigger.countdownLength });
+        this.broadcastSettings();
         return;
     }
   }

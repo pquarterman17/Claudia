@@ -1,15 +1,24 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { FeedStep, ModelUsage, PermissionLaunchMode, SessionState, SessionSummary } from '@claudia/shared';
+import type {
+  FeedStep,
+  FeedStepPatch,
+  ModelUsage,
+  PermissionLaunchMode,
+  SessionState,
+  SessionSummary,
+} from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import { ApprovalGate, type PermissionResult } from './approval-gate.js';
 import { AsyncQueue } from './async-queue.js';
 import { approvalStep, errorStep, infoStep, summarizeToolInput } from './feed.js';
 import { routeMessage } from './message-router.js';
+import { ToolTracker } from './tool-tracker.js';
 
 export interface SessionCallbacks {
   onUpdate: (summary: SessionSummary) => void;
   onFeed: (sessionId: string, step: FeedStep) => void;
+  onFeedPatch: (sessionId: string, stepId: string, patch: FeedStepPatch) => void;
 }
 
 export interface LaunchOptions {
@@ -27,6 +36,7 @@ export interface LaunchOptions {
 export class ClaudiaSession {
   readonly id = randomUUID();
   private readonly gate = new ApprovalGate();
+  private readonly tools = new ToolTracker();
   private readonly input = new AsyncQueue<unknown>();
   private q: ReturnType<typeof query> | null = null;
 
@@ -99,6 +109,17 @@ export class ClaudiaSession {
 
     for (const step of routed.steps) this.cb.onFeed(this.id, step);
 
+    for (const start of routed.toolStarts ?? []) this.tools.begin(start.toolUseId, start.stepId);
+    for (const end of routed.toolEnds ?? []) {
+      const done = this.tools.complete(end.toolUseId, end.isError);
+      if (done) {
+        this.cb.onFeedPatch(this.id, done.stepId, {
+          durMs: done.durMs,
+          status: done.isError ? 'error' : 'ok',
+        });
+      }
+    }
+
     if (routed.claudeSessionId) this.claudeSessionId = routed.claudeSessionId;
     if (routed.model) this.model = routed.model;
     // Cost and usage are cumulative in the SDK's result message — assign, never add.
@@ -170,6 +191,7 @@ export class ClaudiaSession {
 
   stop(): void {
     this.gate.abandon('Session stopped');
+    this.abandonRunningTools('session stopped');
     this.input.close();
     try {
       (this.q as { close?: () => void } | null)?.close?.();
@@ -182,8 +204,17 @@ export class ClaudiaSession {
   private fail(message: string): void {
     this.errorMessage = message;
     this.gate.abandon(`Session failed: ${message}`);
+    this.abandonRunningTools(message);
     this.cb.onFeed(this.id, errorStep('Session error', message));
     this.setState('error');
+  }
+
+  /** Stop any tool step spinning forever when its result can no longer arrive. */
+  private abandonRunningTools(reason: string): void {
+    for (const stepId of this.tools.outstanding()) {
+      this.cb.onFeedPatch(this.id, stepId, { status: 'error', meta: `did not finish — ${reason}` });
+    }
+    this.tools.clear();
   }
 
   private pushUserText(text: string): void {

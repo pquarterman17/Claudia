@@ -21,7 +21,12 @@ export interface FeedStep {
   title: string;
   meta?: string;
   durMs?: number;
+  /** Tool steps start 'running' and are patched once their result arrives. */
+  status?: 'running' | 'ok' | 'error';
 }
+
+/** Fields of an existing feed step that a later event can revise. */
+export type FeedStepPatch = Pick<FeedStep, 'durMs' | 'status' | 'meta'>;
 
 export interface PendingApproval {
   requestId: string;
@@ -106,6 +111,7 @@ export type ServerEvent =
   | { type: 'session_upsert'; session: SessionSummary }
   | { type: 'session_removed'; sessionId: string }
   | { type: 'feed_append'; sessionId: string; step: FeedStep }
+  | { type: 'feed_update'; sessionId: string; stepId: string; patch: FeedStepPatch }
   | { type: 'trigger_status'; trigger: TriggerStatus }
   /** Result of a browse_folder request; path is null if the user cancelled. */
   | { type: 'folder_picked'; path: string | null }

@@ -20,6 +20,10 @@ export interface RoutedMessage {
   /** Cumulative session usage per model. Present only on result messages. */
   modelUsage?: ModelUsage[];
   errorMessage?: string;
+  /** Tool calls opened by this message, paired to the step representing them. */
+  toolStarts?: Array<{ toolUseId: string; stepId: string }>;
+  /** Tool results carried by this message, to be matched back by id. */
+  toolEnds?: Array<{ toolUseId: string; isError: boolean }>;
 }
 
 const EMPTY: RoutedMessage = { steps: [] };
@@ -49,18 +53,41 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
   if (type === 'assistant') {
     const inner = message['message'] as Record<string, unknown> | undefined;
     const steps: FeedStep[] = [];
+    const toolStarts: Array<{ toolUseId: string; stepId: string }> = [];
     const content = inner?.['content'];
     if (Array.isArray(content)) {
       for (const block of content as Array<Record<string, unknown>>) {
         if (block['type'] === 'tool_use') {
-          steps.push(stepFromToolUse(String(block['name'] ?? 'tool'), (block['input'] as Record<string, unknown>) ?? {}));
+          const step = stepFromToolUse(
+            String(block['name'] ?? 'tool'),
+            (block['input'] as Record<string, unknown>) ?? {},
+          );
+          step.status = 'running';
+          steps.push(step);
+          const id = block['id'];
+          if (typeof id === 'string') toolStarts.push({ toolUseId: id, stepId: step.id });
         } else if (block['type'] === 'text' && typeof block['text'] === 'string') {
           const step = stepFromText(block['text']);
           if (step) steps.push(step);
         }
       }
     }
-    return { steps, state: 'working' };
+    return { steps, state: 'working', ...(toolStarts.length ? { toolStarts } : {}) };
+  }
+
+  // User messages carry tool_result blocks — the other half of each tool call.
+  if (type === 'user') {
+    const inner = message['message'] as Record<string, unknown> | undefined;
+    const content = inner?.['content'];
+    if (!Array.isArray(content)) return EMPTY;
+    const toolEnds: Array<{ toolUseId: string; isError: boolean }> = [];
+    for (const block of content as Array<Record<string, unknown>>) {
+      if (block['type'] !== 'tool_result') continue;
+      const id = block['tool_use_id'];
+      // is_error is absent on success rather than false, so coerce.
+      if (typeof id === 'string') toolEnds.push({ toolUseId: id, isError: block['is_error'] === true });
+    }
+    return toolEnds.length ? { steps: [], toolEnds } : EMPTY;
   }
 
   if (type === 'result') {

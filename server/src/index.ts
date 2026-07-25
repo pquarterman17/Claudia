@@ -29,6 +29,8 @@ const trigger = new TriggerEngine({
 const manager = new SessionManager({
   onUpdate: (session) => gateway.broadcast({ type: 'session_upsert', session }),
   onFeed: (sessionId, step) => gateway.broadcast({ type: 'feed_append', sessionId, step }),
+  onFeedPatch: (sessionId, stepId, patch) =>
+    gateway.broadcast({ type: 'feed_update', sessionId, stepId, patch }),
   onRemoved: (sessionId) => gateway.broadcast({ type: 'session_removed', sessionId }),
 });
 

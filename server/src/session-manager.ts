@@ -1,4 +1,4 @@
-import type { FeedStep, SessionSummary } from '@claudia/shared';
+import type { FeedStep, FeedStepPatch, SessionSummary } from '@claudia/shared';
 import { ClaudiaSession, type LaunchOptions } from './session.js';
 
 const FEED_CAP = 500;
@@ -7,6 +7,7 @@ const MAX_SESSIONS = 12;
 export interface ManagerEvents {
   onUpdate: (summary: SessionSummary) => void;
   onFeed: (sessionId: string, step: FeedStep) => void;
+  onFeedPatch: (sessionId: string, stepId: string, patch: FeedStepPatch) => void;
   onRemoved: (sessionId: string) => void;
 }
 
@@ -32,6 +33,14 @@ export class SessionManager {
         if (feed.length > FEED_CAP) feed.splice(0, feed.length - FEED_CAP);
         this.feeds.set(sessionId, feed);
         this.events.onFeed(sessionId, step);
+      },
+      onFeedPatch: (sessionId, stepId, patch) => {
+        // Patch the stored history too, so a browser connecting later sees
+        // finished steps rather than ones stuck at 'running'.
+        const feed = this.feeds.get(sessionId);
+        const step = feed?.find((s) => s.id === stepId);
+        if (step) Object.assign(step, patch);
+        this.events.onFeedPatch(sessionId, stepId, patch);
       },
     });
     this.sessions.set(session.id, session);

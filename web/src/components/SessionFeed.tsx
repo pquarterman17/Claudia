@@ -1,7 +1,7 @@
 import type { FeedStep } from '@claudia/shared';
 import { useEffect, useRef } from 'react';
 import { fmtDur } from '../format';
-import { FEED_ICONS } from '../status';
+import { COLORS, FEED_ICONS } from '../status';
 
 interface Props {
   steps: FeedStep[];
@@ -22,10 +22,25 @@ export function SessionFeed({ steps }: Props) {
   return (
     <>
       {steps.map((step) => {
-        const { icon, color } = FEED_ICONS[step.kind] ?? FEED_ICONS['info']!;
+        const base = FEED_ICONS[step.kind] ?? FEED_ICONS['info']!;
+        // A finished tool call reports its outcome; a running one keeps its
+        // tool icon and pulses so it reads as in-flight rather than stalled.
+        const icon = step.status === 'ok' ? '✓' : step.status === 'error' ? '✕' : base.icon;
+        const color =
+          step.status === 'ok' ? COLORS.ok : step.status === 'error' ? COLORS.err : base.color;
         return (
           <div key={step.id} style={{ display: 'flex', gap: 9, alignItems: 'flex-start' }}>
-            <span style={{ width: 16, textAlign: 'center', color, fontSize: 11, flex: 'none', marginTop: 1 }}>
+            <span
+              style={{
+                width: 16,
+                textAlign: 'center',
+                color,
+                fontSize: 11,
+                flex: 'none',
+                marginTop: 1,
+                animation: step.status === 'running' ? 'claudia-pulse 1.4s ease-in-out infinite' : 'none',
+              }}
+            >
               {icon}
             </span>
             <span style={{ flex: 1, minWidth: 0 }}>

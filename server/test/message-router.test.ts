@@ -78,6 +78,44 @@ describe('routeMessage', () => {
     expect(r.modelUsage?.find((m) => m.model.includes('haiku'))?.outputTokens).toBe(12);
   });
 
+  it('pairs a tool_use with its step and marks it running', () => {
+    const r = routeMessage(
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 'toolu_9', name: 'Bash', input: { command: 'ls' } }] },
+      },
+      T0,
+    );
+    expect(r.steps[0]?.status).toBe('running');
+    expect(r.toolStarts).toEqual([{ toolUseId: 'toolu_9', stepId: r.steps[0]?.id }]);
+  });
+
+  it('extracts tool results from user messages', () => {
+    const r = routeMessage(
+      {
+        type: 'user',
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'a', content: 'hi' },
+            { type: 'tool_result', tool_use_id: 'b', is_error: true, content: 'boom' },
+          ],
+        },
+      },
+      T0,
+    );
+    // is_error is absent on success rather than false — must not read as an error.
+    expect(r.toolEnds).toEqual([
+      { toolUseId: 'a', isError: false },
+      { toolUseId: 'b', isError: true },
+    ]);
+    expect(r.steps).toHaveLength(0);
+  });
+
+  it('ignores user messages that are plain prompts', () => {
+    const r = routeMessage({ type: 'user', message: { content: 'just text' } }, T0);
+    expect(r.toolEnds).toBeUndefined();
+  });
+
   it('survives a result with no modelUsage', () => {
     const r = routeMessage({ type: 'result', subtype: 'success', total_cost_usd: 1 }, T0);
     expect(r.modelUsage).toBeUndefined();

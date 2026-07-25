@@ -113,6 +113,13 @@ class Store {
         this.set({ feeds: { ...this.state.feeds, [event.sessionId]: feed } });
         return;
       }
+      case 'feed_update': {
+        const existing = this.state.feeds[event.sessionId];
+        if (!existing) return;
+        const feed = existing.map((s) => (s.id === event.stepId ? { ...s, ...event.patch } : s));
+        this.set({ feeds: { ...this.state.feeds, [event.sessionId]: feed } });
+        return;
+      }
       case 'server_error':
         this.set({ lastError: event.message });
         return;

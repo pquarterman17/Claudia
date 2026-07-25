@@ -7,6 +7,7 @@ const cwd = process.argv[2];
 const prompt = process.argv[3];
 let sessionId = null;
 const seenStates = [];
+const steps = new Map();
 
 const done = setTimeout(() => {
   console.log('\n--- TIMEOUT --- states seen:', seenStates.join(' → '));
@@ -46,7 +47,14 @@ ws.addEventListener('message', (raw) => {
   }
   if (ev.type === 'feed_append') {
     const s = ev.step;
-    console.log(`  [${s.kind}] ${s.title}${s.meta ? ' — ' + s.meta : ''}`);
+    steps.set(s.id, s);
+    console.log(`  [${s.kind}] ${s.title}${s.meta ? ' — ' + s.meta : ''}${s.status === 'running' ? ' …' : ''}`);
+  }
+  if (ev.type === 'feed_update') {
+    const s = steps.get(ev.stepId);
+    const p = ev.patch;
+    const mark = p.status === 'ok' ? 'OK ' : p.status === 'error' ? 'ERR' : '   ';
+    console.log(`     ↳ ${mark} ${s ? s.title + (s.meta ? ' — ' + s.meta : '') : ev.stepId} (${p.durMs}ms)`);
   }
   if (ev.type === 'server_error') console.log('[server_error]', ev.message);
 });

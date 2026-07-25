@@ -5,6 +5,7 @@ import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
 import { SessionManager } from './session-manager.js';
 import { TriggerEngine } from './trigger-engine.js';
+import { UsageService } from './usage-service.js';
 
 const platform = hostPlatform();
 
@@ -34,7 +35,10 @@ const manager = new SessionManager({
   onRemoved: (sessionId) => gateway.broadcast({ type: 'session_removed', sessionId }),
 });
 
-gateway.attach(manager, trigger);
+const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: usage.snapshot() }));
+
+gateway.attach(manager, trigger, usage);
+usage.start();
 
 // One clock drives the countdown; the engine decides whether anything happens.
 const ticker = setInterval(() => trigger.tick(manager.summaries()), 1000);
@@ -48,6 +52,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     console.log(`[claudia] ${signal} — stopping sessions`);
     clearInterval(ticker);
+    usage.stop();
     manager.stopAll();
     httpServer.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();

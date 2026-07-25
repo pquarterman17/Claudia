@@ -3,12 +3,14 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { assertUsableDirectory, normalizePath, pickFolder } from './folder-picker.js';
 import type { SessionManager } from './session-manager.js';
 import type { TriggerEngine } from './trigger-engine.js';
+import type { UsageService } from './usage-service.js';
 
 /** WS fan-out plus command dispatch. One gateway serves every connected browser. */
 export class Gateway {
   private wss: WebSocketServer;
   private manager!: SessionManager;
   private trigger!: TriggerEngine;
+  private usage!: UsageService;
 
   constructor(
     wss: WebSocketServer,
@@ -17,9 +19,10 @@ export class Gateway {
     this.wss = wss;
   }
 
-  attach(manager: SessionManager, trigger: TriggerEngine): void {
+  attach(manager: SessionManager, trigger: TriggerEngine, usage: UsageService): void {
     this.manager = manager;
     this.trigger = trigger;
+    this.usage = usage;
     this.wss.on('connection', (socket) => {
       this.sendTo(socket, {
         type: 'hello',
@@ -27,6 +30,7 @@ export class Gateway {
         feeds: manager.feedSnapshot(),
         trigger: trigger.status(),
         platform: this.platform,
+        usage: usage.snapshot(),
       });
       socket.on('message', (raw) => {
         let cmd: ClientCommand;
@@ -119,6 +123,9 @@ export class Gateway {
         return;
       case 'bulk':
         this.runBulk(cmd.op);
+        return;
+      case 'set_plan_tier':
+        this.usage.setTier(cmd.tier);
         return;
     }
   }

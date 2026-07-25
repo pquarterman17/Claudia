@@ -98,6 +98,49 @@ export interface TriggerStatus {
 
 export type HostPlatform = 'win32' | 'darwin' | 'linux';
 
+// ---------- usage ----------
+
+export interface TokenCounts {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}
+
+/** 'auto' derives a reference from the user's own history; the rest are estimates. */
+export type PlanTier = 'auto' | 'pro' | 'max5x' | 'max20x' | 'custom';
+
+export interface UsageWindow {
+  label: string;
+  hours: number;
+  tokens: TokenCounts;
+  /** Pricing-weighted total — cache reads counted at 10%, as billing does. */
+  billableTokens: number;
+  /** What the bar is measured against. Null when there's too little history. */
+  referenceTokens: number | null;
+  /** Where the reference came from, e.g. "typical for you". */
+  referenceLabel: string;
+  remainingPct: number | null;
+  level: 'ok' | 'low' | 'critical';
+}
+
+export interface ProjectUsage {
+  project: string;
+  billableTokens: number;
+  outputTokens: number;
+}
+
+export interface UsageSnapshot {
+  tier: PlanTier;
+  windows: UsageWindow[];
+  byProject: ProjectUsage[];
+  byModel: Array<{ model: string; billableTokens: number }>;
+  /** When the local logs were last scanned. */
+  scannedAt: number;
+  /** True while the first (potentially slow) scan is still running. */
+  scanning: boolean;
+}
+
 // ---------- server → client ----------
 
 export type ServerEvent =
@@ -107,12 +150,14 @@ export type ServerEvent =
       feeds: Record<string, FeedStep[]>;
       trigger: TriggerStatus;
       platform: HostPlatform;
+      usage: UsageSnapshot;
     }
   | { type: 'session_upsert'; session: SessionSummary }
   | { type: 'session_removed'; sessionId: string }
   | { type: 'feed_append'; sessionId: string; step: FeedStep }
   | { type: 'feed_update'; sessionId: string; stepId: string; patch: FeedStepPatch }
   | { type: 'trigger_status'; trigger: TriggerStatus }
+  | { type: 'usage'; usage: UsageSnapshot }
   /** Result of a browse_folder request; path is null if the user cancelled. */
   | { type: 'folder_picked'; path: string | null }
   | { type: 'server_error'; message: string };
@@ -143,6 +188,7 @@ export type ClientCommand =
   /** `confirmDestructive` must be true to arm shutdown — the server re-checks. */
   | { type: 'arm_trigger'; confirmDestructive?: boolean }
   | { type: 'disarm_trigger' }
-  | { type: 'bulk'; op: 'approve_all' | 'interrupt_all' };
+  | { type: 'bulk'; op: 'approve_all' | 'interrupt_all' }
+  | { type: 'set_plan_tier'; tier: PlanTier };
 
 export const CLAUDIA_PORT = 4317;

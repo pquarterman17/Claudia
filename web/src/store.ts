@@ -6,6 +6,7 @@ import {
   type ServerEvent,
   type SessionSummary,
   type TriggerStatus,
+  type UsageSnapshot,
 } from '@claudia/shared';
 import { useSyncExternalStore } from 'react';
 
@@ -26,6 +27,7 @@ export interface ClaudiaState {
   feeds: Record<string, FeedStep[]>;
   trigger?: TriggerStatus;
   platform?: HostPlatform;
+  usage?: UsageSnapshot;
   lastError?: string;
 }
 
@@ -84,11 +86,15 @@ class Store {
           feeds: event.feeds,
           trigger: event.trigger,
           platform: event.platform,
+          usage: event.usage,
           lastError: undefined,
         });
         return;
       case 'trigger_status':
         this.set({ trigger: event.trigger });
+        return;
+      case 'usage':
+        this.set({ usage: event.usage });
         return;
       case 'folder_picked':
         for (const listener of this.folderListeners) listener(event.path);

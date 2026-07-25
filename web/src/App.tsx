@@ -3,11 +3,13 @@ import { ControllerTile } from './components/ControllerTile';
 import { LaunchBar } from './components/LaunchBar';
 import { SessionTile } from './components/SessionTile';
 import { TopBar } from './components/TopBar';
+import { UsagePanel } from './components/UsagePanel';
 import { store, useClaudia } from './store';
 
 export function App() {
-  const { sessions, feeds, connected, lastError, trigger } = useClaudia();
+  const { sessions, feeds, connected, lastError, trigger, usage } = useClaudia();
   const [now, setNow] = useState(() => Date.now());
+  const [usageOpen, setUsageOpen] = useState(false);
 
   useEffect(() => {
     store.connect();
@@ -23,7 +25,14 @@ export function App() {
 
   return (
     <div className="app">
-      <TopBar sessions={sessions} connected={connected} />
+      <TopBar
+        sessions={sessions}
+        connected={connected}
+        usage={usage}
+        usageOpen={usageOpen}
+        onToggleUsage={() => setUsageOpen((v) => !v)}
+      />
+      {usageOpen && usage && <UsagePanel usage={usage} />}
       <LaunchBar />
       {lastError && (
         <div style={{ flex: 'none', padding: '6px 16px', background: '#2a2027', color: '#d98484', fontSize: 11.5 }}>

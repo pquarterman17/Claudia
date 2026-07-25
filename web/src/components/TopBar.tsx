@@ -1,14 +1,17 @@
-import type { SessionSummary } from '@claudia/shared';
+import type { SessionSummary, UsageSnapshot } from '@claudia/shared';
 import { fmtCost, fmtTokens } from '../format';
 import { COLORS } from '../status';
 
 interface Props {
   sessions: SessionSummary[];
   connected: boolean;
+  usage?: UsageSnapshot;
+  usageOpen: boolean;
+  onToggleUsage: () => void;
 }
 
-/** Aggregate header: totals, status counts, connection state. */
-export function TopBar({ sessions, connected }: Props) {
+/** Aggregate header: totals, status counts, plan headroom, connection state. */
+export function TopBar({ sessions, connected, usage, usageOpen, onToggleUsage }: Props) {
   const working = sessions.filter((s) => s.state === 'working' || s.state === 'starting').length;
   const waiting = sessions.filter((s) => s.state === 'awaiting_approval').length;
   const blocked = sessions.filter((s) => s.state === 'error').length;
@@ -63,6 +66,31 @@ export function TopBar({ sessions, connected }: Props) {
       <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
         <Stat label="today" value={fmtCost(cost)} />
         <Stat label="tokens" value={fmtTokens(tokens)} />
+        <button
+          onClick={onToggleUsage}
+          title="Plan usage, estimated from local session history"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            cursor: 'pointer',
+            border: `1px solid ${usageOpen ? '#5d5294' : '#33364a'}`,
+            background: usageOpen ? '#2b2741' : '#1e2130',
+            borderRadius: 8,
+            padding: '5px 11px',
+            color: 'var(--color-text)',
+            fontFamily: 'var(--font-body)',
+          }}
+        >
+          <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.1 }}>
+            <span className="kicker" style={{ fontSize: 9 }}>
+              usage
+            </span>
+            <span style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', color: tightColor(usage) }}>
+              {tightPct(usage)}
+            </span>
+          </span>
+        </button>
         <span
           title={connected ? 'connected to server' : 'reconnecting…'}
           style={{
@@ -76,6 +104,27 @@ export function TopBar({ sessions, connected }: Props) {
       </div>
     </div>
   );
+}
+
+/** The tightest window with a reference is the one worth showing in the header. */
+function tightest(usage?: UsageSnapshot) {
+  const measured = usage?.windows.filter((w) => w.remainingPct !== null) ?? [];
+  if (measured.length === 0) return undefined;
+  return measured.reduce((a, w) => ((w.remainingPct ?? 100) < (a.remainingPct ?? 100) ? w : a));
+}
+
+function tightPct(usage?: UsageSnapshot): string {
+  const w = tightest(usage);
+  if (!w || w.referenceTokens === null) return '—';
+  // Over the reference, the multiple is the informative number, not "0%".
+  if (w.billableTokens > w.referenceTokens) return `${(w.billableTokens / w.referenceTokens).toFixed(1)}×`;
+  return `${w.remainingPct}%`;
+}
+
+function tightColor(usage?: UsageSnapshot): string {
+  const w = tightest(usage);
+  if (!w) return COLORS.mute;
+  return w.level === 'critical' ? COLORS.err : w.level === 'low' ? COLORS.warn : '#d2cefd';
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

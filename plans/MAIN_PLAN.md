@@ -75,11 +75,8 @@ desktop and a MacBook at different times, so the app must run natively on both �
 5. **Usage panel** — spend, burn rate, per-project rows, remaining-vs-plan bars
    - [ ] Runtime tier picker (Pro / Max 5x / Max 20x / custom) — owner switches tiers often,
          so this must be a setting, never a rebuild
-   - [ ] Aggregate historical usage across sessions. `~/.claude/stats-cache.json` already holds
-         Claude Code's own rollup (per-model tokens + `costUSD`, ~26 days of daily activity) —
-         cheaper than re-parsing every JSONL, but undocumented, so treat as a fast path with
-         a JSONL reader as the fallback of record
-   - [ ] Label the bars as **estimates** in the UI (see below) — do not imply server truth
+   - [ ] Optional: let the user enter real ceilings once they've calibrated them by observing
+         when they actually get limited (the tier buttons currently apply unverified estimates)
 6. **Persistence** — SQLite (better-sqlite3): sessions, history, usage rollups, settings
 7. **Trigger engine follow-ups** — implement "commit + push all" (currently disabled in the UI
    rather than firing as a silent no-op; needs per-repo rules before it pushes unreviewed work),
@@ -159,6 +156,24 @@ to estimates — is the only "closer to true" option; worth a look if the bars f
   disarmed itself. A prompt sent mid-countdown cancelled it back to `armed` and the countdown
   later restarted from full, not from where it stopped. Shutdown selected → armed refused
   without a second confirming click, with `shutdown.exe /s /t 0` shown in red.
+
+- ~~**#5 Usage panel**~~ (2026-07-25) — reads Claude Code's own JSONL logs, so it covers
+  terminal sessions too, not just Claudia-owned ones. Incremental byte-offset reads keep it
+  cheap: 515 ms for the first pass over 81 MB, 21 ms per rescan thereafter.
+
+  **The default measures against your own history, not an invented ceiling.** A first version
+  used community-estimated tier ceilings; measured against real logs those were out by more
+  than an order of magnitude (a genuine week came to ~332M weighted tokens against an invented
+  14M "Max 20x" ceiling), which pegs every bar at 0% and teaches the user to ignore the panel.
+  Comparing against a median day of your own is self-calibrating and needs no invented numbers.
+  Once past the reference the UI reports the multiple ("14.4× of typical") rather than "0% left",
+  which distinguishes just-over from ten-times-over. Tier buttons remain as an override, labelled
+  as estimates.
+
+  Corrections to earlier notes in this file: `stats-cache.json`'s `costUSD` is **0** and it lags
+  a day or two, so it is not usable for spend — it was not used. And JSONL `output_tokens` are
+  **real** (median 418 on a live session, no placeholders); only the SDK's streaming assistant
+  messages carry the placeholder.
 
 ### Resolved decisions (2026-07-25, round 2)
 

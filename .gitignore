@@ -8,3 +8,4 @@ Conductor for parallel Claude Code projects/
 data/
 dist-types/
 *.tsbuildinfo
+.vite/

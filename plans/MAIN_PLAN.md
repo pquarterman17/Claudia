@@ -71,7 +71,14 @@ desktop and a MacBook at different times, so the app must run natively on both �
 ## Tier 2 — Medium Impact
 
 4. **Controller tile** — aggregate settled/total, segmented status bar, bulk approve/pause, launch-mode selector (ask / acceptEdits / bypassPermissions with red warnings)
-5. **Usage panel** — JSONL watcher + SDK result aggregation; today's spend, burn rate, per-project rows; user-configured plan limits with remaining bars
+5. **Usage panel** — spend, burn rate, per-project rows, remaining-vs-plan bars
+   - [ ] Runtime tier picker (Pro / Max 5x / Max 20x / custom) — owner switches tiers often,
+         so this must be a setting, never a rebuild
+   - [ ] Aggregate historical usage across sessions. `~/.claude/stats-cache.json` already holds
+         Claude Code's own rollup (per-model tokens + `costUSD`, ~26 days of daily activity) —
+         cheaper than re-parsing every JSONL, but undocumented, so treat as a fast path with
+         a JSONL reader as the fallback of record
+   - [ ] Label the bars as **estimates** in the UI (see below) — do not imply server truth
 6. **Persistence** — SQLite (better-sqlite3): sessions, history, usage rollups, settings
 7. **Trigger engine** — arm/countdown/fire (notify → commit+push → sleep → shutdown → script), per-OS command table, blocked-session gate
 8. **Hooks monitor tier** — global hook POSTs to server so plain-terminal sessions appear as read-only tiles
@@ -103,12 +110,41 @@ desktop and a MacBook at different times, so the app must run natively on both �
   pointing a browser at it. Tauri stays available as a later wrapper (item 11).
 - **Repo is `Claudia/`**, design prototype preserved under `design/conductor-prototype/`.
 
+### Plan limits: no API exists (researched + verified 2026-07-25)
+
+There is **no public way to read true remaining plan allowance**, so the bars are estimates
+against a user-set tier. Verified rather than assumed:
+
+- `/usage` exists, but its own docs say the breakdown is computed from *local session history
+  on this machine* — it is not authoritative server state, and other machines are invisible to it.
+- No CLI flag, no SDK method, no documented endpoint. OpenTelemetry exports
+  `claude_code.cost.usage` / `token.usage` but explicitly carries no rate-limit data.
+- Checked this machine directly: the JSONL `usage` object has
+  `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `output_tokens`,
+  `service_tier` — and **no** quota, limit, or reset field.
+- The Reddit-known monitors (`ccusage`, `claude-monitor`) parse the same local JSONL and divide
+  by hardcoded tier multipliers. They estimate because nothing better exists.
+- Anthropic publishes tiers only as multipliers (5x, 20x) and rough prompt counts, never as
+  token or dollar ceilings.
+
+Consequence: ship a tier picker plus editable ceilings, and **say in the UI that it is an
+estimate from local history**. Do not present a percentage as though it came from the server.
+`claude-monitor`'s trick — reading a `rate_limits` statusline field when fresh and falling back
+to estimates — is the only "closer to true" option; worth a look if the bars feel too vague.
+
 ### Gotchas found the hard way
 
 - **Pin the SDK to `^0.3.x`.** `^0.1.0` resolves to 0.1.77, where *every* tool call dies with
   `tool_use ids must be unique`. Cost an hour; the fix is the version, not the code.
 - Sessions inherit `~/.claude/settings.json` (81 allow rules here), so most Bash commands
   auto-approve. To exercise the approval path, use something outside the allowlist (`docker`).
+- **Never take usage from `assistant` messages.** Their `usage.output_tokens` is a placeholder
+  — measured 1 against a real 306 — and summing `cache_read_input_tokens` across a turn
+  re-counts the same cache every call. Only `result.modelUsage` is correct. It is **cumulative**
+  per session, so assign it, never add. (`result.usage` is per-turn; `modelUsage` is not.)
+- `tsx watch` cannot rebind a held port. A stale server survived a `pkill` on Windows and
+  silently served old code to a smoke test — the new process had already died on `EADDRINUSE`.
+  Check `netstat -ano | grep :4317` before trusting a behavioural test.
 
 ### Resolved decisions (2026-07-25, round 2)
 

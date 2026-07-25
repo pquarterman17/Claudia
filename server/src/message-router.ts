@@ -1,15 +1,24 @@
-import type { FeedStep, SessionState } from '@claudia/shared';
+import type { FeedStep, ModelUsage, SessionState } from '@claudia/shared';
 import { errorStep, infoStep, resultStep, stepFromText, stepFromToolUse } from './feed.js';
 
-/** What one SDK message means for a session: feed steps + state/usage deltas. */
+/**
+ * What one SDK message means for a session: feed steps, state, and — on result
+ * messages only — authoritative cumulative usage.
+ *
+ * Usage deliberately never comes from `assistant` messages. Their
+ * `usage.output_tokens` is a placeholder (observed 1 against a real 406), and
+ * summing their `cache_read_input_tokens` double-counts the same cache on every
+ * call in the turn. `result.modelUsage` is cumulative and correct, so it is
+ * ASSIGNED, not added.
+ */
 export interface RoutedMessage {
   steps: FeedStep[];
   state?: SessionState;
   claudeSessionId?: string;
   model?: string;
   costUsd?: number;
-  inputTokens?: number;
-  outputTokens?: number;
+  /** Cumulative session usage per model. Present only on result messages. */
+  modelUsage?: ModelUsage[];
   errorMessage?: string;
 }
 
@@ -39,7 +48,6 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
 
   if (type === 'assistant') {
     const inner = message['message'] as Record<string, unknown> | undefined;
-    const usage = inner?.['usage'] as Record<string, unknown> | undefined;
     const steps: FeedStep[] = [];
     const content = inner?.['content'];
     if (Array.isArray(content)) {
@@ -52,31 +60,35 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
         }
       }
     }
-    return {
-      steps,
-      state: 'working',
-      inputTokens: num(usage?.['input_tokens']) + num(usage?.['cache_read_input_tokens']),
-      outputTokens: num(usage?.['output_tokens']),
-    };
+    return { steps, state: 'working' };
   }
 
   if (type === 'result') {
     const subtype = String(message['subtype'] ?? '');
     const costUsd = typeof message['total_cost_usd'] === 'number' ? message['total_cost_usd'] : undefined;
-    if (subtype.startsWith('error')) {
-      return {
-        steps: [errorStep('Turn failed', subtype)],
-        state: 'error',
-        errorMessage: subtype,
-        ...(costUsd !== undefined ? { costUsd } : {}),
-      };
-    }
-    return {
-      steps: [resultStep(costUsd ?? 0, Date.now() - turnStartedAt)],
-      state: 'idle',
+    const usage = parseModelUsage(message['modelUsage']);
+    const common = {
       ...(costUsd !== undefined ? { costUsd } : {}),
+      ...(usage ? { modelUsage: usage } : {}),
     };
+    if (subtype.startsWith('error')) {
+      return { steps: [errorStep('Turn failed', subtype)], state: 'error', errorMessage: subtype, ...common };
+    }
+    return { steps: [resultStep(costUsd ?? 0, Date.now() - turnStartedAt)], state: 'idle', ...common };
   }
 
   return EMPTY;
+}
+
+/** `modelUsage` is an object keyed by model id; flatten it to a stable array. */
+function parseModelUsage(raw: unknown): ModelUsage[] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  return Object.entries(raw as Record<string, Record<string, unknown>>).map(([model, v]) => ({
+    model,
+    inputTokens: num(v['inputTokens']),
+    outputTokens: num(v['outputTokens']),
+    cacheReadTokens: num(v['cacheReadInputTokens']),
+    cacheCreationTokens: num(v['cacheCreationInputTokens']),
+    costUsd: num(v['costUSD']),
+  }));
 }

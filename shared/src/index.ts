@@ -31,6 +31,21 @@ export interface PendingApproval {
   requestedAt: number;
 }
 
+/**
+ * Per-model cumulative usage, taken from the SDK result message's `modelUsage`.
+ * Keyed by model because plan windows are per-model (the weekly Opus allowance is
+ * separate from weekly all-models), and one session can touch several models —
+ * a subagent on Haiku bills alongside the main Opus turn.
+ */
+export interface ModelUsage {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  costUsd: number;
+}
+
 export interface SessionSummary {
   id: string;
   /** Display name — basename of cwd. */
@@ -41,9 +56,12 @@ export interface SessionSummary {
   state: SessionState;
   startedAt: number;
   lastActivityAt: number;
+  /** Cumulative session cost. Authoritative; from result messages only. */
   costUsd: number;
+  /** Cumulative totals summed across models. Updated at turn end, not mid-turn. */
   inputTokens: number;
   outputTokens: number;
+  modelUsage: ModelUsage[];
   /** Claude Code session id (for resume), once known from the init message. */
   claudeSessionId?: string;
   pendingApproval?: PendingApproval;

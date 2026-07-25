@@ -1,5 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { FeedStep, PermissionLaunchMode, SessionState, SessionSummary } from '@claudia/shared';
+import type { FeedStep, ModelUsage, PermissionLaunchMode, SessionState, SessionSummary } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import { ApprovalGate, type PermissionResult } from './approval-gate.js';
@@ -35,8 +35,7 @@ export class ClaudiaSession {
   private lastActivityAt = Date.now();
   private turnStartedAt = Date.now();
   private costUsd = 0;
-  private inputTokens = 0;
-  private outputTokens = 0;
+  private modelUsage: ModelUsage[] = [];
   private model: string | undefined;
   private claudeSessionId: string | undefined;
   private errorMessage: string | undefined;
@@ -59,8 +58,9 @@ export class ClaudiaSession {
       startedAt: this.startedAt,
       lastActivityAt: this.lastActivityAt,
       costUsd: this.costUsd,
-      inputTokens: this.inputTokens,
-      outputTokens: this.outputTokens,
+      inputTokens: this.modelUsage.reduce((a, m) => a + m.inputTokens + m.cacheReadTokens, 0),
+      outputTokens: this.modelUsage.reduce((a, m) => a + m.outputTokens, 0),
+      modelUsage: this.modelUsage,
       claudeSessionId: this.claudeSessionId,
       pendingApproval: this.gate.current,
       errorMessage: this.errorMessage,
@@ -100,9 +100,9 @@ export class ClaudiaSession {
 
     if (routed.claudeSessionId) this.claudeSessionId = routed.claudeSessionId;
     if (routed.model) this.model = routed.model;
+    // Cost and usage are cumulative in the SDK's result message — assign, never add.
     if (routed.costUsd !== undefined) this.costUsd = routed.costUsd;
-    if (routed.inputTokens) this.inputTokens += routed.inputTokens;
-    if (routed.outputTokens) this.outputTokens += routed.outputTokens;
+    if (routed.modelUsage) this.modelUsage = routed.modelUsage;
     if (routed.errorMessage) this.errorMessage = routed.errorMessage;
 
     // A parked approval outranks a 'working' hint from a message that raced it.

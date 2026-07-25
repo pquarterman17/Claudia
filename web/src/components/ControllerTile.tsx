@@ -1,21 +1,8 @@
-import type { FinishActionKey, SessionSummary, TriggerStatus } from '@claudia/shared';
+import type { SessionSummary, TriggerStatus } from '@claudia/shared';
 import { useEffect, useState } from 'react';
 import { send } from '../store';
 import { COLORS } from '../status';
-
-const ACTIONS: Array<{ key: FinishActionKey; label: string; unavailable?: string }> = [
-  { key: 'notify', label: 'Notify me' },
-  {
-    key: 'commit',
-    label: 'Commit + push all',
-    // Offered by the design but not built: pushing unreviewed work needs
-    // per-repo rules. Disabled rather than firing as a silent no-op.
-    unavailable: 'Not implemented yet — would push unreviewed work',
-  },
-  { key: 'sleep', label: 'Sleep displays' },
-  { key: 'shutdown', label: 'Shut down host' },
-  { key: 'script', label: 'Run wrap-up script' },
-];
+import { FinishChain } from './FinishChain';
 
 interface Props {
   trigger: TriggerStatus;
@@ -34,8 +21,9 @@ export function ControllerTile({ trigger, sessions, countdownSec }: Props) {
   const unprompted = sessions.filter((s) => s.permissionMode === 'bypassPermissions').length;
   const armed = trigger.state === 'armed' || trigger.state === 'counting';
 
-  // A pending confirm must not survive switching to a different action.
-  useEffect(() => setConfirming(false), [trigger.action, trigger.state]);
+  // A pending confirm must not survive an edit to the chain or a state change.
+  const chainKey = trigger.chain.map((s) => s.key).join(',');
+  useEffect(() => setConfirming(false), [chainKey, trigger.state]);
 
   const onArmClick = () => {
     if (armed) {
@@ -104,53 +92,7 @@ export function ControllerTile({ trigger, sessions, countdownSec }: Props) {
           </div>
         )}
 
-        <section>
-          <div className="kicker" style={{ marginBottom: 6 }}>
-            When everything finishes
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {ACTIONS.map((a) => {
-              const on = trigger.action === a.key;
-              const danger = a.key === 'shutdown';
-              return (
-                <button
-                  key={a.key}
-                  disabled={!!a.unavailable}
-                  title={a.unavailable}
-                  onClick={() => send({ type: 'select_finish_action', action: a.key })}
-                  style={{
-                    cursor: a.unavailable ? 'not-allowed' : 'pointer',
-                    borderRadius: 7,
-                    padding: '5px 10px',
-                    fontFamily: 'var(--font-body)',
-                    fontSize: 11.5,
-                    whiteSpace: 'nowrap',
-                    border: `1px solid ${on ? (danger ? '#8a4f4f' : '#796cbf') : '#33364a'}`,
-                    background: on ? (danger ? '#2e2226' : '#2b2741') : 'transparent',
-                    color: on ? (danger ? '#e0a0a0' : '#d2cefd') : '#9397ab',
-                    textDecoration: a.unavailable ? 'line-through' : 'none',
-                  }}
-                >
-                  {a.label}
-                </button>
-              );
-            })}
-          </div>
-          <div
-            className="mono"
-            title={trigger.command}
-            style={{
-              marginTop: 6,
-              fontSize: 10.5,
-              color: trigger.destructive ? COLORS.err : '#595d6c',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {trigger.command}
-          </div>
-        </section>
+        <FinishChain trigger={trigger} />
 
         <section
           style={{
@@ -246,17 +188,20 @@ export function ControllerTile({ trigger, sessions, countdownSec }: Props) {
 }
 
 function statusTitle(t: TriggerStatus): string {
-  const label = ACTIONS.find((a) => a.key === t.action)?.label ?? t.action;
-  if (t.state === 'fired') return `${label} — fired`;
-  if (t.state === 'counting') return `${label} in a moment`;
-  if (t.state === 'armed') return `Armed · ${label}`;
-  return `${label} when idle`;
+  const n = t.chain.length;
+  const what = n === 1 ? '1 step' : `${n} steps`;
+  if (t.state === 'fired') return 'Chain finished';
+  if (t.state === 'running') return 'Running the chain';
+  if (t.state === 'counting') return `${what} in a moment`;
+  if (t.state === 'armed') return `Armed · ${what}`;
+  return n === 0 ? 'Nothing selected' : `${what} when idle`;
 }
 
 function statusSub(t: TriggerStatus): string {
   if (t.state === 'fired') return t.lastResult ?? 'done';
+  if (t.state === 'running') return 'each step waits for the one before it';
   if (t.blockedBy && t.state === 'armed') return `held — ${t.blockedBy}`;
   if (t.state === 'armed') return 'fires once every session reports idle';
   if (t.state === 'counting') return 'cancel by disarming, or by starting work';
-  return 'nothing fires until you arm it';
+  return t.chain.length === 0 ? 'add an action above first' : 'nothing fires until you arm it';
 }

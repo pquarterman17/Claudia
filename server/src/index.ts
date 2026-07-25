@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
+import { updateMemories } from './memory-action.js';
 import { SessionManager } from './session-manager.js';
 import { SettingsStore } from './settings-store.js';
 import { TriggerEngine } from './trigger-engine.js';
@@ -27,14 +28,20 @@ const saved = settings.get();
 
 const trigger = new TriggerEngine({
   platform,
-  execute: executeFinishAction,
+  execute: (key) =>
+    executeFinishAction(key, {
+      platform,
+      // Non-command actions run where the work happened.
+      cwd: settings.get().recentDirectories[0] ?? process.cwd(),
+      runMemoryUpdate: updateMemories,
+    }),
   onChange: () => gateway.broadcast({ type: 'trigger_status', trigger: trigger.status() }),
   countdownSec: saved.countdownSec,
 });
-// Restore the last choice, but never restore an armed state — arming is a
-// deliberate act, and silently re-arming a shutdown across a restart is exactly
-// the kind of surprise this app should not have.
-trigger.selectAction(saved.finishAction);
+// Restore the chain, but never restore an armed state — arming is a deliberate
+// act, and silently re-arming a shutdown across a restart is exactly the kind of
+// surprise this app should not have.
+trigger.setChain(saved.finishChain);
 
 const manager = new SessionManager({
   onUpdate: (session) => gateway.broadcast({ type: 'session_upsert', session }),

@@ -76,23 +76,36 @@ export interface SessionSummary {
 
 // ---------- finish trigger ----------
 
-export type FinishActionKey = 'notify' | 'commit' | 'sleep' | 'shutdown' | 'script';
+export type FinishActionKey = 'notify' | 'memory' | 'commit' | 'sleep' | 'shutdown' | 'script';
 
-export type TriggerState = 'disarmed' | 'armed' | 'counting' | 'fired';
+export type TriggerState = 'disarmed' | 'armed' | 'counting' | 'running' | 'fired';
+
+export type StepState = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+
+/** One link in the finish chain. Steps run in order, each awaiting the last. */
+export interface ChainStep {
+  key: FinishActionKey;
+  state: StepState;
+  /** Outcome text — what it did, or why it failed. */
+  detail?: string;
+  durMs?: number;
+  /** The actual command that will run on this host. */
+  command: string;
+  destructive: boolean;
+}
 
 export interface TriggerStatus {
   state: TriggerState;
-  action: FinishActionKey;
+  /** Ordered chain. Empty means nothing is configured to run. */
+  chain: ChainStep[];
   /** Seconds left before firing; present only while counting. */
   countdownSec?: number;
   /** Human-readable reason the trigger is held. Absent when nothing blocks it. */
   blockedBy?: string;
   firedAt?: number;
-  /** Outcome of the last firing — success text or the error. */
+  /** Summary of the last run — e.g. "3 of 4 steps, stopped at Shut down host". */
   lastResult?: string;
-  /** The actual command that will run on this host, shown in the UI. */
-  command: string;
-  /** Destructive actions require an explicit confirm before they can be armed. */
+  /** True if any step is destructive; arming then needs an explicit confirm. */
   destructive: boolean;
 }
 
@@ -187,7 +200,9 @@ export type ClientCommand =
   | { type: 'set_permission_mode'; sessionId: string; mode: PermissionLaunchMode }
   /** Put every session back on standard approvals. */
   | { type: 'require_approvals_everywhere' }
-  | { type: 'select_finish_action'; action: FinishActionKey }
+  /** Adds the action to the end of the chain, or removes it if already present. */
+  | { type: 'toggle_finish_action'; action: FinishActionKey }
+  | { type: 'clear_finish_chain' }
   /** `confirmDestructive` must be true to arm shutdown — the server re-checks. */
   | { type: 'arm_trigger'; confirmDestructive?: boolean }
   | { type: 'disarm_trigger' }

@@ -34,7 +34,7 @@ describe('SettingsStore', () => {
 
     const s = new SettingsStore(path);
     expect(s.get().countdownSec).toBe(45);
-    expect(s.get().finishAction).toBe('notify'); // filled from defaults
+    expect(s.get().finishChain).toEqual(['notify']); // filled from defaults
   });
 
   it('falls back to defaults on a corrupt file rather than throwing', () => {

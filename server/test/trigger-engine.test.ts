@@ -18,7 +18,7 @@ function session(state: SessionState): SessionSummary {
   };
 }
 
-function engine(countdownSec = 3) {
+function engine(countdownSec = 3, chain: Parameters<TriggerEngine['setChain']>[0] = ['notify']) {
   const execute = vi.fn(async () => 'ok');
   const e = new TriggerEngine({
     platform: 'darwin',
@@ -26,6 +26,7 @@ function engine(countdownSec = 3) {
     onChange: () => undefined,
     countdownSec,
   });
+  e.setChain(chain);
   return { e, execute };
 }
 
@@ -142,22 +143,26 @@ describe('TriggerEngine', () => {
     expect(e.status().state).toBe('disarmed');
   });
 
-  it('refuses to arm a destructive action without confirmation', () => {
-    const { e } = engine();
-    e.selectAction('shutdown');
+  it('refuses to arm a chain containing a destructive step', () => {
+    const { e } = engine(3, ['notify', 'shutdown']);
     expect(() => e.arm()).toThrow(/destructive/i);
     expect(e.status().state).toBe('disarmed');
     expect(() => e.arm(true)).not.toThrow();
     expect(e.status().state).toBe('armed');
   });
 
-  it('changing the action disarms, so a countdown cannot carry onto shutdown', () => {
+  it('refuses to arm an empty chain', () => {
+    const { e } = engine(3, []);
+    expect(() => e.arm()).toThrow(/at least one/i);
+  });
+
+  it('editing the chain disarms, so a countdown cannot carry onto new steps', () => {
     const { e } = engine();
     e.arm();
     e.tick([session('idle')]);
     expect(e.status().state).toBe('counting');
 
-    e.selectAction('shutdown');
+    e.toggleAction('shutdown');
     expect(e.status().state).toBe('disarmed');
     expect(e.status().countdownSec).toBeUndefined();
   });
@@ -167,22 +172,114 @@ describe('TriggerEngine', () => {
       throw new Error('pmset not found');
     });
     const e = new TriggerEngine({ platform: 'darwin', execute, onChange: () => undefined, countdownSec: 1 });
+    e.setChain(['sleep']);
     e.arm();
     settle(e, [session('idle')], 5);
-    await vi.waitFor(() => expect(e.status().lastResult).toContain('pmset not found'));
+    // The failure surfaces on the step, and the summary says where it stopped.
+    await vi.waitFor(() => expect(e.status().chain[0]?.detail).toContain('pmset not found'));
+    expect(e.status().chain[0]?.state).toBe('failed');
+    expect(e.status().lastResult).toMatch(/stopped at/i);
     expect(e.status().state).toBe('fired');
   });
 
-  it('reports the real per-OS command', () => {
-    const { e } = engine();
-    e.selectAction('sleep');
-    expect(e.status().command).toContain('pmset');
+  it('reports the real per-OS command for each step', () => {
+    const { e } = engine(3, ['sleep']);
+    expect(e.status().chain[0]?.command).toContain('pmset');
+
     const win = new TriggerEngine({
       platform: 'win32',
       execute: async () => 'ok',
       onChange: () => undefined,
     });
-    win.selectAction('sleep');
-    expect(win.status().command).toContain('LockWorkStation');
+    win.setChain(['sleep']);
+    expect(win.status().chain[0]?.command).toContain('LockWorkStation');
+  });
+});
+
+describe('TriggerEngine chains', () => {
+  it('toggles actions on and off, preserving click order', () => {
+    const { e } = engine(3, []);
+    e.toggleAction('memory');
+    e.toggleAction('notify');
+    expect(e.actions).toEqual(['memory', 'notify']);
+
+    e.toggleAction('memory');
+    expect(e.actions).toEqual(['notify']);
+  });
+
+  it('runs every step in order when each succeeds', async () => {
+    const order: string[] = [];
+    const execute = vi.fn(async (key: string) => {
+      order.push(key);
+      return `did ${key}`;
+    });
+    const e = new TriggerEngine({ platform: 'darwin', execute, onChange: () => undefined, countdownSec: 1 });
+    e.setChain(['memory', 'notify', 'sleep']);
+    e.arm();
+
+    e.tick([session('idle')]);
+    e.tick([session('idle')]);
+    await vi.waitFor(() => expect(e.status().state).toBe('fired'));
+
+    expect(order).toEqual(['memory', 'notify', 'sleep']);
+    expect(e.status().chain.map((s) => s.state)).toEqual(['done', 'done', 'done']);
+    expect(e.status().lastResult).toMatch(/All 3 steps completed/);
+  });
+
+  it('starts a step only after the previous one resolves', async () => {
+    // The core promise of a chain: no overlap, so "shut down" cannot begin
+    // while "commit + push" is still running.
+    let running = 0;
+    let maxConcurrent = 0;
+    const execute = vi.fn(async () => {
+      running++;
+      maxConcurrent = Math.max(maxConcurrent, running);
+      await new Promise((r) => setTimeout(r, 20));
+      running--;
+      return 'ok';
+    });
+    const e = new TriggerEngine({ platform: 'darwin', execute, onChange: () => undefined, countdownSec: 1 });
+    e.setChain(['memory', 'notify', 'sleep']);
+    e.arm();
+    e.tick([session('idle')]);
+    e.tick([session('idle')]);
+
+    await vi.waitFor(() => expect(e.status().state).toBe('fired'), { timeout: 3000 });
+    expect(maxConcurrent).toBe(1);
+  });
+
+  it('stops at the first failure and skips the rest', async () => {
+    // The safety property: a failed push must not be followed by a shutdown.
+    const execute = vi.fn(async (key: string) => {
+      if (key === 'notify') throw new Error('notifier missing');
+      return 'ok';
+    });
+    const e = new TriggerEngine({ platform: 'darwin', execute, onChange: () => undefined, countdownSec: 1 });
+    e.setChain(['memory', 'notify', 'shutdown']);
+    e.arm(true);
+
+    e.tick([session('idle')]);
+    e.tick([session('idle')]);
+    await vi.waitFor(() => expect(e.status().state).toBe('fired'));
+
+    const states = e.status().chain.map((s) => s.state);
+    expect(states).toEqual(['done', 'failed', 'skipped']);
+    expect(execute).not.toHaveBeenCalledWith('shutdown');
+    expect(e.status().chain[1]?.detail).toContain('notifier missing');
+    expect(e.status().lastResult).toMatch(/stopped at/i);
+  });
+
+  it('records a duration for every step it attempted', async () => {
+    const { e } = engine(1, ['notify', 'sleep']);
+    e.arm();
+    e.tick([session('idle')]);
+    e.tick([session('idle')]);
+    await vi.waitFor(() => expect(e.status().state).toBe('fired'));
+    for (const step of e.status().chain) expect(step.durMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('reports destructive if any step is, not just the last', () => {
+    const { e } = engine(3, ['shutdown', 'notify']);
+    expect(e.status().destructive).toBe(true);
   });
 });

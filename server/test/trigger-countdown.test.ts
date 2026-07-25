@@ -22,7 +22,7 @@ function engine() {
   const execute = vi.fn(async () => 'ok');
   return {
     execute,
-    e: new TriggerEngine({ platform: 'darwin', execute, onChange: () => undefined, countdownSec: 30 }),
+    e: (() => { const t = new TriggerEngine({ platform: 'darwin', execute, onChange: () => undefined, countdownSec: 30 }); t.setChain(['notify']); return t; })(),
   };
 }
 

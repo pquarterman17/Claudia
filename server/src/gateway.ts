@@ -133,9 +133,13 @@ export class Gateway {
           if (s.permissionMode !== 'default') void this.manager.get(s.id)?.setPermissionMode('default');
         }
         return;
-      case 'select_finish_action':
-        this.trigger.selectAction(cmd.action);
-        this.settings.update({ finishAction: cmd.action });
+      case 'toggle_finish_action':
+        this.trigger.toggleAction(cmd.action);
+        this.settings.update({ finishChain: this.trigger.actions });
+        return;
+      case 'clear_finish_chain':
+        this.trigger.clearChain();
+        this.settings.update({ finishChain: [] });
         return;
       case 'arm_trigger':
         this.trigger.arm(cmd.confirmDestructive);

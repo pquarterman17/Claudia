@@ -1,4 +1,12 @@
-import type { FinishActionKey, HostPlatform, SessionSummary, TriggerState, TriggerStatus } from '@claudia/shared';
+import type {
+  ChainStep,
+  FinishActionKey,
+  HostPlatform,
+  SessionSummary,
+  StepState,
+  TriggerState,
+  TriggerStatus,
+} from '@claudia/shared';
 import { describeCommand, specFor } from './finish-actions.js';
 
 export const DEFAULT_COUNTDOWN_SEC = 30;
@@ -31,21 +39,33 @@ export function blockingReason(sessions: SessionSummary[]): string | null {
 
 export interface TriggerEngineOptions {
   platform: HostPlatform;
-  execute: (key: FinishActionKey, platform: HostPlatform) => Promise<string>;
+  execute: (key: FinishActionKey) => Promise<string>;
   onChange: () => void;
   countdownSec?: number;
 }
 
+interface Link {
+  key: FinishActionKey;
+  state: StepState;
+  detail?: string;
+  durMs?: number;
+}
+
 /**
- * Arms a finish action and fires it once every session has settled.
+ * Runs an ordered chain of finish actions once every session has settled.
  *
- * Deliberately conservative: any session that needs a human holds the trigger
- * and cancels an in-flight countdown, firing disarms (one-shot), and a
- * destructive action cannot be armed without an explicit confirmation.
+ * Steps run strictly in sequence, each starting only when the previous one
+ * reports success. A failure stops the chain and leaves the rest 'skipped' —
+ * that ordering is the safety property: if "commit + push" fails, "shut down"
+ * must not run and quietly lose the work.
+ *
+ * Conservative elsewhere too: any session needing a human holds the trigger and
+ * cancels an in-flight countdown, firing disarms (one-shot), and a chain
+ * containing a destructive step cannot be armed without explicit confirmation.
  */
 export class TriggerEngine {
   private state: TriggerState = 'disarmed';
-  private action: FinishActionKey = 'notify';
+  private chain: Link[] = [];
   private countdown: number | undefined;
   private firedAt: number | undefined;
   private lastResult: string | undefined;
@@ -54,6 +74,69 @@ export class TriggerEngine {
 
   constructor(private readonly opts: TriggerEngineOptions) {
     this.countdownSec = opts.countdownSec ?? DEFAULT_COUNTDOWN_SEC;
+  }
+
+  status(): TriggerStatus {
+    return {
+      state: this.state,
+      chain: this.chain.map(
+        (l): ChainStep => ({
+          key: l.key,
+          state: l.state,
+          command: describeCommand(l.key, this.opts.platform),
+          destructive: specFor(l.key).destructive,
+          ...(l.detail ? { detail: l.detail } : {}),
+          ...(l.durMs !== undefined ? { durMs: l.durMs } : {}),
+        }),
+      ),
+      destructive: this.chain.some((l) => specFor(l.key).destructive),
+      ...(this.countdown !== undefined ? { countdownSec: this.countdown } : {}),
+      ...(this.blocked ? { blockedBy: this.blocked } : {}),
+      ...(this.firedAt !== undefined ? { firedAt: this.firedAt } : {}),
+      ...(this.lastResult ? { lastResult: this.lastResult } : {}),
+    };
+  }
+
+  /** Appends the action, or removes it if already in the chain. */
+  toggleAction(action: FinishActionKey): void {
+    specFor(action); // validates
+    const existing = this.chain.findIndex((l) => l.key === action);
+    this.chain =
+      existing >= 0
+        ? this.chain.filter((_, i) => i !== existing)
+        : [...this.chain, { key: action, state: 'pending' as StepState }];
+    this.resetRun();
+  }
+
+  setChain(actions: FinishActionKey[]): void {
+    this.chain = actions.map((key) => ({ key, state: 'pending' as StepState }));
+    this.resetRun();
+  }
+
+  clearChain(): void {
+    this.chain = [];
+    this.resetRun();
+  }
+
+  get actions(): FinishActionKey[] {
+    return this.chain.map((l) => l.key);
+  }
+
+  /**
+   * Editing the chain always disarms. Otherwise a countdown started against one
+   * set of steps could fire against a different, possibly destructive, set.
+   */
+  private resetRun(): void {
+    this.state = 'disarmed';
+    this.countdown = undefined;
+    this.firedAt = undefined;
+    this.lastResult = undefined;
+    for (const link of this.chain) {
+      link.state = 'pending';
+      delete link.detail;
+      delete link.durMs;
+    }
+    this.opts.onChange();
   }
 
   /** Clamped: under 5s there is no realistic chance to cancel a shutdown. */
@@ -70,41 +153,22 @@ export class TriggerEngine {
     return this.countdownSec;
   }
 
-  status(): TriggerStatus {
-    const spec = specFor(this.action);
-    return {
-      state: this.state,
-      action: this.action,
-      command: describeCommand(this.action, this.opts.platform),
-      destructive: spec.destructive,
-      ...(this.countdown !== undefined ? { countdownSec: this.countdown } : {}),
-      ...(this.blocked ? { blockedBy: this.blocked } : {}),
-      ...(this.firedAt !== undefined ? { firedAt: this.firedAt } : {}),
-      ...(this.lastResult ? { lastResult: this.lastResult } : {}),
-    };
-  }
-
-  selectAction(action: FinishActionKey): void {
-    specFor(action); // validates
-    this.action = action;
-    // Changing the action clears a spent trigger, and disarms a live one so a
-    // countdown can never carry over onto a different (possibly destructive) action.
-    this.state = 'disarmed';
-    this.countdown = undefined;
-    this.firedAt = undefined;
-    this.lastResult = undefined;
-    this.opts.onChange();
-  }
-
   arm(confirmDestructive = false): void {
-    const spec = specFor(this.action);
-    if (spec.destructive && !confirmDestructive) {
-      throw new Error(`${spec.label} is destructive — confirm before arming`);
+    if (this.chain.length === 0) throw new Error('Add at least one action before arming');
+    const destructive = this.chain.filter((l) => specFor(l.key).destructive);
+    if (destructive.length > 0 && !confirmDestructive) {
+      const labels = destructive.map((l) => specFor(l.key).label).join(', ');
+      throw new Error(`${labels} is destructive — confirm before arming`);
     }
     this.state = 'armed';
     this.countdown = undefined;
     this.firedAt = undefined;
     this.lastResult = undefined;
+    for (const link of this.chain) {
+      link.state = 'pending';
+      delete link.detail;
+      delete link.durMs;
+    }
     this.opts.onChange();
   }
 
@@ -129,25 +193,52 @@ export class TriggerEngine {
         this.countdown = this.countdownSec;
       } else if (this.countdown !== undefined && this.countdown > 0) {
         this.countdown -= 1;
-        if (this.countdown === 0) void this.fire();
+        if (this.countdown === 0) void this.runChain();
       }
     }
 
     if (JSON.stringify(this.status()) !== before) this.opts.onChange();
   }
 
-  private async fire(): Promise<void> {
-    const action = this.action;
-    // Disarm before running: one-shot, and a slow command must not fire twice.
-    this.state = 'fired';
+  /**
+   * Runs the chain in order. Once started it is not interrupted by sessions
+   * becoming busy again — a half-run chain (pushed but not released) is worse
+   * than a completed one.
+   */
+  private async runChain(): Promise<void> {
+    this.state = 'running';
     this.countdown = undefined;
     this.firedAt = Date.now();
     this.opts.onChange();
-    try {
-      this.lastResult = await this.opts.execute(action, this.opts.platform);
-    } catch (err) {
-      this.lastResult = `Failed: ${err instanceof Error ? err.message : String(err)}`;
+
+    let completed = 0;
+    let stoppedAt: string | undefined;
+
+    for (const link of this.chain) {
+      if (stoppedAt) {
+        link.state = 'skipped';
+        continue;
+      }
+      link.state = 'running';
+      this.opts.onChange();
+      const startedAt = Date.now();
+      try {
+        link.detail = await this.opts.execute(link.key);
+        link.state = 'done';
+        completed++;
+      } catch (err) {
+        link.state = 'failed';
+        link.detail = err instanceof Error ? err.message : String(err);
+        stoppedAt = specFor(link.key).label;
+      }
+      link.durMs = Date.now() - startedAt;
+      this.opts.onChange();
     }
+
+    this.state = 'fired';
+    this.lastResult = stoppedAt
+      ? `${completed} of ${this.chain.length} steps — stopped at ${stoppedAt}`
+      : `All ${this.chain.length} step${this.chain.length === 1 ? '' : 's'} completed`;
     this.opts.onChange();
   }
 }

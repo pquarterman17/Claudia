@@ -17,6 +17,8 @@ export interface FinishActionSpec {
   destructive: boolean;
   /** Null where the action isn't a single host command (e.g. per-repo git work). */
   command: (platform: HostPlatform) => Command | null;
+  /** Display text when there is no single command to show. */
+  describe?: () => string;
 }
 
 const NOTIFY_MAC = (body: string): Command => ({
@@ -42,6 +44,15 @@ export const FINISH_ACTIONS: FinishActionSpec[] = [
     label: 'Notify me',
     destructive: false,
     command: (p) => (p === 'darwin' ? NOTIFY_MAC('All sessions settled') : NOTIFY_WIN('All sessions settled')),
+  },
+  {
+    key: 'memory',
+    label: 'Save learnings',
+    destructive: false,
+    // Not a shell command — runs as an SDK session, since deciding what was
+    // actually learned is judgement rather than a fixed operation.
+    command: () => null,
+    describe: () => 'Claude reviews the work and updates its memory files',
   },
   {
     key: 'commit',
@@ -91,15 +102,34 @@ export function hostPlatform(): HostPlatform {
 
 /** Display string for the UI — what will actually run on this host. */
 export function describeCommand(key: FinishActionKey, platform: HostPlatform): string {
-  const cmd = specFor(key).command(platform);
-  if (!cmd) return 'git push, per repository with commits ahead';
-  return [cmd.file, ...cmd.args].join(' ');
-}
-
-export async function executeFinishAction(key: FinishActionKey, platform: HostPlatform): Promise<string> {
   const spec = specFor(key);
   const cmd = spec.command(platform);
-  if (!cmd) return 'No host command for this action (not yet implemented)';
-  await run(cmd.file, cmd.args, { timeout: 30_000 });
+  if (cmd) return [cmd.file, ...cmd.args].join(' ');
+  return spec.describe?.() ?? 'not implemented yet';
+}
+
+export interface ExecutionContext {
+  platform: HostPlatform;
+  /** Where non-command actions run — the most recently used working directory. */
+  cwd: string;
+  /** Injected so the SDK-backed action stays out of this module. */
+  runMemoryUpdate: (cwd: string) => Promise<string>;
+}
+
+/**
+ * Runs one action and resolves with a description of what happened.
+ * Rejecting is meaningful: a chain stops at the first failure, so an action must
+ * throw rather than return quietly when it did not do its job.
+ */
+export async function executeFinishAction(key: FinishActionKey, ctx: ExecutionContext): Promise<string> {
+  const spec = specFor(key);
+
+  if (key === 'memory') return ctx.runMemoryUpdate(ctx.cwd);
+
+  const cmd = spec.command(ctx.platform);
+  if (!cmd) throw new Error(`${spec.label} is not implemented yet`);
+
+  // Long enough for a wrap-up script, short enough not to hang a chain forever.
+  await run(cmd.file, cmd.args, { timeout: 120_000 });
   return `Ran ${spec.label}`;
 }

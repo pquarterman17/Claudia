@@ -77,15 +77,28 @@ else and any total becomes meaningless.
 `Ctrl/⌘ 1–9` jump to a session · `Ctrl/⌘ ⏎` approve the longest-waiting approval ·
 `Ctrl/⌘ U` toggle usage. The modifier follows the host the server reports.
 
-## The finish trigger
+## The finish chain
 
-Pick what happens when every session settles, then arm it. It fires once and disarms.
+Pick what happens when every session settles. Actions stack: click them in the order you want
+them to run, and each step starts only once the previous one reports success.
 
-Any session that needs you — awaiting approval, or errored — **holds** the trigger and
-cancels an in-flight countdown; it restarts from full when the session clears, never from
-where it left off. An empty app never fires. Shutdown is marked destructive and needs a
-second click to confirm before it can be armed, and the server re-checks that confirmation
-rather than trusting the UI.
+    1. Save learnings  →  2. Wrap-up script  →  3. Shut down host
+
+**A failure stops the chain.** Anything after a failed step is marked skipped and never runs —
+that ordering is the safety property. If a push fails, the shutdown behind it must not fire and
+quietly lose the work.
+
+Any session that needs you — awaiting approval, or errored — **holds** the trigger and cancels
+an in-flight countdown; it restarts from full when the session clears, never from where it left
+off. An empty app never fires. A chain containing a destructive step needs a second confirming
+click before it can be armed, and the server re-checks that rather than trusting the UI. Editing
+the chain always disarms, so a countdown can never carry over onto different steps. Once the
+chain starts it runs to completion — a half-run chain is worse than a finished one.
+
+Available: **Notify me** · **Save learnings** (Claude reviews the work and updates its memory
+files) · **Wrap-up script** · **Sleep displays** · **Shut down host**. *Commit + push* is
+deliberately disabled until there are rules for which repos qualify and what to do with a dirty
+tree — better a struck-through button than one that silently does nothing.
 
 ## Checks
 
@@ -98,3 +111,17 @@ End-to-end against a live session (server must be running):
 ```bash
 node scripts/smoke.mjs "C:/path/to/repo" "Run bash: docker --version"
 ```
+
+Drive a whole finish chain — builds it, arms it, launches a session, reports each step:
+
+```bash
+node scripts/chain-test.mjs
+```
+
+The memory action on its own, since it is the slow one (~2 minutes):
+
+```bash
+npx tsx scripts/memory-test.mjs "C:/path/to/repo"
+```
+
+Use forward slashes in paths for these — backslashes get eaten by most shells.

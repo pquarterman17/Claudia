@@ -5,7 +5,8 @@ import { dirname, join } from 'node:path';
 
 export interface Settings {
   planTier: PlanTier;
-  finishAction: FinishActionKey;
+  /** Ordered chain of finish actions. */
+  finishChain: FinishActionKey[];
   countdownSec: number;
   /** Remembered so relaunching in the same repo doesn't mean retyping the path. */
   recentDirectories: string[];
@@ -14,7 +15,7 @@ export interface Settings {
 
 const DEFAULTS: Settings = {
   planTier: 'auto',
-  finishAction: 'notify',
+  finishChain: ['notify'],
   countdownSec: 30,
   recentDirectories: [],
   defaultPermissionMode: 'default',

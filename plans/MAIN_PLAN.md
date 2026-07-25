@@ -77,9 +77,15 @@ desktop and a MacBook at different times, so the app must run natively on both �
 
 ## Tier 2 — Medium Impact
 
-7. **"Commit + push all" finish action** — deliberately disabled in the UI rather than shipped
+7. **"Commit + push" finish action** — deliberately disabled in the UI rather than shipped
    as a silent no-op. Needs per-repo rules before it pushes unreviewed work: which repos are
-   eligible, what to do with a dirty tree, whether to open a PR instead of pushing.
+   eligible, what to do with a dirty tree, whether to open a PR instead of pushing. Now more
+   wanted than before, since it is the natural first link of a chain.
+16. **"Make a release" finish action** — mentioned as a chain example. Not built: a release
+    means different things per repo (tag? changelog? `gh release`? npm publish?). The wrap-up
+    script action covers it today; a first-class version needs the owner's actual process.
+17. **Reorder chain steps** — order currently follows click order, and changing it means
+    clearing and re-clicking. Drag-to-reorder, or up/down arrows, would be kinder.
 8. **Hooks monitor tier** — global hook POSTs to server so plain-terminal sessions appear as
    read-only tiles. The only way to see sessions Claudia did not launch. Requires editing the
    owner's global `~/.claude/settings.json`, so ask before touching it.
@@ -200,6 +206,23 @@ to estimates — is the only "closer to true" option; worth a look if the bars f
   `showDirectoryPicker` returns a handle, not a path. Pasting works too, including the quoted
   form Windows "Copy as path" produces, and a bad path is rejected up front with a readable
   message instead of failing obscurely inside the SDK.
+
+- ~~**Finish chain**~~ (2026-07-25) — the single finish action became an ordered chain. Click
+  actions in the order you want them; each step starts only when the previous reports success,
+  and a failure stops the chain leaving the rest `skipped`. That ordering is the safety
+  property: a failed push must never be followed by a shutdown. Verified live end to end —
+  held while working, counted down, ran `notify → memory` in sequence with no overlap, and on
+  an induced failure stopped with "1 of 2 steps — stopped at Save learnings".
+- ~~**Save learnings action**~~ (2026-07-25) — a finish action that has Claude review the work
+  and update its memory files, run as an SDK session rather than a shell command because
+  deciding what was learned is judgement. Runs with `acceptEdits` so it works unattended.
+  First attempt capped at 12 turns and failed after 140s; raised to 40, now completes in ~2
+  minutes over ~17-29 turns and writes genuinely useful memories. Hitting the cap still fails
+  the step deliberately — it may have written only half of what it intended.
+- ~~**Launchers**~~ (2026-07-25) — `start-claudia.bat` and `start-claudia.command`, both
+  double-clickable, both installing deps on first run and opening the browser. If Claudia is
+  already running they open the existing instance rather than dying on the port clash — the
+  failure hit twice while building.
 
 ### Resolved decisions (2026-07-25, round 2)
 

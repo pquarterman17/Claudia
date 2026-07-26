@@ -133,6 +133,7 @@ export function ControllerTile({ trigger, sessions, countdownSec, stopOnCloseSec
             </span>
             <input
               type="number"
+              aria-label="Grace period in seconds"
               min={5}
               max={600}
               value={countdownSec}
@@ -152,6 +153,7 @@ export function ControllerTile({ trigger, sessions, countdownSec, stopOnCloseSec
             </span>
             <input
               type="number"
+              aria-label="Stop on tab close delay in seconds"
               min={0}
               max={3600}
               value={stopOnCloseSec}

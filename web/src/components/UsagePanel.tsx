@@ -63,18 +63,20 @@ export function UsagePanel({ usage, customCeilings }: Props) {
         <div className="kicker" style={{ marginBottom: 8 }}>
           Measured against
         </div>
-        <div style={{ display: 'flex', gap: 4, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div role="group" aria-label="Usage comparison baseline" style={{ display: 'flex', gap: 4, marginBottom: 12, flexWrap: 'wrap' }}>
           {TIERS.map((t) => {
             const on = usage.tier === t.key;
             return (
               <button
                 key={t.key}
+                type="button"
+                aria-pressed={on}
                 title={t.title}
                 onClick={() => send({ type: 'set_plan_tier', tier: t.key })}
                 style={{
                   cursor: 'pointer',
                   borderRadius: 7,
-                  padding: '4px 10px',
+                  minHeight: 28, padding: '4px 10px',
                   fontFamily: 'var(--font-body)',
                   fontSize: 11.5,
                   border: `1px solid ${on ? '#796cbf' : '#33364a'}`,
@@ -100,6 +102,7 @@ export function UsagePanel({ usage, customCeilings }: Props) {
                 {f.label}
                 <input
                   type="number"
+                  aria-label={`${f.label} token ceiling`}
                   min={1000}
                   step={100000}
                   className="input mono"

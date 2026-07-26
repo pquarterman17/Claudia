@@ -122,6 +122,7 @@ export function SessionTile({
         {renaming ? (
           <input
             autoFocus
+            aria-label="Session name"
             defaultValue={session.title ?? ''}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -148,16 +149,18 @@ export function SessionTile({
             }}
           />
         ) : (
-          <span
+          <button
+            type="button"
+            aria-label={`Rename session ${session.title ?? session.name}`}
             onClick={() => setRenaming(true)}
             title="Click to rename this session"
-            style={{ flex: 'none', fontWeight: 500, fontSize: 13, letterSpacing: '-.01em', cursor: 'pointer' }}
+            style={{ flex: 'none', fontFamily: 'inherit', fontWeight: 500, fontSize: 13, letterSpacing: '-.01em', cursor: 'pointer', color: 'inherit', background: 'transparent', border: 0, padding: '4px 2px' }}
           >
             {session.title ?? session.name}
             {session.title && (
               <span style={{ fontSize: 10, color: '#75798c', marginLeft: 5, fontWeight: 400 }}>{session.name}</span>
             )}
-          </span>
+          </button>
         )}
         <span
           className="mono"
@@ -209,16 +212,18 @@ export function SessionTile({
       </div>
 
       <div className="tile-body">
-        <div style={{ display: 'flex', gap: 4, flex: 'none' }}>
+        <div role="group" aria-label="Session view" style={{ display: 'flex', gap: 4, flex: 'none' }}>
           {(['feed', 'chat'] as const).map((v) => (
             <button
               key={v}
+              type="button"
+              aria-pressed={view === v}
               className="btn btn-ghost"
               title={v === 'feed' ? 'Abstracted activity feed' : 'Full conversation transcript'}
               onClick={() => setView(v)}
               style={{
                 fontSize: 9.5,
-                padding: '1px 7px',
+                minHeight: 28, padding: '1px 7px',
                 letterSpacing: '.04em',
                 textTransform: 'uppercase',
                 border: `1px solid ${view === v ? '#423a6a' : 'transparent'}`,

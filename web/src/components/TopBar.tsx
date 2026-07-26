@@ -71,6 +71,9 @@ export function TopBar({ sessions, connected, usage, usageOpen, onToggleUsage }:
         <Stat label="today" value={fmtCost(cost)} />
         <Stat label="tokens" value={fmtTokens(tokens)} />
         <button
+          type="button"
+          aria-pressed={usageOpen}
+          aria-label="Toggle usage panel"
           onClick={onToggleUsage}
           title="Plan usage, estimated from local session history"
           style={{

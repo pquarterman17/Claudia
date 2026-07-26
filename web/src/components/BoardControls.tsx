@@ -43,19 +43,21 @@ export function BoardControls({
       }}
     >
       <span className="kicker">Board</span>
-      <span style={{ display: 'flex', gap: 2, border: '1px solid #33364a', borderRadius: 7, padding: 2 }}>
+      <span role="group" aria-label="Board columns" style={{ display: 'flex', gap: 2, border: '1px solid #33364a', borderRadius: 7, padding: 2 }}>
         {MODES.map((m) => {
           const on = columns === m.value;
           return (
             <button
               key={m.label}
+              type="button"
+              aria-pressed={on}
               title={m.title}
               onClick={() => onColumns(m.value)}
               style={{
                 cursor: 'pointer',
                 border: 0,
                 borderRadius: 5,
-                padding: '2px 9px',
+                minHeight: 28, padding: '2px 9px',
                 fontFamily: 'var(--font-body)',
                 fontSize: 11,
                 background: on ? '#2b2741' : 'transparent',
@@ -68,7 +70,7 @@ export function BoardControls({
         })}
       </span>
 
-      <span style={{ display: 'flex', gap: 2, border: '1px solid #33364a', borderRadius: 7, padding: 2 }}>
+      <span role="group" aria-label="Board size mode" style={{ display: 'flex', gap: 2, border: '1px solid #33364a', borderRadius: 7, padding: 2 }}>
         {(
           [
             { m: 'fit' as SizeMode, label: 'Fill', title: 'Divide the window between the sessions' },
@@ -79,13 +81,15 @@ export function BoardControls({
           return (
             <button
               key={o.m}
+              type="button"
+              aria-pressed={on}
               title={o.title}
               onClick={() => onSizeMode(o.m)}
               style={{
                 cursor: 'pointer',
                 border: 0,
                 borderRadius: 5,
-                padding: '2px 9px',
+                minHeight: 28, padding: '2px 9px',
                 fontFamily: 'var(--font-body)',
                 fontSize: 11,
                 background: on ? '#2b2741' : 'transparent',

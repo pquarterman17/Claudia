@@ -97,6 +97,9 @@ export function Composer({ session }: Props) {
   return (
     <div className="composer">
       <button
+        type="button"
+        aria-pressed={yolo}
+        aria-label="Skip permission prompts"
         title={
           yolo
             ? 'Permissions skipped — click to require approvals again'
@@ -130,6 +133,7 @@ export function Composer({ session }: Props) {
       </span>
       <div style={{ position: 'relative', flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
         <input
+          aria-label="Session prompt"
           value={draft}
           placeholder={
             session.needsAction ? 'answer…' : session.state === 'idle' ? 'send a new task…' : 'queue a message…'

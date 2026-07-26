@@ -127,6 +127,7 @@ export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) 
       </span>
       <input
         className="input mono"
+        aria-label="Working directory"
         value={cwd}
         onChange={(e) => setCwd(e.target.value)}
         // Windows "Copy as path" wraps in quotes; strip them so a paste just works.
@@ -160,6 +161,7 @@ export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) 
       </button>
       <input
         className="input"
+        aria-label="First prompt"
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
         onKeyDown={(e) => {
@@ -171,12 +173,14 @@ export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) 
         placeholder="first prompt (optional)…"
         style={{ flex: 1, minWidth: 120, fontSize: 11.5, padding: '4px 8px' }}
       />
-      <span style={{ display: 'flex', gap: 4, flex: 'none' }}>
+      <span role="group" aria-label="Launch permission mode" style={{ display: 'flex', gap: 4, flex: 'none' }}>
         {MODES.map((m) => {
           const on = mode === m.key;
           return (
             <button
               key={m.key}
+              type="button"
+              aria-pressed={on}
               onClick={() => setMode(m.key)}
               style={{
                 cursor: 'pointer',
@@ -196,12 +200,10 @@ export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) 
         })}
       </span>
       {templates.length > 0 && (
-        <span style={{ display: 'flex', gap: 4, flex: 'none', flexWrap: 'wrap' }}>
+        <span aria-label="Session templates" style={{ display: 'flex', gap: 4, flex: 'none', flexWrap: 'wrap' }}>
           {templates.map((t) => (
             <span
               key={t.name}
-              title={`${t.cwd} — ${modeLabel(t.permissionMode)}`}
-              onClick={() => launchTemplate(t)}
               style={{
                 cursor: 'pointer',
                 display: 'inline-flex',
@@ -216,8 +218,13 @@ export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) 
                 color: '#9397ab',
               }}
             >
-              <span
+              <button
+                type="button"
+                title={`${t.cwd} — ${modeLabel(t.permissionMode)}`}
+                aria-label={`Launch template ${t.name}`}
+                onClick={() => launchTemplate(t)}
                 style={{
+                  cursor: 'pointer', border: 0, background: 'transparent', color: 'inherit', font: 'inherit', padding: 0,
                   maxWidth: 120,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -225,9 +232,10 @@ export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) 
                 }}
               >
                 {t.name}
-              </span>
+              </button>
               <button
                 type="button"
+                aria-label={`Delete template ${t.name}`}
                 title="delete template"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -240,7 +248,7 @@ export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) 
                   color: '#9397ab',
                   fontSize: 10,
                   lineHeight: 1,
-                  padding: 0,
+                  padding: 0, minWidth: 28, minHeight: 28,
                 }}
               >
                 ✕

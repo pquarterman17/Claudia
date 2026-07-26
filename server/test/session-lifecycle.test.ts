@@ -204,6 +204,47 @@ describe('permission-mode vectors (the shipped regression)', () => {
   });
 });
 
+describe('plan-mode vectors', () => {
+  // 'plan' rides the same generic tighten/loosen mechanism as every other
+  // mode in permission-switch.ts — nothing in that file special-cases it, so
+  // these vectors just replay V4/V5/V6 with 'plan' standing in to prove that
+  // holds rather than duplicating the switching logic itself.
+
+  it('V21: an empty session records a switch into plan mode without any query', async () => {
+    const rec = launch();
+    await tick();
+    const how = await rec.session.setPermissionMode('plan');
+    expect(how).toBe('in-place');
+    expect(fakes).toHaveLength(0);
+    expect(rec.session.summary().permissionMode).toBe('plan');
+  });
+
+  it('V22: switching a live session into plan mode tightens in place — no relaunch', async () => {
+    const rec = launch({ prompt: 'x', permissionMode: 'bypassPermissions' });
+    await tick();
+    current().allowInPlaceSwitch = true;
+    const how = await rec.session.setPermissionMode('plan');
+    expect(how).toBe('in-place');
+    expect(fakes).toHaveLength(1);
+  });
+
+  it('V23: switching a live session out of plan mode relaunches with resume, same as any other loosen', async () => {
+    const rec = launch({ prompt: 'x', permissionMode: 'plan' });
+    await tick();
+    current().emit(initMsg('sess-plan-resume'));
+    await tick();
+
+    const old = current();
+    const how = await rec.session.setPermissionMode('bypassPermissions');
+    await tick();
+    expect(how).toBe('relaunched');
+    expect(fakes).toHaveLength(2);
+    expect(old.closed).toBe(true);
+    expect(current().spec.resume).toBe('sess-plan-resume');
+    expect(current().spec.permissionMode).toBe('bypassPermissions');
+  });
+});
+
 describe('termination vectors', () => {
   it('V12: the current query ending naturally marks the session stopped', async () => {
     const rec = launch({ prompt: 'x' });

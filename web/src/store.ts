@@ -7,6 +7,7 @@ import {
   type PermissionLaunchMode,
   type ServerEvent,
   type SessionSummary,
+  type SessionTemplate,
   type TriggerStatus,
   type UsageSnapshot,
 } from '@claudia/shared';
@@ -37,6 +38,7 @@ export interface ClaudiaState {
   countdownSec: number;
   stopSessionsWhenClosedSec: number;
   defaultPermissionMode: PermissionLaunchMode;
+  templates: SessionTemplate[];
   lastError?: string;
 }
 
@@ -55,6 +57,7 @@ class Store {
     countdownSec: 30,
     stopSessionsWhenClosedSec: 30,
     defaultPermissionMode: 'auto',
+    templates: [],
   };
   private listeners = new Set<Listener>();
   private ws: WebSocket | null = null;
@@ -161,6 +164,7 @@ class Store {
           countdownSec: event.countdownSec,
           stopSessionsWhenClosedSec: event.stopSessionsWhenClosedSec,
           defaultPermissionMode: event.defaultPermissionMode,
+          templates: event.templates,
           lastError: undefined,
         });
         return;
@@ -170,6 +174,7 @@ class Store {
           countdownSec: event.countdownSec,
           stopSessionsWhenClosedSec: event.stopSessionsWhenClosedSec,
           defaultPermissionMode: event.defaultPermissionMode,
+          templates: event.templates,
         });
         return;
       case 'trigger_status':

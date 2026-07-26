@@ -171,6 +171,16 @@ export interface TriggerStatus {
 
 export type HostPlatform = 'win32' | 'darwin' | 'linux';
 
+// ---------- templates ----------
+
+/** A saved launch shape: same repo, same kind of prompt, same permission posture. */
+export interface SessionTemplate {
+  name: string;
+  cwd: string;
+  prompt?: string;
+  permissionMode: PermissionLaunchMode;
+}
+
 // ---------- usage ----------
 
 export interface TokenCounts {
@@ -228,6 +238,7 @@ export type ServerEvent =
       countdownSec: number;
       stopSessionsWhenClosedSec: number;
       defaultPermissionMode: PermissionLaunchMode;
+      templates: SessionTemplate[];
     }
   | { type: 'session_upsert'; session: SessionSummary }
   | { type: 'session_removed'; sessionId: string }
@@ -241,6 +252,7 @@ export type ServerEvent =
       countdownSec: number;
       stopSessionsWhenClosedSec: number;
       defaultPermissionMode: PermissionLaunchMode;
+      templates: SessionTemplate[];
     }
   /** Result of a browse_folder request; empty when the user cancelled. */
   | { type: 'folders_picked'; paths: string[] }
@@ -282,6 +294,9 @@ export type ClientCommand =
   | { type: 'set_countdown'; seconds: number }
   /** Seconds after the last browser closes before sessions stop; 0 disables. */
   | { type: 'set_stop_on_close'; seconds: number }
+  /** Saves (or overwrites, by name) a reusable launch shape. */
+  | { type: 'save_template'; template: SessionTemplate }
+  | { type: 'delete_template'; name: string }
   /** Liveness beat from a page that is actually running. See CLIENT_PING_MS. */
   | { type: 'ping' };
 

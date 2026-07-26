@@ -25,6 +25,7 @@ export function App() {
     platform,
     stopSessionsWhenClosedSec,
     defaultPermissionMode,
+    templates,
   } = useClaudia();
   const [now, setNow] = useState(() => Date.now());
   const [usageOpen, setUsageOpen] = useState(false);
@@ -108,7 +109,11 @@ export function App() {
         onToggleUsage={() => setUsageOpen((v) => !v)}
       />
       {usageOpen && usage && <UsagePanel usage={usage} />}
-      <LaunchBar recentDirectories={recentDirectories} defaultMode={defaultPermissionMode} />
+      <LaunchBar
+        recentDirectories={recentDirectories}
+        defaultMode={defaultPermissionMode}
+        templates={templates}
+      />
       {lastError && (
         <div
           style={{

@@ -1,4 +1,4 @@
-import type { FinishActionKey, PermissionLaunchMode, PlanTier } from '@claudia/shared';
+import type { FinishActionKey, PermissionLaunchMode, PlanTier, SessionTemplate } from '@claudia/shared';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -16,6 +16,8 @@ export interface Settings {
   /** Remembered so relaunching in the same repo doesn't mean retyping the path. */
   recentDirectories: string[];
   defaultPermissionMode: PermissionLaunchMode;
+  /** Saved launch shapes (cwd + prompt + permission mode), most-recent first. */
+  templates: SessionTemplate[];
 }
 
 const DEFAULTS: Settings = {
@@ -27,9 +29,11 @@ const DEFAULTS: Settings = {
   stopSessionsWhenClosedSec: 30,
   recentDirectories: [],
   defaultPermissionMode: 'auto',
+  templates: [],
 };
 
 const MAX_RECENT = 8;
+const MAX_TEMPLATES = 12;
 
 export function settingsPath(): string {
   return join(process.env['CLAUDIA_DATA_DIR'] ?? join(homedir(), '.claudia'), 'settings.json');
@@ -67,6 +71,16 @@ export class SettingsStore {
   rememberDirectory(dir: string): void {
     const rest = this.current.recentDirectories.filter((d) => d !== dir);
     this.update({ recentDirectories: [dir, ...rest].slice(0, MAX_RECENT) });
+  }
+
+  /** Upserts by name (same name replaces, moved to the front), most-recent first, capped. */
+  saveTemplate(template: SessionTemplate): void {
+    const rest = this.current.templates.filter((t) => t.name !== template.name);
+    this.update({ templates: [template, ...rest].slice(0, MAX_TEMPLATES) });
+  }
+
+  deleteTemplate(name: string): void {
+    this.update({ templates: this.current.templates.filter((t) => t.name !== name) });
   }
 
   private load(): Settings {

@@ -1,4 +1,4 @@
-import type { PermissionLaunchMode } from '@claudia/shared';
+import type { PermissionLaunchMode, SessionTemplate } from '@claudia/shared';
 import { useEffect, useRef, useState } from 'react';
 import { onFoldersPicked, send } from '../store';
 
@@ -18,10 +18,14 @@ interface Props {
   recentDirectories: string[];
   /** Last mode used, remembered server-side so a chosen posture sticks. */
   defaultMode: PermissionLaunchMode;
+  templates: SessionTemplate[];
 }
 
+const modeLabel = (mode: PermissionLaunchMode): string =>
+  MODES.find((m) => m.key === mode)?.label ?? mode;
+
 /** Launch a new Claudia-owned session: cwd + first prompt + permission mode. */
-export function LaunchBar({ recentDirectories, defaultMode }: Props) {
+export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) {
   const [cwd, setCwd] = useState('');
   const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<PermissionLaunchMode>(defaultMode);
@@ -79,6 +83,29 @@ export function LaunchBar({ recentDirectories, defaultMode }: Props) {
     setPrompt('');
   };
 
+  const launchTemplate = (t: SessionTemplate) => {
+    send({
+      type: 'launch_session',
+      cwd: t.cwd,
+      ...(t.prompt ? { prompt: t.prompt } : {}),
+      permissionMode: t.permissionMode,
+    });
+  };
+
+  const saveTemplate = () => {
+    const name = window.prompt('Template name')?.trim();
+    if (!name) return;
+    send({
+      type: 'save_template',
+      template: {
+        name,
+        cwd: cwd.trim(),
+        ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+        permissionMode: mode,
+      },
+    });
+  };
+
   const danger = mode === 'bypassPermissions';
 
   return (
@@ -87,6 +114,8 @@ export function LaunchBar({ recentDirectories, defaultMode }: Props) {
         flex: 'none',
         display: 'flex',
         alignItems: 'center',
+        flexWrap: 'wrap',
+        rowGap: 6,
         gap: 8,
         padding: '8px 16px',
         borderBottom: '1px solid #2c2f3d',
@@ -166,6 +195,69 @@ export function LaunchBar({ recentDirectories, defaultMode }: Props) {
           );
         })}
       </span>
+      {templates.length > 0 && (
+        <span style={{ display: 'flex', gap: 4, flex: 'none', flexWrap: 'wrap' }}>
+          {templates.map((t) => (
+            <span
+              key={t.name}
+              title={`${t.cwd} — ${modeLabel(t.permissionMode)}`}
+              onClick={() => launchTemplate(t)}
+              style={{
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                borderRadius: 7,
+                padding: '4px 6px 4px 9px',
+                fontFamily: 'var(--font-body)',
+                fontSize: 11,
+                border: '1px solid #33364a',
+                background: 'transparent',
+                color: '#9397ab',
+              }}
+            >
+              <span
+                style={{
+                  maxWidth: 120,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {t.name}
+              </span>
+              <button
+                type="button"
+                title="delete template"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  send({ type: 'delete_template', name: t.name });
+                }}
+                style={{
+                  cursor: 'pointer',
+                  border: 0,
+                  background: 'transparent',
+                  color: '#9397ab',
+                  fontSize: 10,
+                  lineHeight: 1,
+                  padding: 0,
+                }}
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </span>
+      )}
+      <button
+        className="btn btn-secondary"
+        disabled={!cwd.trim()}
+        title="Save current cwd, prompt, and mode as a template"
+        onClick={saveTemplate}
+        style={{ flex: 'none', fontSize: 11.5, padding: '4px 10px', borderColor: '#3f424d', color: '#9397ab' }}
+      >
+        Save…
+      </button>
       <button
         className="btn btn-primary"
         onClick={launch}

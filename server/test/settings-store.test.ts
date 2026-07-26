@@ -72,4 +72,62 @@ describe('SettingsStore', () => {
     expect(() => s.update({ countdownSec: 60 })).not.toThrow();
     expect(s.get().countdownSec).toBe(60);
   });
+
+  it('starts with no templates', () => {
+    const s = new SettingsStore(pathFor('templates-fresh'));
+    expect(s.get().templates).toEqual([]);
+  });
+
+  it('upserts a template with the same name instead of duplicating it', () => {
+    const s = new SettingsStore(pathFor('templates-upsert'));
+    s.saveTemplate({ name: 'quick fix', cwd: '/a', permissionMode: 'auto' });
+    s.saveTemplate({ name: 'quick fix', cwd: '/b', prompt: 'fix it', permissionMode: 'default' });
+    expect(s.get().templates).toHaveLength(1);
+    expect(s.get().templates[0]).toEqual({
+      name: 'quick fix',
+      cwd: '/b',
+      prompt: 'fix it',
+      permissionMode: 'default',
+    });
+  });
+
+  it('keeps templates most-recent-first', () => {
+    const s = new SettingsStore(pathFor('templates-order'));
+    s.saveTemplate({ name: 'first', cwd: '/a', permissionMode: 'auto' });
+    s.saveTemplate({ name: 'second', cwd: '/b', permissionMode: 'auto' });
+    s.saveTemplate({ name: 'first', cwd: '/a2', permissionMode: 'auto' }); // re-save moves to front
+    expect(s.get().templates.map((t) => t.name)).toEqual(['first', 'second']);
+  });
+
+  it('caps templates at 12', () => {
+    const s = new SettingsStore(pathFor('templates-cap'));
+    for (let i = 0; i < 20; i++) {
+      s.saveTemplate({ name: `t${i}`, cwd: `/d${i}`, permissionMode: 'auto' });
+    }
+    expect(s.get().templates).toHaveLength(12);
+    expect(s.get().templates[0]?.name).toBe('t19');
+    expect(s.get().templates.at(-1)?.name).toBe('t8');
+  });
+
+  it('deletes a template by name', () => {
+    const s = new SettingsStore(pathFor('templates-delete'));
+    s.saveTemplate({ name: 'keep', cwd: '/a', permissionMode: 'auto' });
+    s.saveTemplate({ name: 'drop', cwd: '/b', permissionMode: 'auto' });
+    s.deleteTemplate('drop');
+    expect(s.get().templates.map((t) => t.name)).toEqual(['keep']);
+  });
+
+  it('persists templates across store instances', () => {
+    const path = pathFor('templates-persist');
+    new SettingsStore(path).saveTemplate({
+      name: 'nightly',
+      cwd: '/repo',
+      prompt: 'run the tests',
+      permissionMode: 'acceptEdits',
+    });
+    const reloaded = new SettingsStore(path);
+    expect(reloaded.get().templates).toEqual([
+      { name: 'nightly', cwd: '/repo', prompt: 'run the tests', permissionMode: 'acceptEdits' },
+    ]);
+  });
 });

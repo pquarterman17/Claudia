@@ -15,6 +15,44 @@ describe('routeMessage', () => {
     expect(r.steps[0]?.kind).toBe('info');
   });
 
+  it('system/init extracts slash_commands when present', () => {
+    const r = routeMessage(
+      {
+        type: 'system',
+        subtype: 'init',
+        model: 'claude-opus-4-8',
+        session_id: 'abc-123',
+        cwd: '/repo',
+        slash_commands: ['compact', 'clear', 'my-skill'],
+      },
+      T0,
+    );
+    expect(r.slashCommands).toEqual(['compact', 'clear', 'my-skill']);
+  });
+
+  it('system/init omits slashCommands when absent', () => {
+    const r = routeMessage(
+      { type: 'system', subtype: 'init', model: 'claude-opus-4-8', session_id: 'abc-123', cwd: '/repo' },
+      T0,
+    );
+    expect(r.slashCommands).toBeUndefined();
+  });
+
+  it('system/init filters out non-string entries in slash_commands', () => {
+    const r = routeMessage(
+      {
+        type: 'system',
+        subtype: 'init',
+        model: 'claude-opus-4-8',
+        session_id: 'abc-123',
+        cwd: '/repo',
+        slash_commands: ['compact', 42, null, { name: 'nope' }, 'clear'],
+      },
+      T0,
+    );
+    expect(r.slashCommands).toEqual(['compact', 'clear']);
+  });
+
   it('assistant tool_use produces a feed step classified by tool', () => {
     const r = routeMessage(
       {

@@ -7,6 +7,8 @@ export interface SessionCallbacks {
   onFeedPatch: (sessionId: string, stepId: string, patch: FeedStepPatch) => void;
   /** The reply as it streams; null clears it once the full message lands. */
   onDraft: (sessionId: string, text: string | null) => void;
+  /** Slash commands the CLI knows for this session, from the init message. */
+  onCommands: (sessionId: string, commands: string[]) => void;
 }
 
 export interface LaunchOptions {

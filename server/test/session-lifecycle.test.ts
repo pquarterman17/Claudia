@@ -44,6 +44,7 @@ function launch(opts: { prompt?: string; permissionMode?: SessionSummary['permis
       onFeed: (_id, step) => rec.feeds.push(step),
       onFeedPatch: (_id, stepId, patch) => rec.patches.push({ stepId, patch }),
       onDraft: (_id, text) => rec.drafts.push(text),
+      onCommands: () => {},
     },
   );
   rec.session.start();

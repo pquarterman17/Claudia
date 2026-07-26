@@ -31,6 +31,8 @@ export interface RoutedMessage {
   subAgent?: { toolUseId: string; run: Partial<SubAgentRun> & { taskId: string } };
   /** A streamed text fragment of the reply currently being written. */
   draftDelta?: string;
+  /** Slash commands the CLI knows for this session, from the init message. */
+  slashCommands?: string[];
 }
 
 const EMPTY: RoutedMessage = { steps: [] };
@@ -125,11 +127,16 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
   if (type === 'system' && message['subtype'] === 'init') {
     const model = typeof message['model'] === 'string' ? message['model'] : undefined;
     const sessionId = typeof message['session_id'] === 'string' ? message['session_id'] : undefined;
+    const rawCommands = message['slash_commands'];
+    const slashCommands = Array.isArray(rawCommands)
+      ? rawCommands.filter((c): c is string => typeof c === 'string')
+      : undefined;
     return {
       steps: [infoStep('Session started', [model, message['cwd']].filter(Boolean).join(' · '))],
       state: 'working',
       ...(model ? { model } : {}),
       ...(sessionId ? { claudeSessionId: sessionId } : {}),
+      ...(slashCommands ? { slashCommands } : {}),
     };
   }
 

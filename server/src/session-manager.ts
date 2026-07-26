@@ -9,6 +9,7 @@ export interface ManagerEvents {
   onFeed: (sessionId: string, step: FeedStep) => void;
   onFeedPatch: (sessionId: string, stepId: string, patch: FeedStepPatch) => void;
   onDraft: (sessionId: string, text: string | null) => void;
+  onCommands: (sessionId: string, commands: string[]) => void;
   onRemoved: (sessionId: string) => void;
 }
 
@@ -44,6 +45,7 @@ export class SessionManager {
         this.events.onFeedPatch(sessionId, stepId, patch);
       },
       onDraft: (sessionId, text) => this.events.onDraft(sessionId, text),
+      onCommands: (sessionId, commands) => this.events.onCommands(sessionId, commands),
     });
     this.sessions.set(session.id, session);
     this.feeds.set(session.id, []);

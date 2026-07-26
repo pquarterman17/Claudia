@@ -178,6 +178,7 @@ export class ClaudiaSession {
 
     if (routed.claudeSessionId) this.claudeSessionId = routed.claudeSessionId;
     if (routed.model) this.model = routed.model;
+    if (routed.slashCommands) this.cb.onCommands(this.id, routed.slashCommands);
     // Cost and usage are cumulative in the SDK's result message — assign, never add.
     // A result also ends the current turn, so the next queued prompt (if any)
     // becomes the active one.

@@ -18,6 +18,8 @@ export interface Settings {
   defaultPermissionMode: PermissionLaunchMode;
   /** Saved launch shapes (cwd + prompt + permission mode), most-recent first. */
   templates: SessionTemplate[];
+  /** Ceilings the user has calibrated themselves, used when planTier === 'custom'. */
+  customCeilings?: { sessionTokens: number; weeklyTokens: number };
 }
 
 const DEFAULTS: Settings = {

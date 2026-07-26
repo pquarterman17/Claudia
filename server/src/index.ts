@@ -71,6 +71,7 @@ const manager = new SessionManager({
 
 const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: usage.snapshot() }));
 usage.setTier(saved.planTier);
+if (saved.customCeilings) usage.setCustomCeilings(saved.customCeilings);
 
 gateway.attach(manager, trigger, usage, settings);
 usage.start();

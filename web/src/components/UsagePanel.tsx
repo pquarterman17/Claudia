@@ -8,6 +8,7 @@ const TIERS: Array<{ key: PlanTier; label: string; title: string }> = [
   { key: 'pro', label: 'Pro', title: 'Estimated Pro ceiling — unverified' },
   { key: 'max5x', label: 'Max 5x', title: 'Estimated Max 5x ceiling — unverified' },
   { key: 'max20x', label: 'Max 20x', title: 'Estimated Max 20x ceiling — unverified' },
+  { key: 'custom', label: 'Custom', title: 'ceilings you set yourself' },
 ];
 
 const LEVEL_COLOR = { ok: '#d2cefd', low: COLORS.warn, critical: COLORS.err } as const;
@@ -19,6 +20,7 @@ const LEVEL_BAR = {
 
 interface Props {
   usage: UsageSnapshot;
+  customCeilings?: { sessionTokens: number; weeklyTokens: number };
 }
 
 /**
@@ -40,7 +42,9 @@ function headline(w: UsageWindow): { value: string; suffix: string } {
  * no API exposes real allowances — so the panel says so rather than implying
  * server truth.
  */
-export function UsagePanel({ usage }: Props) {
+export function UsagePanel({ usage, customCeilings }: Props) {
+  const sendCeilings = (session: number, weekly: number) =>
+    send({ type: 'set_custom_ceilings', sessionTokens: session, weeklyTokens: weekly });
   const maxProject = Math.max(1, ...usage.byProject.map((p) => p.billableTokens));
 
   return (
@@ -83,6 +87,36 @@ export function UsagePanel({ usage }: Props) {
             );
           })}
         </div>
+
+        {usage.tier === 'custom' && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
+            {(
+              [
+                { label: 'session', key: 'sessionTokens' as const },
+                { label: 'weekly', key: 'weeklyTokens' as const },
+              ]
+            ).map((f) => (
+              <label key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10.5, color: '#9397ab' }}>
+                {f.label}
+                <input
+                  type="number"
+                  min={1000}
+                  step={100000}
+                  className="input mono"
+                  style={{ width: 110, fontSize: 11, padding: '3px 6px' }}
+                  defaultValue={customCeilings?.[f.key] ?? ''}
+                  placeholder="tokens"
+                  onBlur={(e) => {
+                    const v = Number(e.target.value);
+                    if (!Number.isFinite(v) || v < 1000) return;
+                    const next = { sessionTokens: customCeilings?.sessionTokens ?? v, weeklyTokens: customCeilings?.weeklyTokens ?? v, [f.key]: v };
+                    sendCeilings(next.sessionTokens, next.weeklyTokens);
+                  }}
+                />
+              </label>
+            ))}
+          </div>
+        )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
           {usage.windows.map((w) => (

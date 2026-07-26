@@ -52,6 +52,7 @@ export class Gateway {
         stopSessionsWhenClosedSec: settings.get().stopSessionsWhenClosedSec,
         defaultPermissionMode: settings.get().defaultPermissionMode,
         templates: settings.get().templates,
+        customCeilings: settings.get().customCeilings,
       });
       this.lastSeen.set(socket, Date.now());
       this.onClientCountChanged();
@@ -135,6 +136,7 @@ export class Gateway {
       stopSessionsWhenClosedSec: s.stopSessionsWhenClosedSec,
       defaultPermissionMode: s.defaultPermissionMode,
       templates: s.templates,
+      customCeilings: s.customCeilings,
     });
   }
 
@@ -212,6 +214,10 @@ export class Gateway {
         this.trigger.toggleAction(cmd.action);
         this.settings.update({ finishChain: this.trigger.actions });
         return;
+      case 'move_finish_action':
+        this.trigger.moveAction(cmd.action, cmd.direction);
+        this.settings.update({ finishChain: this.trigger.actions });
+        return;
       case 'clear_finish_chain':
         this.trigger.clearChain();
         this.settings.update({ finishChain: [] });
@@ -229,6 +235,17 @@ export class Gateway {
         this.usage.setTier(cmd.tier);
         this.settings.update({ planTier: cmd.tier });
         return;
+      case 'set_custom_ceilings': {
+        // A zero or negative ceiling is meaningless, so floor it above zero.
+        const customCeilings = {
+          sessionTokens: Math.max(1000, Math.round(cmd.sessionTokens)),
+          weeklyTokens: Math.max(1000, Math.round(cmd.weeklyTokens)),
+        };
+        this.settings.update({ customCeilings });
+        this.usage.setCustomCeilings(customCeilings);
+        this.broadcastSettings();
+        return;
+      }
       case 'set_stop_on_close': {
         // Clamped: a few seconds is not enough to survive a page reload.
         const seconds = cmd.seconds <= 0 ? 0 : Math.max(10, Math.min(3600, Math.round(cmd.seconds)));

@@ -266,6 +266,23 @@ describe('streaming vectors', () => {
   });
 });
 
+describe('transcript vectors', () => {
+  it('V19: the launch prompt is the first transcript line', async () => {
+    const rec = launch({ prompt: 'hello there' });
+    await tick();
+    const items = rec.session.transcript.list();
+    expect(items[0]).toMatchObject({ kind: 'user', text: 'hello there' });
+  });
+
+  it('V20: prompts sent later append user items too', async () => {
+    const rec = launch({ prompt: 'first' });
+    await tick();
+    rec.session.sendPrompt('second');
+    const kinds = rec.session.transcript.list().map((i) => i.kind);
+    expect(kinds).toEqual(['user', 'user']);
+  });
+});
+
 describe('turn-queue vectors', () => {
   it('V18: prompts sent mid-turn are listed, and a result consumes one', async () => {
     const rec = launch({ prompt: 'x' });

@@ -112,6 +112,11 @@ export class ClaudiaSession {
       this.firstPrompt = this.opts.prompt;
       this.beginQuery();
       this.pushUserText(this.opts.prompt);
+      // The launch prompt is part of the conversation too — without this the
+      // transcript opens mid-dialogue, missing its own first line.
+      const item: TranscriptItem = { ts: Date.now(), kind: 'user', text: this.opts.prompt };
+      this.transcript.append(item);
+      this.cb.onTranscript(this.id, item);
       this.awaitingFirstPrompt = false;
       return;
     }

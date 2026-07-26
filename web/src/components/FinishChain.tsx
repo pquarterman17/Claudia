@@ -1,4 +1,5 @@
 import type { ChainStep, FinishActionKey, TriggerStatus } from '@claudia/shared';
+import { chainSentence } from '../chain-summary';
 import { fmtDur } from '../format';
 import { send } from '../store';
 import { COLORS } from '../status';
@@ -29,16 +30,30 @@ const STEP_MARK: Record<ChainStep['state'], { icon: string; color: string }> = {
 
 interface Props {
   trigger: TriggerStatus;
+  /**
+   * The configured grace period. Distinct from `trigger.countdownSec`, which
+   * exists only once a countdown is already running — by then it is too late to
+   * be reassuring. The whole point is to show the escape hatch while the user is
+   * still deciding whether to arm.
+   */
+  graceSec: number;
 }
 
 /**
  * Builds and shows the ordered chain of finish actions. Clicking an action
  * appends it; clicking again removes it.
  */
-export function FinishChain({ trigger }: Props) {
+export function FinishChain({ trigger, graceSec }: Props) {
   const inChain = (key: FinishActionKey) => trigger.chain.some((s) => s.key === key);
   const lastIsDestructive = trigger.chain[trigger.chain.length - 1]?.destructive ?? false;
   const destructiveNotLast = trigger.chain.some((s) => s.destructive) && !lastIsDestructive;
+  // Reading the numbered rows tells you what is in the chain; this tells you
+  // what will happen, which is the question that stops people testing it.
+  const sentence = chainSentence({
+    labels: trigger.chain.map((s) => labelFor(s.key)),
+    keys: trigger.chain.map((s) => s.key),
+    countdownSec: trigger.countdownSec ?? graceSec,
+  });
 
   return (
     <section>
@@ -93,6 +108,23 @@ export function FinishChain({ trigger }: Props) {
           );
         })}
       </div>
+
+      {sentence && (
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 11,
+            lineHeight: 1.45,
+            color: trigger.destructive ? COLORS.warn : '#9397ab',
+            background: trigger.destructive ? '#251f2c' : 'transparent',
+            border: `1px solid ${trigger.destructive ? '#6b5636' : 'transparent'}`,
+            borderRadius: 6,
+            padding: trigger.destructive ? '6px 8px' : 0,
+          }}
+        >
+          {sentence}
+        </div>
+      )}
 
       {trigger.chain.length === 0 ? (
         <div style={{ marginTop: 8, fontSize: 11, color: '#595d6c' }}>

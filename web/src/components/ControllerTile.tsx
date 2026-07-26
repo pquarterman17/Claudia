@@ -88,7 +88,7 @@ export function ControllerTile({ trigger, sessions, countdownSec, stopOnCloseSec
           </div>
         )}
 
-        <FinishChain trigger={trigger} />
+        <FinishChain trigger={trigger} graceSec={countdownSec} />
 
         <section
           style={{

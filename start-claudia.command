@@ -51,8 +51,15 @@ if [ ! -d node_modules ]; then
   fi
 fi
 
-# Open the browser once the dev server has had a moment to bind.
-( sleep 4; open_ui ) &
+# Open the browser the moment the UI answers, rather than after a fixed wait.
+# A flat sleep here made every start feel four seconds slower than it was.
+(
+  for _ in $(seq 1 120); do
+    if curl -fsS -o /dev/null --max-time 1 "http://localhost:4318" 2>/dev/null; then break; fi
+    sleep 0.25
+  done
+  open_ui
+) &
 
 cat <<'BANNER'
 

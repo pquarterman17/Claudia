@@ -38,8 +38,14 @@ export function LaunchBar({ recentDirectories }: Props) {
   }, [browsing]);
 
   const launch = () => {
-    if (!cwd.trim() || !prompt.trim()) return;
-    send({ type: 'launch_session', cwd: cwd.trim(), prompt: prompt.trim(), permissionMode: mode });
+    if (!cwd.trim()) return;
+    // An empty prompt is allowed: the session opens idle and waits.
+    send({
+      type: 'launch_session',
+      cwd: cwd.trim(),
+      ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+      permissionMode: mode,
+    });
     setPrompt('');
   };
 
@@ -103,7 +109,7 @@ export function LaunchBar({ recentDirectories }: Props) {
             launch();
           }
         }}
-        placeholder="first prompt…"
+        placeholder="first prompt (optional)…"
         style={{ flex: 1, minWidth: 120, fontSize: 11.5, padding: '4px 8px' }}
       />
       <span style={{ display: 'flex', gap: 4, flex: 'none' }}>

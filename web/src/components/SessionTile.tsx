@@ -1,5 +1,5 @@
 import type { FeedStep, SessionSummary } from '@claudia/shared';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { elapsed, fmtCost, fmtTokens } from '../format';
 import { send } from '../store';
 import { COLORS, statusOf } from '../status';
@@ -12,10 +12,28 @@ interface Props {
   now: number;
   index: number;
   focused: boolean;
+  height: number;
+  onResize: (px: number) => void;
 }
 
 /** One session: header chips, activity feed, approval banner, composer. */
-export function SessionTile({ session, steps, now, index, focused }: Props) {
+export function SessionTile({ session, steps, now, index, focused, height, onResize }: Props) {
+  const tileRef = useRef<HTMLDivElement>(null);
+
+  const onGripDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const top = tileRef.current?.getBoundingClientRect().top ?? 0;
+    const move = (ev: MouseEvent) => onResize(ev.clientY - top);
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      document.body.style.userSelect = '';
+    };
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
   const [draft, setDraft] = useState('');
   const status = statusOf(session.state);
   const yolo = session.permissionMode === 'bypassPermissions';
@@ -33,9 +51,11 @@ export function SessionTile({ session, steps, now, index, focused }: Props) {
 
   return (
     <div
+      ref={tileRef}
       id={`session-${session.id}`}
       className={cls}
       style={{
+        height,
         ...(yolo ? { borderColor: '#5c3b3b', boxShadow: 'inset 0 2px 0 #8a4f4f' } : {}),
         ...(focused ? { outline: '1px solid #796cbf', outlineOffset: 2 } : {}),
       }}
@@ -173,6 +193,8 @@ export function SessionTile({ session, steps, now, index, focused }: Props) {
           {fmtCost(session.costUsd)}
         </span>
       </div>
+
+      <div className="tile-grip" onMouseDown={onGripDown} title="Drag to resize this tile" />
     </div>
   );
 }

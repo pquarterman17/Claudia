@@ -38,8 +38,9 @@ if not exist "node_modules\" (
   )
 )
 
-rem Open the browser once the dev server has had a moment to bind.
-start "" powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 4; Start-Process 'http://localhost:4318'"
+rem Open the browser the moment the UI answers, rather than after a fixed wait.
+rem A flat sleep here made every start feel four seconds slower than it was.
+start "" powershell -NoProfile -WindowStyle Hidden -Command "$u='http://localhost:4318'; for ($i=0; $i -lt 120; $i++) { try { Invoke-WebRequest -UseBasicParsing $u -TimeoutSec 1 | Out-Null; break } catch { Start-Sleep -Milliseconds 250 } }; Start-Process $u"
 
 echo.
 echo   Claudia is starting.

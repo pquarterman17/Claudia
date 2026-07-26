@@ -43,14 +43,8 @@ export function ControllerTile({ trigger, sessions, countdownSec, stopOnCloseSec
   const armColor = confirming ? COLORS.err : armed ? COLORS.warn : '#b5abfc';
 
   return (
-    <div
-      className="tile"
-      style={{
-        borderColor: '#5d5294',
-        background: 'linear-gradient(180deg,#1e1b2b,#191b28)',
-      }}
-    >
-      <div className="tile-head" style={{ background: '#201d2e', borderBottomColor: '#423a6a' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
         <span
           style={{
             width: 7,
@@ -60,12 +54,12 @@ export function ControllerTile({ trigger, sessions, countdownSec, stopOnCloseSec
             animation: armed ? 'claudia-pulse 1.6s ease-in-out infinite' : 'none',
           }}
         />
-        <span style={{ fontWeight: 500, fontSize: 13, color: '#d2cefd' }}>Claudia</span>
-        <span style={{ flex: 1, fontSize: 10.5, color: '#75798c' }}>global control</span>
+        <span className="kicker">Global control</span>
+        <span style={{ flex: 1 }} />
         <span style={{ fontSize: 10.5, color: armed ? COLORS.warn : COLORS.mute }}>{trigger.state}</span>
       </div>
 
-      <div className="tile-body" style={{ background: 'transparent', gap: 12, justifyContent: 'flex-start' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {unprompted > 0 && (
           <div
             style={{

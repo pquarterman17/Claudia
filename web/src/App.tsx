@@ -1,19 +1,32 @@
 import { useEffect, useState } from 'react';
-import { ControllerTile } from './components/ControllerTile';
+import { BoardControls } from './components/BoardControls';
+import { ControlSidebar } from './components/ControlSidebar';
 import { LaunchBar } from './components/LaunchBar';
 import { SessionTile } from './components/SessionTile';
+import { StatusFooter } from './components/StatusFooter';
 import { TopBar } from './components/TopBar';
 import { UsagePanel } from './components/UsagePanel';
+import { DEFAULT_TILE_HEIGHT, gridTemplate, useLayout } from './layout';
 import { oldestPendingApproval, resolveShortcut } from './shortcuts';
 import { send, store, useClaudia } from './store';
-import { StatusFooter } from './components/StatusFooter';
 
 export function App() {
-  const { sessions, feeds, connected, lastError, trigger, usage, recentDirectories, countdownSec, platform, stopSessionsWhenClosedSec } =
-    useClaudia();
+  const {
+    sessions,
+    feeds,
+    connected,
+    lastError,
+    trigger,
+    usage,
+    recentDirectories,
+    countdownSec,
+    platform,
+    stopSessionsWhenClosedSec,
+  } = useClaudia();
   const [now, setNow] = useState(() => Date.now());
   const [usageOpen, setUsageOpen] = useState(false);
   const [focused, setFocused] = useState<string | undefined>();
+  const { layout, setColumns, setSidebarWidth, setHeight, arrangeAll, isArranged } = useLayout();
 
   useEffect(() => {
     store.connect();
@@ -106,29 +119,52 @@ export function App() {
           </button>
         </div>
       )}
-      <div className="board">
-        {trigger && <ControllerTile
+
+      <div className="workspace">
+        {trigger && (
+          <ControlSidebar
             trigger={trigger}
             sessions={sessions}
+            feeds={feeds}
+            now={now}
             countdownSec={countdownSec}
             stopOnCloseSec={stopSessionsWhenClosedSec}
-          />}
-        {ordered.map((session, i) => (
-          <SessionTile
-            key={session.id}
-            session={session}
-            steps={feeds[session.id] ?? []}
-            now={now}
-            index={i}
-            focused={focused === session.id}
+            width={layout.sidebarWidth}
+            onResize={setSidebarWidth}
           />
-        ))}
-        {ordered.length === 0 && (
-          <div style={{ color: '#595d6c', fontSize: 12, padding: 20 }}>
-            No sessions yet — launch one above with a working directory and a first prompt.
-          </div>
         )}
+
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <BoardControls
+            columns={layout.columns}
+            onColumns={setColumns}
+            onArrangeAll={arrangeAll}
+            arranged={isArranged}
+            sessionCount={ordered.length}
+          />
+          <div className="board" style={{ gridTemplateColumns: gridTemplate(layout.columns) }}>
+            {ordered.map((session, i) => (
+              <SessionTile
+                key={session.id}
+                session={session}
+                steps={feeds[session.id] ?? []}
+                now={now}
+                index={i}
+                focused={focused === session.id}
+                height={layout.heights[session.id] ?? DEFAULT_TILE_HEIGHT}
+                onResize={(px) => setHeight(session.id, px)}
+              />
+            ))}
+            {ordered.length === 0 && (
+              <div style={{ color: '#595d6c', fontSize: 12, padding: 20 }}>
+                No sessions yet — pick a working directory above and hit Launch. A first prompt is
+                optional; the session will wait for you.
+              </div>
+            )}
+          </div>
+        </div>
       </div>
+
       <StatusFooter sessions={sessions} platform={platform} />
     </div>
   );

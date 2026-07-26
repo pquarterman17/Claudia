@@ -46,19 +46,47 @@ body,
   background: #191b28;
 }
 
+.workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* Full-height global control. Resizable, because how much of the board you
+   trade for the digest is a matter of taste. */
+.sidebar {
+  flex: none;
+  min-width: 0;
+  border-right: 1px solid #2c2f3d;
+  background: linear-gradient(180deg, #1e1b2b, #191b28);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-grip {
+  flex: none;
+  width: 5px;
+  cursor: col-resize;
+  background: transparent;
+  border-right: 1px solid #2c2f3d;
+}
+.sidebar-grip:hover {
+  background: #423a6a;
+}
+
 .board {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
   padding: 12px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
   gap: 12px;
   align-content: start;
 }
 
 .tile {
-  height: 420px;
+  position: relative;
   display: flex;
   flex-direction: column;
   border: 1px solid #2c2f3d;
@@ -66,6 +94,19 @@ body,
   overflow: hidden;
   background: #1a1c28;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+/* Drag the bottom edge to resize a tile. */
+.tile-grip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  cursor: row-resize;
+}
+.tile-grip:hover {
+  background: #423a6a;
 }
 
 .tile.awaiting {

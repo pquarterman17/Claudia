@@ -190,7 +190,8 @@ export type ClientCommand =
   | {
       type: 'launch_session';
       cwd: string;
-      prompt: string;
+      /** Optional — an empty session opens idle and waits for a prompt. */
+      prompt?: string;
       model?: string;
       permissionMode?: PermissionLaunchMode;
     }

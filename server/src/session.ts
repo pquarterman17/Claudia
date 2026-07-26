@@ -23,7 +23,8 @@ export interface SessionCallbacks {
 
 export interface LaunchOptions {
   cwd: string;
-  prompt: string;
+  /** Absent means: open the session and wait for the user to type. */
+  prompt?: string;
   model?: string;
   permissionMode: PermissionLaunchMode;
 }
@@ -49,6 +50,8 @@ export class ClaudiaSession {
   private model: string | undefined;
   private claudeSessionId: string | undefined;
   private errorMessage: string | undefined;
+  /** True until the first prompt is sent, so an empty session reads as idle. */
+  private awaitingFirstPrompt = true;
 
   constructor(
     private readonly opts: LaunchOptions,
@@ -79,7 +82,22 @@ export class ClaudiaSession {
   }
 
   start(): void {
-    this.pushUserText(this.opts.prompt);
+    if (this.opts.prompt?.trim()) {
+      this.beginQuery();
+      this.pushUserText(this.opts.prompt);
+      this.awaitingFirstPrompt = false;
+      return;
+    }
+    // No prompt: don't spawn anything yet. The SDK emits its init message only
+    // once it has input, so starting a query here would leave the session stuck
+    // in 'starting' forever — and it would hold a process doing nothing.
+    this.cb.onFeed(this.id, infoStep('Session ready', 'waiting for your first prompt'));
+    this.setState('idle');
+  }
+
+  /** Creates the SDK query on first use. Safe to call repeatedly. */
+  private beginQuery(): void {
+    if (this.q) return;
     this.q = query({
       prompt: this.input as AsyncIterable<never>,
       options: {
@@ -127,6 +145,12 @@ export class ClaudiaSession {
     if (routed.modelUsage) this.modelUsage = routed.modelUsage;
     if (routed.errorMessage) this.errorMessage = routed.errorMessage;
 
+    // An empty session is idle, not working: the SDK has started but there is
+    // nothing for it to do until someone types.
+    if (this.awaitingFirstPrompt && routed.state === 'working') {
+      this.setState('idle');
+      return;
+    }
     // A parked approval outranks a 'working' hint from a message that raced it.
     if (routed.state && !(this.gate.isWaiting && routed.state === 'working')) {
       this.setState(routed.state);
@@ -160,10 +184,12 @@ export class ClaudiaSession {
   }
 
   sendPrompt(text: string): void {
+    this.awaitingFirstPrompt = false;
+    this.beginQuery();
     this.pushUserText(text);
     this.lastActivityAt = Date.now();
     this.cb.onFeed(this.id, infoStep('Prompt sent', text.length > 160 ? `${text.slice(0, 159)}…` : text));
-    if (this.state === 'idle') this.setState('working');
+    this.setState('working');
   }
 
   /** Change permissions on a live session — the escape hatch from skip-permissions. */

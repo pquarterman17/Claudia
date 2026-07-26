@@ -1,18 +1,7 @@
 import type { PermissionLaunchMode, SessionTemplate } from '@claudia/shared';
 import { useEffect, useRef, useState } from 'react';
+import { PERMISSION_MODES, permissionModeLabel } from '../permission-modes';
 import { onFoldersPicked, send } from '../store';
-
-const MODES: Array<{ key: PermissionLaunchMode; label: string; title: string; danger?: boolean }> = [
-  { key: 'auto', label: 'Auto', title: 'Claude decides what genuinely needs asking' },
-  { key: 'default', label: 'Ask each time', title: 'Prompt for anything not already allowlisted' },
-  { key: 'acceptEdits', label: 'Accept edits', title: 'Edits apply without asking; commands still prompt' },
-  {
-    key: 'bypassPermissions',
-    label: 'Skip all',
-    title: 'Every tool call runs unprompted — nothing will stop to ask you',
-    danger: true,
-  },
-];
 
 interface Props {
   recentDirectories: string[];
@@ -20,9 +9,6 @@ interface Props {
   defaultMode: PermissionLaunchMode;
   templates: SessionTemplate[];
 }
-
-const modeLabel = (mode: PermissionLaunchMode): string =>
-  MODES.find((m) => m.key === mode)?.label ?? mode;
 
 /** Launch a new Claudia-owned session: cwd + first prompt + permission mode. */
 export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) {
@@ -177,13 +163,13 @@ export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) 
         <span className="sr-only">Permission mode</span>
         <select
           value={mode}
-          title={MODES.find((m) => m.key === mode)?.title}
+          title={PERMISSION_MODES.find((m) => m.key === mode)?.title}
           onChange={(e) => {
             touched.current = true;
             setMode(e.target.value as PermissionLaunchMode);
           }}
         >
-          {MODES.map((m) => (
+          {PERMISSION_MODES.map((m) => (
             <option key={m.key} value={m.key}>
               Permissions: {m.label}
             </option>
@@ -197,11 +183,11 @@ export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) 
             <div className="launch-template-row" key={t.name}>
               <button
                 type="button"
-                title={`${t.cwd} — ${modeLabel(t.permissionMode)}`}
+                title={`${t.cwd} — ${permissionModeLabel(t.permissionMode)}`}
                 onClick={() => launchTemplate(t)}
               >
                 <span>{t.name}</span>
-                <small>{modeLabel(t.permissionMode)}</small>
+                <small>{permissionModeLabel(t.permissionMode)}</small>
               </button>
               <button
                 type="button"

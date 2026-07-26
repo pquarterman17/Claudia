@@ -2,6 +2,7 @@ import type { FeedStep, SessionSummary, TranscriptItem } from '@claudia/shared';
 import { useEffect, useRef, useState } from 'react';
 import { accentFor } from '../accent';
 import { elapsed, fmtModel } from '../format';
+import { PERMISSION_MODES } from '../permission-modes';
 import { send } from '../store';
 import { COLORS, statusOf } from '../status';
 import { ApprovalBanner } from './ApprovalBanner';
@@ -231,6 +232,23 @@ export function SessionTile({
         {menuOpen && (
           <div role="menu" aria-label={`Actions for ${session.title ?? session.name}`} style={{ position: 'absolute', right: 12, zIndex: 10, minWidth: 190, padding: 4, background: '#1d1f2c', border: '1px solid #33364a', borderRadius: 6, boxShadow: '0 6px 18px rgba(0, 0, 0, 0.4)' }}>
             <div style={{ padding: '4px 6px 6px', fontSize: 10, color: '#75798c' }}>{fmtModel(session.model)} · {yolo ? 'approvals skipped' : 'approvals on'}</div>
+            <div style={{ padding: '2px 6px 3px', fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: '#4a4e5e' }}>
+              Permission mode
+            </div>
+            {PERMISSION_MODES.map((m) => (
+              <MenuAction
+                key={m.key}
+                title={m.title}
+                color={m.key === session.permissionMode ? '#b5abfc' : m.danger ? '#e0a0a0' : undefined}
+                onClick={() => {
+                  send({ type: 'set_permission_mode', sessionId: session.id, mode: m.key });
+                  setMenuOpen(false);
+                }}
+              >
+                {`${m.key === session.permissionMode ? '✓ ' : ''}${m.label}`}
+              </MenuAction>
+            ))}
+            <div style={{ borderTop: '1px solid #2c2f3d', margin: '4px 0' }} />
             <MenuAction onClick={() => { setRenaming(true); setMenuOpen(false); }}>Rename</MenuAction>
             {(session.state === 'working' || session.state === 'starting') && <MenuAction color={COLORS.warn} onClick={() => { send({ type: 'interrupt', sessionId: session.id }); setMenuOpen(false); }}>Interrupt</MenuAction>}
             <MenuAction color="#e0a0a0" onClick={removeSession}>Stop and remove…</MenuAction>
@@ -317,6 +335,20 @@ export function SessionTile({
   );
 }
 
-function MenuAction({ children, color, onClick }: { children: string; color?: string; onClick: () => void }) {
-  return <button role="menuitem" className="btn btn-ghost" onClick={onClick} style={{ display: 'block', width: '100%', padding: '5px 7px', textAlign: 'left', fontSize: 11, color }}>{children}</button>;
+function MenuAction({
+  children,
+  color,
+  title,
+  onClick,
+}: {
+  children: string;
+  color?: string;
+  title?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button role="menuitem" className="btn btn-ghost" title={title} onClick={onClick} style={{ display: 'block', width: '100%', padding: '5px 7px', textAlign: 'left', fontSize: 11, color }}>
+      {children}
+    </button>
+  );
 }

@@ -14,9 +14,10 @@ export type SessionState =
 /**
  * Mirrors the SDK's PermissionMode. 'auto' lets Claude decide what genuinely
  * needs asking and is the sensible default; 'default' asks about everything not
- * already allowlisted.
+ * already allowlisted; 'plan' is the terminal's Shift+Tab research mode —
+ * Claude reads and proposes but cannot edit or run commands.
  */
-export type PermissionLaunchMode = 'auto' | 'default' | 'acceptEdits' | 'bypassPermissions';
+export type PermissionLaunchMode = 'auto' | 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
 
 /**
  * A sub-agent spawned by a Task step, nested under it in the feed.

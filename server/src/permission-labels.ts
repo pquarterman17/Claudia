@@ -7,6 +7,8 @@ export function describeMode(mode: PermissionLaunchMode): string {
       return 'permissions skipped — tools run without asking';
     case 'acceptEdits':
       return 'edits auto-accepted; commands still ask';
+    case 'plan':
+      return 'plan mode — researching and proposing, no edits or commands yet';
     case 'auto':
       return 'auto — Claude decides what needs asking';
     default:

@@ -42,7 +42,7 @@ export function TopBar({ sessions, connected, usage, usageOpen, onToggleUsage }:
         <span style={{ fontSize: 20, fontVariantNumeric: 'tabular-nums' }}>
           {idle} / {sessions.length}
         </span>
-        <span style={{ fontSize: 11.5, color: '#9397ab' }}>settled</span>
+        <span style={{ fontSize: 11.5, color: '#9397ab' }}>idle or done</span>
       </div>
 
       <div style={{ flex: '0 1 240px', display: 'flex', height: 7, borderRadius: 4, overflow: 'hidden', background: '#26293a' }}>

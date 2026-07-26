@@ -11,6 +11,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { autoRows, DEFAULT_TILE_HEIGHT, gridTemplate, useLayout } from './layout';
 import { buildPaletteActions } from './palette';
 import { newlyNeedingAttention, notificationsEnabled, notify, stateMap } from './notifications';
+import { orderSessions } from './session-order';
 import { oldestPendingApproval, resolveShortcut } from './shortcuts';
 import { send, store, useClaudia } from './store';
 
@@ -41,6 +42,7 @@ export function App() {
     layout,
     setColumns,
     setSizeMode,
+    setAttentionFirst,
     setSidebarOpen,
     setSidebarWidth,
     setHeight,
@@ -59,7 +61,7 @@ export function App() {
     return () => clearInterval(t);
   }, []);
 
-  const ordered = [...sessions].sort((a, b) => a.startedAt - b.startedAt);
+  const ordered = orderSessions(sessions, layout.attentionFirst);
 
   // Tell the user when a session needs them, but only on the transition and
   // only when they are not already looking at the window.
@@ -191,6 +193,8 @@ export function App() {
               onArrangeAll={arrangeAll}
               sidebarOpen={layout.sidebarOpen}
               onToggleSidebar={() => setSidebarOpen(!layout.sidebarOpen)}
+              attentionFirst={layout.attentionFirst}
+              onToggleAttentionFirst={() => setAttentionFirst(!layout.attentionFirst)}
               arranged={isArranged}
               sessionCount={ordered.length}
             />

@@ -16,6 +16,8 @@ interface Props {
   onArrangeAll: () => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
+  attentionFirst: boolean;
+  onToggleAttentionFirst: () => void;
   /** True when no tile has been resized, so Arrange all would do nothing. */
   arranged: boolean;
   sessionCount: number;
@@ -30,6 +32,8 @@ export function BoardControls({
   onArrangeAll,
   sidebarOpen,
   onToggleSidebar,
+  attentionFirst,
+  onToggleAttentionFirst,
   arranged,
   sessionCount,
 }: Props) {
@@ -55,6 +59,21 @@ export function BoardControls({
         style={{ fontSize: 11, padding: '3px 9px', borderColor: '#3f424d', color: '#9397ab' }}
       >
         {sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+      </button>
+      <button
+        type="button"
+        onClick={onToggleAttentionFirst}
+        aria-pressed={attentionFirst}
+        title="Keep approvals, questions, and errors at the front of the board"
+        className="btn btn-secondary"
+        style={{
+          fontSize: 11,
+          padding: '3px 9px',
+          borderColor: attentionFirst ? '#5d5294' : '#3f424d',
+          color: attentionFirst ? '#d2cefd' : '#9397ab',
+        }}
+      >
+        Attention first
       </button>
       <span role="group" aria-label="Board columns" style={{ display: 'flex', gap: 2, border: '1px solid #33364a', borderRadius: 7, padding: 2 }}>
         {MODES.map((m) => {
@@ -86,7 +105,7 @@ export function BoardControls({
       <span role="group" aria-label="Board size mode" style={{ display: 'flex', gap: 2, border: '1px solid #33364a', borderRadius: 7, padding: 2 }}>
         {(
           [
-            { m: 'fit' as SizeMode, label: 'Fill', title: 'Divide the window between the sessions' },
+            { m: 'fit' as SizeMode, label: 'Fit', title: 'Divide the window between the sessions' },
             { m: 'scroll' as SizeMode, label: 'Scroll', title: 'Fixed tile heights; the board scrolls' },
           ]
         ).map((o) => {
@@ -120,7 +139,7 @@ export function BoardControls({
         disabled={arranged || fitting}
         title={
           fitting
-            ? 'Fill mode already sizes every tile equally'
+            ? 'Fit mode already sizes every tile equally'
             : arranged
               ? 'Every tile is already the default size'
               : 'Reset all tiles to a uniform height'
@@ -139,7 +158,7 @@ export function BoardControls({
       <span style={{ flex: 1 }} />
       <span style={{ fontSize: 10.5, color: '#595d6c' }}>
         {sessionCount === 0 ? 'no sessions' : `${sessionCount} session${sessionCount === 1 ? '' : 's'}`}
-        {fitting ? ' · filling the window' : ' · drag a tile’s bottom edge to resize'}
+        {fitting ? ' · fitted to the window' : ' · drag a tile’s bottom edge to resize'}
       </span>
     </div>
   );

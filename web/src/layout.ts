@@ -33,6 +33,7 @@ export const defaultSidebarOpen = (viewportWidth: number): boolean => viewportWi
 export interface Layout {
   columns: ColumnMode;
   sizeMode: SizeMode;
+  attentionFirst: boolean;
   sidebarOpen: boolean;
   sidebarWidth: number;
   /** Per-session overrides; anything absent uses the default height. */
@@ -42,6 +43,7 @@ export interface Layout {
 const DEFAULT_LAYOUT: Layout = {
   columns: 0,
   sizeMode: 'fit',
+  attentionFirst: true,
   sidebarOpen: typeof window === 'undefined' ? true : defaultSidebarOpen(window.innerWidth),
   sidebarWidth: DEFAULT_SIDEBAR,
   heights: {},
@@ -57,6 +59,7 @@ function load(): Layout {
     return {
       columns: (parsed.columns ?? 0) as ColumnMode,
       sizeMode: parsed.sizeMode === 'scroll' ? 'scroll' : 'fit',
+      attentionFirst: parsed.attentionFirst ?? true,
       sidebarOpen: parsed.sidebarOpen ?? DEFAULT_LAYOUT.sidebarOpen,
       sidebarWidth: clamp(parsed.sidebarWidth ?? DEFAULT_SIDEBAR, MIN_SIDEBAR, MAX_SIDEBAR),
       heights: parsed.heights ?? {},
@@ -102,6 +105,11 @@ export function useLayout() {
 
   const setSizeMode = useCallback((sizeMode: SizeMode) => setLayout((l) => ({ ...l, sizeMode })), []);
 
+  const setAttentionFirst = useCallback(
+    (attentionFirst: boolean) => setLayout((l) => ({ ...l, attentionFirst })),
+    [],
+  );
+
   const setSidebarOpen = useCallback(
     (sidebarOpen: boolean) => setLayout((l) => ({ ...l, sidebarOpen })),
     [],
@@ -130,6 +138,7 @@ export function useLayout() {
     layout,
     setColumns,
     setSizeMode,
+    setAttentionFirst,
     setSidebarOpen,
     setSidebarWidth,
     setHeight,

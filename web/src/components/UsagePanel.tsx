@@ -26,9 +26,10 @@ interface Props {
 
 /**
  * `/cost` has to be sent to a live session, so a target has to be chosen.
- * An idle one is preferred — sending it to a session mid-turn still works
- * (the SDK just queues it) but delays the answer behind whatever it was
- * already doing.
+ * An idle one is preferred: on a busy session the prompt queues behind the
+ * running turn, so the answer arrives after that turn's own reply. Capture
+ * tolerates this — it waits for a reply that actually parses as `/cost` output
+ * rather than consuming the first one — but the answer still takes longer.
  */
 function pickCostTarget(sessions: SessionSummary[]): SessionSummary | undefined {
   return sessions.find((s) => s.state === 'idle') ?? sessions.find((s) => s.state !== 'stopped');

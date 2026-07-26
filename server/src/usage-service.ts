@@ -13,6 +13,13 @@ import {
 } from './plan-limits.js';
 import { UsageReader } from './usage-reader.js';
 
+/**
+ * How long a `/cost` request stays armed. Generous: the prompt may be queued
+ * behind a long turn. Short enough that a request that never answers releases
+ * the button instead of stranding it on "asking…".
+ */
+const ARMED_TTL_MS = 5 * 60_000;
+
 const HOUR_MS = 60 * 60 * 1000;
 
 /** Owns the reader, the rescan cadence, and snapshot assembly for the UI. */
@@ -23,7 +30,7 @@ export class UsageService {
   private timer: NodeJS.Timeout | undefined;
   private real: RealUsage | null = null;
   /** The session a `/cost` fetch is armed for, or null when none is in flight. */
-  private pendingReal: string | null = null;
+  private pendingReal: { sessionId: string; armedAt: number } | null = null;
 
   constructor(private readonly onChange: () => void) {}
 
@@ -53,24 +60,47 @@ export class UsageService {
    * Sending is the caller's job, not this service's, so this file never
    * touches a session directly — it only knows the shape of the reply.
    */
-  requestReal(sessionId: string, sendCost: () => void): void {
-    this.pendingReal = sessionId;
+  requestReal(sessionId: string, sendCost: () => void, now = Date.now()): void {
+    this.pendingReal = { sessionId, armedAt: now };
     sendCost();
     this.onChange();
   }
 
   /**
    * Every transcript item flows through here; only the one this is armed for
-   * matters. The arm clears whether or not parsing found anything — a
-   * `/cost` reply is exactly one assistant message, so leaving it armed past
-   * that would risk a later, unrelated reply being mistaken for the answer.
+   * matters.
+   *
+   * The arm survives a reply that does not parse. Clearing on the first
+   * assistant message sounds right — a `/cost` reply is exactly one message —
+   * but it fails whenever the target session was mid-turn: the prompt queues
+   * behind the running turn, that turn's own reply arrives first and consumes
+   * the arm, and the real answer lands with nothing listening. The user sees
+   * the button finish and no data appear.
+   *
+   * Waiting for a reply that actually parses is safe because the shape being
+   * matched is highly specific ("Current session: N% used · resets …") — no
+   * ordinary reply looks like that. ARMED_TTL_MS bounds the wait so a `/cost`
+   * that never answers cannot leave the arm live indefinitely.
    */
-  captureReal(sessionId: string, item: TranscriptItem): void {
-    if (this.pendingReal !== sessionId || item.kind !== 'assistant') return;
-    this.pendingReal = null;
+  captureReal(sessionId: string, item: TranscriptItem, now = Date.now()): void {
+    const armed = this.armedFor(sessionId, now);
+    if (!armed || item.kind !== 'assistant') return;
     const windows = parseCostReply(item.text);
-    if (windows.length > 0) this.real = { windows, fetchedAt: Date.now(), sessionId };
+    if (windows.length === 0) return; // an unrelated reply; keep waiting
+    this.pendingReal = null;
+    this.real = { windows, fetchedAt: now, sessionId };
     this.onChange();
+  }
+
+  /** True while this session's `/cost` answer is still worth waiting for. */
+  private armedFor(sessionId: string, now: number): boolean {
+    const p = this.pendingReal;
+    if (!p || p.sessionId !== sessionId) return false;
+    if (now - p.armedAt > ARMED_TTL_MS) {
+      this.pendingReal = null;
+      return false;
+    }
+    return true;
   }
 
   private async rescan(): Promise<void> {
@@ -111,7 +141,7 @@ export class UsageService {
       scannedAt: this.reader.scannedAt,
       scanning: this.reader.isScanning,
       real: this.real,
-      realPending: this.pendingReal !== null,
+      realPending: this.pendingReal !== null && now - this.pendingReal.armedAt <= ARMED_TTL_MS,
     };
   }
 

@@ -1,5 +1,6 @@
 import type {
   FeedStep,
+  ModelChoice,
   ModelUsage,
   NeedsAction,
   PendingQuestion,
@@ -15,10 +16,14 @@ import type { LaunchOptions, SessionCallbacks } from './session-contract.js';
 import { AsyncQueue } from './async-queue.js';
 import { DraftBuffer } from './draft-buffer.js';
 import { approvalStep, errorStep, infoStep, summarizeToolInput } from './feed.js';
+import * as gateActions from './gate-actions.js';
 import { routeMessage } from './message-router.js';
+import { autoTitle, listModels, type ParityQuery } from './parity-controls.js';
+import { TranscriptLog } from './transcript-log.js';
 import { abandonRunningSteps, patchSubAgent } from './step-patcher.js';
 import { createSessionQuery, userMessage } from './query-factory.js';
 import { describeMode } from './permission-labels.js';
+import { switchPermissionMode } from './permission-switch.js';
 import { parseQuestions } from './question-parser.js';
 import { PromptQueue } from './prompt-queue.js';
 import { SubAgentTracker } from './sub-agent-tracker.js';
@@ -62,6 +67,10 @@ export class ClaudiaSession {
   private readonly subAgents = new SubAgentTracker();
   private readonly promptQueue = new PromptQueue();
   private readonly draft = new DraftBuffer();
+  readonly transcript = new TranscriptLog();
+  private customTitle: string | undefined;
+  private generatedTitle: string | undefined;
+  private firstPrompt: string | undefined;
   /** True until the first prompt is sent, so an empty session reads as idle. */
   private awaitingFirstPrompt = true;
 
@@ -77,6 +86,7 @@ export class ClaudiaSession {
     return {
       id: this.id,
       name: basename(this.opts.cwd) || this.opts.cwd,
+      title: this.customTitle ?? this.generatedTitle,
       cwd: this.opts.cwd,
       model: this.model,
       permissionMode: this.opts.permissionMode,
@@ -98,6 +108,7 @@ export class ClaudiaSession {
 
   start(): void {
     if (this.opts.prompt?.trim()) {
+      this.firstPrompt = this.opts.prompt;
       this.beginQuery();
       this.pushUserText(this.opts.prompt);
       this.awaitingFirstPrompt = false;
@@ -173,6 +184,14 @@ export class ClaudiaSession {
     if (routed.costUsd !== undefined) {
       this.costUsd = routed.costUsd;
       this.promptQueue.shift();
+      if (!this.generatedTitle && !this.customTitle && this.firstPrompt) {
+        void autoTitle(this.q as ParityQuery | null, this.firstPrompt).then((title) => {
+          if (title && !this.customTitle) {
+            this.generatedTitle = title;
+            this.cb.onUpdate(this.summary());
+          }
+        });
+      }
     }
     if (routed.modelUsage) this.modelUsage = routed.modelUsage;
     if (routed.errorMessage) this.errorMessage = routed.errorMessage;
@@ -216,31 +235,44 @@ export class ClaudiaSession {
     return promise;
   }
 
-  /** Answers an outstanding question, keyed by question text. */
+  private gateCtx(): gateActions.GateCtx {
+    return {
+      gate: this.gate,
+      feed: (step) => this.cb.onFeed(this.id, step),
+      setState: (state) => this.setState(state),
+      getQuestion: () => this.pendingQuestion,
+      clearQuestion: () => (this.pendingQuestion = undefined),
+    };
+  }
+
   answerQuestion(requestId: string, answers: Record<string, string>): boolean {
-    if (this.pendingQuestion?.requestId !== requestId) return false;
-    if (!this.gate.approveWith(requestId, { answers })) return false;
-    this.pendingQuestion = undefined;
-    this.cb.onFeed(this.id, infoStep('Answered', Object.values(answers).join(' · ')));
-    this.setState('working');
-    return true;
+    return gateActions.answerQuestion(this.gateCtx(), requestId, answers);
   }
 
   approve(requestId: string): boolean {
-    const pending = this.gate.current;
-    if (!this.gate.approve(requestId)) return false;
-    this.cb.onFeed(this.id, infoStep('Approved', pending?.summary));
-    this.setState('working');
-    return true;
+    return gateActions.approve(this.gateCtx(), requestId);
   }
 
   deny(requestId: string, message?: string): boolean {
-    const pending = this.gate.current;
-    if (!this.gate.deny(requestId, message)) return false;
-    this.pendingQuestion = undefined;
-    this.cb.onFeed(this.id, infoStep('Denied', message ?? pending?.summary));
-    this.setState('working');
-    return true;
+    return gateActions.deny(this.gateCtx(), requestId, message);
+  }
+
+  /** Empty title reverts to the auto-generated one. */
+  rename(title: string): void {
+    this.customTitle = title.trim() || undefined;
+    this.cb.onUpdate(this.summary());
+  }
+
+  async switchModel(model: string): Promise<void> {
+    const q = this.q as ParityQuery | null;
+    await q?.setModel?.(model).catch(() => undefined);
+    this.model = model;
+    this.cb.onFeed(this.id, infoStep('Model switched', model));
+    this.cb.onUpdate(this.summary());
+  }
+
+  models(): Promise<ModelChoice[]> {
+    return listModels(this.q as ParityQuery | null);
   }
 
   sendPrompt(text: string): void {
@@ -251,6 +283,7 @@ export class ClaudiaSession {
     }
     this.awaitingFirstPrompt = false;
     this.needsAction = undefined;
+    if (!this.firstPrompt) this.firstPrompt = text;
     this.beginQuery();
     this.pushUserText(text);
     this.lastActivityAt = Date.now();
@@ -258,92 +291,39 @@ export class ClaudiaSession {
     this.setState('working');
   }
 
-  /**
-   * Change permissions on a running session.
-   *
-   * Tightening applies in place. Loosening cannot: the SDK refuses with
-   * "the session was not launched with --dangerously-skip-permissions", the
-   * same restriction `claude` has in a terminal. So the session is relaunched
-   * with `resume`, which preserves the whole conversation — the terminal
-   * workflow of restarting with the flag, done automatically.
-   *
-   * Returns how it was applied so the UI can say which happened.
-   */
-  async setPermissionMode(mode: PermissionLaunchMode): Promise<'in-place' | 'relaunched' | 'unchanged'> {
-    if (this.opts.permissionMode === mode) return 'unchanged';
-
-    // No query yet (empty session): there is nothing to switch or relaunch —
-    // record the mode and the eventual first prompt will launch with it.
-    if (!this.q) {
-      this.opts.permissionMode = mode;
-      this.cb.onFeed(this.id, infoStep('Permission mode', describeMode(mode)));
-      this.cb.onUpdate(this.summary());
-      return 'in-place';
-    }
-
-    const q = this.q as { setPermissionMode?: (m: PermissionLaunchMode) => Promise<void> } | null;
-    if (q?.setPermissionMode) {
-      try {
-        await q.setPermissionMode(mode);
-        this.opts.permissionMode = mode;
-        this.cb.onFeed(this.id, infoStep('Permission mode', describeMode(mode)));
-        this.cb.onUpdate(this.summary());
-        return 'in-place';
-      } catch {
-        // Expected when loosening; fall through to a resuming relaunch.
-      }
-    }
-
-    await this.relaunchWith(mode);
-    return 'relaunched';
-  }
-
-  /**
-   * Tears down the current query and starts a new one that resumes the same
-   * Claude session, so history survives. Used where the mode cannot change in
-   * place.
-   */
-  private async relaunchWith(mode: PermissionLaunchMode): Promise<void> {
-    const resumeId = this.claudeSessionId;
-    this.gate.abandon('Restarting with new permissions');
-    // A half-streamed draft belongs to the old query; without this it lingers
-    // as ghost text until the next complete message happens to clear it.
-    if (this.draft.clear()) this.cb.onDraft(this.id, null);
-    abandonRunningSteps(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), 'session restarted');
-    this.queryGen += 1; // everything belonging to the old query is now inert
-    try {
-      (this.q as { close?: () => void } | null)?.close?.();
-    } catch {
-      /* already closed */
-    }
-    this.q = null;
-    // The old query's iterator still holds a pending read on the old queue; a
-    // shared queue would race the two consumers for the next prompt. Anything
-    // buffered but never consumed carries over.
-    const unsent = this.input.drain();
-    this.input.close();
-    this.input = new AsyncQueue<unknown>();
-    for (const item of unsent) this.input.push(item);
-    this.opts.permissionMode = mode;
-
-    this.cb.onFeed(
-      this.id,
-      infoStep(
-        'Restarted with new permissions',
-        `${describeMode(mode)}${resumeId ? ' · conversation kept' : ''}`,
-      ),
+  /** See permission-switch.ts — tighten in place, loosen via resuming relaunch. */
+  setPermissionMode(mode: PermissionLaunchMode): Promise<'in-place' | 'relaunched' | 'unchanged'> {
+    return switchPermissionMode(
+      {
+        getMode: () => this.opts.permissionMode,
+        setMode: (m) => (this.opts.permissionMode = m),
+        getQuery: () => this.q,
+        getInput: () => this.input,
+        setInput: (queue) => (this.input = queue),
+        bumpGeneration: () => (this.queryGen += 1),
+        resumeId: () => this.claudeSessionId,
+        abandonForRestart: () => {
+          this.gate.abandon('Restarting with new permissions');
+          if (this.draft.clear()) this.cb.onDraft(this.id, null);
+          abandonRunningSteps(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), 'session restarted');
+          this.queryGen += 1;
+        },
+        feedInfo: (title, meta) => this.cb.onFeed(this.id, infoStep(title, meta)),
+        updated: () => this.cb.onUpdate(this.summary()),
+        replaceQuery: (m, resume, input) => {
+          this.q = createSessionQuery({
+            cwd: this.opts.cwd,
+            model: this.opts.model,
+            permissionMode: m,
+            resume,
+            input,
+            onPermission: (toolName, toolInput) => this.onPermissionRequest(toolName, toolInput),
+          });
+          void this.consume(this.queryGen);
+        },
+      },
+      mode,
     );
-
-    this.q = createSessionQuery({
-      cwd: this.opts.cwd,
-      model: this.opts.model,
-      permissionMode: mode,
-      resume: resumeId,
-      input: this.input,
-      onPermission: (toolName, input) => this.onPermissionRequest(toolName, input),
-    });
-    void this.consume(this.queryGen);
-    this.cb.onUpdate(this.summary());
   }
 
   async interrupt(): Promise<void> {

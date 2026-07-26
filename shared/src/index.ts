@@ -111,6 +111,8 @@ export interface SessionSummary {
   id: string;
   /** Display name — basename of cwd. */
   name: string;
+  /** Auto-generated from the task (like terminal tab titles), or user-set. */
+  title?: string;
   cwd: string;
   model?: string;
   permissionMode: PermissionLaunchMode;
@@ -134,6 +136,24 @@ export interface SessionSummary {
   errorMessage?: string;
   /** Prompts sent while a turn was in flight, FIFO order. Empty when nothing is queued. */
   queuedPrompts: string[];
+}
+
+// ---------- terminal parity ----------
+
+/** One model the CLI offers, from the SDK's supportedModels(). */
+export interface ModelChoice {
+  value: string;
+  displayName: string;
+  description: string;
+}
+
+/** One entry in a session's full conversation transcript. */
+export interface TranscriptItem {
+  ts: number;
+  kind: 'user' | 'assistant' | 'thinking' | 'tool_use' | 'tool_result';
+  /** Full text — never truncated; that is the point of the transcript. */
+  text: string;
+  toolName?: string;
 }
 
 // ---------- finish trigger ----------
@@ -250,6 +270,14 @@ export type ServerEvent =
   /** The reply currently being streamed; null once the complete message lands. */
   | { type: 'draft'; sessionId: string; text: string | null }
   | { type: 'trigger_status'; trigger: TriggerStatus }
+  /** Models the CLI offers, fetched per session on demand. */
+  | { type: 'models'; sessionId: string; models: ModelChoice[] }
+  /** Slash commands this session's CLI knows (from init; includes user skills). */
+  | { type: 'session_commands'; sessionId: string; commands: string[] }
+  /** Full transcript backfill, answering get_transcript. */
+  | { type: 'transcript'; sessionId: string; items: TranscriptItem[] }
+  /** Incremental transcript growth, broadcast as the session runs. */
+  | { type: 'transcript_append'; sessionId: string; item: TranscriptItem }
   | { type: 'usage'; usage: UsageSnapshot }
   | {
       type: 'settings';
@@ -302,6 +330,11 @@ export type ClientCommand =
   /** Ceilings the user has calibrated themselves, used when tier === 'custom'. */
   | { type: 'set_custom_ceilings'; sessionTokens: number; weeklyTokens: number }
   | { type: 'set_countdown'; seconds: number }
+  /** Empty title reverts to the auto-generated one. */
+  | { type: 'rename_session'; sessionId: string; title: string }
+  | { type: 'set_model'; sessionId: string; model: string }
+  | { type: 'get_models'; sessionId: string }
+  | { type: 'get_transcript'; sessionId: string }
   /** Seconds after the last browser closes before sessions stop; 0 disables. */
   | { type: 'set_stop_on_close'; seconds: number }
   /** Saves (or overwrites, by name) a reusable launch shape. */

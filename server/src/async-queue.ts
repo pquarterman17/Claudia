@@ -15,6 +15,15 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
     else this.buffer.push(item);
   }
 
+  /**
+   * Removes and returns everything buffered but not yet consumed. Used when a
+   * queue is being replaced: items the old consumer never read (e.g. prompts
+   * queued behind a running turn) move to the new queue instead of vanishing.
+   */
+  drain(): T[] {
+    return this.buffer.splice(0);
+  }
+
   /** Ends iteration; pending waiters resolve as done. */
   close(): void {
     if (this.closed) return;

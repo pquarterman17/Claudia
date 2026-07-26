@@ -1,4 +1,3 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   FeedStep,
   ModelUsage,
@@ -17,6 +16,8 @@ import { AsyncQueue } from './async-queue.js';
 import { DraftBuffer } from './draft-buffer.js';
 import { approvalStep, errorStep, infoStep, summarizeToolInput } from './feed.js';
 import { routeMessage } from './message-router.js';
+import { abandonRunningSteps, patchSubAgent } from './step-patcher.js';
+import { createSessionQuery, userMessage } from './query-factory.js';
 import { describeMode } from './permission-labels.js';
 import { parseQuestions } from './question-parser.js';
 import { PromptQueue } from './prompt-queue.js';
@@ -34,8 +35,18 @@ export class ClaudiaSession {
   readonly id = randomUUID();
   private readonly gate = new ApprovalGate();
   private readonly tools = new ToolTracker();
-  private readonly input = new AsyncQueue<unknown>();
-  private q: ReturnType<typeof query> | null = null;
+  /** Recreated per query: two queries must never share one input iterator. */
+  private input = new AsyncQueue<unknown>();
+  /**
+   * Bumped on every relaunch. A consume loop belongs to one generation; when
+   * an outdated loop finally terminates it must change nothing. A boolean flag
+   * cannot express this — the relaunch sets and clears it within one
+   * synchronous block, while the old loop only observes termination on a later
+   * microtask, by which point the flag was already false again. That exact
+   * race marked live sessions 'stopped' and swallowed the next prompt.
+   */
+  private queryGen = 0;
+  private q: ReturnType<typeof createSessionQuery> | null = null;
 
   private state: SessionState = 'starting';
   private readonly startedAt = Date.now();
@@ -53,8 +64,6 @@ export class ClaudiaSession {
   private readonly draft = new DraftBuffer();
   /** True until the first prompt is sent, so an empty session reads as idle. */
   private awaitingFirstPrompt = true;
-  /** True while swapping the query for a permission change. */
-  private relaunching = false;
 
   constructor(
     private readonly opts: LaunchOptions,
@@ -104,29 +113,28 @@ export class ClaudiaSession {
   /** Creates the SDK query on first use. Safe to call repeatedly. */
   private beginQuery(): void {
     if (this.q) return;
-    this.q = query({
-      prompt: this.input as AsyncIterable<never>,
-      options: {
-        cwd: this.opts.cwd,
-        ...(this.opts.model ? { model: this.opts.model } : {}),
-        permissionMode: this.opts.permissionMode,
-        includePartialMessages: true,
-        canUseTool: (toolName, input) => this.onPermissionRequest(toolName, input),
-      },
+    this.q = createSessionQuery({
+      cwd: this.opts.cwd,
+      model: this.opts.model,
+      permissionMode: this.opts.permissionMode,
+      input: this.input,
+      onPermission: (toolName, input) => this.onPermissionRequest(toolName, input),
     });
-    void this.consume();
+    void this.consume(this.queryGen);
   }
 
-  private async consume(): Promise<void> {
+  private async consume(gen: number): Promise<void> {
     try {
       for await (const message of this.q as AsyncIterable<Record<string, unknown>>) {
+        if (gen !== this.queryGen) return; // superseded mid-iteration
         this.applyMessage(message);
       }
-      // A relaunch closes the old query on purpose; that is not the end of the
-      // session, so don't mark it stopped.
-      if (this.relaunching) return;
+      // Only the current generation may declare the session over — an old
+      // loop ending is just its query having been replaced.
+      if (gen !== this.queryGen) return;
       if (this.state !== 'error') this.setState('stopped');
     } catch (err) {
+      if (gen !== this.queryGen) return;
       this.fail(err instanceof Error ? err.message : String(err));
     }
   }
@@ -169,7 +177,9 @@ export class ClaudiaSession {
     if (routed.modelUsage) this.modelUsage = routed.modelUsage;
     if (routed.errorMessage) this.errorMessage = routed.errorMessage;
     if (routed.needsAction !== undefined) this.needsAction = routed.needsAction ?? undefined;
-    if (routed.subAgent) this.mergeSubAgent(routed.subAgent.toolUseId, routed.subAgent.run);
+    if (routed.subAgent) {
+      patchSubAgent(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), routed.subAgent.toolUseId, routed.subAgent.run);
+    }
 
     // An empty session is idle, not working: the SDK has started but there is
     // nothing for it to do until someone types.
@@ -262,6 +272,15 @@ export class ClaudiaSession {
   async setPermissionMode(mode: PermissionLaunchMode): Promise<'in-place' | 'relaunched' | 'unchanged'> {
     if (this.opts.permissionMode === mode) return 'unchanged';
 
+    // No query yet (empty session): there is nothing to switch or relaunch —
+    // record the mode and the eventual first prompt will launch with it.
+    if (!this.q) {
+      this.opts.permissionMode = mode;
+      this.cb.onFeed(this.id, infoStep('Permission mode', describeMode(mode)));
+      this.cb.onUpdate(this.summary());
+      return 'in-place';
+    }
+
     const q = this.q as { setPermissionMode?: (m: PermissionLaunchMode) => Promise<void> } | null;
     if (q?.setPermissionMode) {
       try {
@@ -287,14 +306,21 @@ export class ClaudiaSession {
   private async relaunchWith(mode: PermissionLaunchMode): Promise<void> {
     const resumeId = this.claudeSessionId;
     this.gate.abandon('Restarting with new permissions');
-    this.abandonRunningTools('session restarted');
-    this.relaunching = true;
+    abandonRunningSteps(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), 'session restarted');
+    this.queryGen += 1; // everything belonging to the old query is now inert
     try {
       (this.q as { close?: () => void } | null)?.close?.();
     } catch {
       /* already closed */
     }
     this.q = null;
+    // The old query's iterator still holds a pending read on the old queue; a
+    // shared queue would race the two consumers for the next prompt. Anything
+    // buffered but never consumed carries over.
+    const unsent = this.input.drain();
+    this.input.close();
+    this.input = new AsyncQueue<unknown>();
+    for (const item of unsent) this.input.push(item);
     this.opts.permissionMode = mode;
 
     this.cb.onFeed(
@@ -305,19 +331,15 @@ export class ClaudiaSession {
       ),
     );
 
-    this.q = query({
-      prompt: this.input as AsyncIterable<never>,
-      options: {
-        cwd: this.opts.cwd,
-        ...(this.opts.model ? { model: this.opts.model } : {}),
-        ...(resumeId ? { resume: resumeId } : {}),
-        permissionMode: mode,
-        includePartialMessages: true,
-        canUseTool: (toolName, input) => this.onPermissionRequest(toolName, input),
-      },
+    this.q = createSessionQuery({
+      cwd: this.opts.cwd,
+      model: this.opts.model,
+      permissionMode: mode,
+      resume: resumeId,
+      input: this.input,
+      onPermission: (toolName, input) => this.onPermissionRequest(toolName, input),
     });
-    this.relaunching = false;
-    void this.consume();
+    void this.consume(this.queryGen);
     this.cb.onUpdate(this.summary());
   }
 
@@ -332,7 +354,7 @@ export class ClaudiaSession {
   stop(): void {
     if (this.draft.clear()) this.cb.onDraft(this.id, null);
     this.gate.abandon('Session stopped');
-    this.abandonRunningTools('session stopped');
+    abandonRunningSteps(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), 'session stopped');
     this.promptQueue.clear();
     this.input.close();
     try {
@@ -346,41 +368,15 @@ export class ClaudiaSession {
   private fail(message: string): void {
     this.errorMessage = message;
     this.gate.abandon(`Session failed: ${message}`);
-    this.abandonRunningTools(message);
+    abandonRunningSteps(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), message);
     this.promptQueue.clear();
     this.cb.onFeed(this.id, errorStep('Session error', message));
     this.setState('error');
   }
 
-  /**
-   * Folds a sub-agent update into the Task step that spawned it, so the feed
-   * shows nested children rather than one opaque line sitting for minutes.
-   */
-  private mergeSubAgent(toolUseId: string, run: Partial<SubAgentRun> & { taskId: string }): void {
-    const stepId = this.tools.stepFor(toolUseId);
-    if (!stepId) return;
-    this.cb.onFeedPatch(this.id, stepId, { subAgents: this.subAgents.merge(stepId, run) });
-  }
-
-  /** Stop any tool step spinning forever when its result can no longer arrive. */
-  private abandonRunningTools(reason: string): void {
-    for (const stepId of this.tools.outstanding()) {
-      this.cb.onFeedPatch(this.id, stepId, { status: 'error', meta: `did not finish — ${reason}` });
-    }
-    for (const { stepId, runs } of this.subAgents.abandon()) {
-      this.cb.onFeedPatch(this.id, stepId, { subAgents: runs });
-    }
-    this.tools.clear();
-  }
-
   private pushUserText(text: string): void {
     this.turnStartedAt = Date.now();
-    this.input.push({
-      type: 'user',
-      message: { role: 'user', content: text },
-      parent_tool_use_id: null,
-      session_id: this.claudeSessionId ?? '',
-    });
+    this.input.push(userMessage(text, this.claudeSessionId));
   }
 
   private setState(state: SessionState): void {

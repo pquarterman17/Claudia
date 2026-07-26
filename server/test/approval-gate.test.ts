@@ -68,3 +68,24 @@ describe('ApprovalGate', () => {
     await expect(second).resolves.toEqual({ behavior: 'allow', updatedInput: { command: 'two' } });
   });
 });
+
+describe('AsyncQueue drain', () => {
+  it('hands over buffered items and leaves the queue empty', async () => {
+    const { AsyncQueue } = await import('../src/async-queue.js');
+    const q = new AsyncQueue<number>();
+    q.push(1);
+    q.push(2);
+    expect(q.drain()).toEqual([1, 2]);
+    expect(q.drain()).toEqual([]);
+  });
+
+  it('does not return items a consumer already took', async () => {
+    const { AsyncQueue } = await import('../src/async-queue.js');
+    const q = new AsyncQueue<number>();
+    q.push(1);
+    q.push(2);
+    const it = q[Symbol.asyncIterator]();
+    expect((await it.next()).value).toBe(1);
+    expect(q.drain()).toEqual([2]);
+  });
+});

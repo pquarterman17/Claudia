@@ -4,6 +4,7 @@ import {
   type ClientCommand,
   type FeedStep,
   type HostPlatform,
+  type ModelChoice,
   type PermissionLaunchMode,
   type ServerEvent,
   type SessionSummary,
@@ -33,6 +34,10 @@ export interface ClaudiaState {
   feeds: Record<string, FeedStep[]>;
   /** In-progress streamed replies, keyed by session. */
   drafts: Record<string, string>;
+  /** Models the CLI offers, fetched per session on demand via get_models. */
+  models: Record<string, ModelChoice[]>;
+  /** Slash commands each session's CLI knows, from the init message. */
+  commands: Record<string, string[]>;
   trigger?: TriggerStatus;
   platform?: HostPlatform;
   usage?: UsageSnapshot;
@@ -57,6 +62,8 @@ class Store {
     sessions: [],
     feeds: {},
     drafts: {},
+    models: {},
+    commands: {},
     recentDirectories: [],
     countdownSec: 30,
     stopSessionsWhenClosedSec: 30,
@@ -206,6 +213,8 @@ class Store {
           sessions: this.state.sessions.filter((s) => s.id !== event.sessionId),
           feeds: Object.fromEntries(Object.entries(this.state.feeds).filter(([k]) => k !== event.sessionId)),
           drafts: Object.fromEntries(Object.entries(this.state.drafts).filter(([k]) => k !== event.sessionId)),
+          models: Object.fromEntries(Object.entries(this.state.models).filter(([k]) => k !== event.sessionId)),
+          commands: Object.fromEntries(Object.entries(this.state.commands).filter(([k]) => k !== event.sessionId)),
         });
         return;
       case 'feed_append': {
@@ -229,6 +238,12 @@ class Store {
       }
       case 'server_error':
         this.set({ lastError: event.message });
+        return;
+      case 'models':
+        this.set({ models: { ...this.state.models, [event.sessionId]: event.models } });
+        return;
+      case 'session_commands':
+        this.set({ commands: { ...this.state.commands, [event.sessionId]: event.commands } });
         return;
     }
   }

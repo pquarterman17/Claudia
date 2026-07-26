@@ -1,9 +1,10 @@
 import type { FeedStep, SessionSummary } from '@claudia/shared';
-import { useRef, useState } from 'react';
-import { elapsed, fmtCost, fmtModel, fmtTokens } from '../format';
+import { useRef } from 'react';
+import { elapsed, fmtModel } from '../format';
 import { send } from '../store';
 import { COLORS, statusOf } from '../status';
 import { ApprovalBanner } from './ApprovalBanner';
+import { Composer } from './Composer';
 import { QuestionPicker } from './QuestionPicker';
 import { SessionFeed } from './SessionFeed';
 
@@ -38,16 +39,8 @@ export function SessionTile({ session, steps, draft: streaming, now, index, focu
     window.addEventListener('mouseup', up);
   };
 
-  const [draft, setDraft] = useState('');
   const status = statusOf(session.state);
   const yolo = session.permissionMode === 'bypassPermissions';
-
-  const submit = () => {
-    const text = draft.trim();
-    if (!text) return;
-    send({ type: 'send_prompt', sessionId: session.id, text });
-    setDraft('');
-  };
 
   const cls = [
     'tile',
@@ -181,74 +174,7 @@ export function SessionTile({ session, steps, draft: streaming, now, index, focu
         />
       )}
 
-      <div className="composer">
-        <button
-          title={
-            yolo
-              ? 'Permissions skipped — click to require approvals again'
-              : 'Click to run this session without permission prompts'
-          }
-          onClick={() =>
-            send({
-              type: 'set_permission_mode',
-              sessionId: session.id,
-              mode: yolo ? 'default' : 'bypassPermissions',
-            })
-          }
-          style={{
-            flex: 'none',
-            cursor: 'pointer',
-            borderRadius: 5,
-            padding: '1px 6px',
-            fontFamily: 'var(--font-body)',
-            fontSize: 9.5,
-            letterSpacing: '.06em',
-            textTransform: 'uppercase',
-            border: `1px solid ${yolo ? '#5c3b3b' : '#33364a'}`,
-            background: yolo ? '#2e2226' : 'transparent',
-            color: yolo ? COLORS.err : '#595d6c',
-          }}
-        >
-          skip perms
-        </button>
-        <span className="mono" style={{ color: status.color, fontSize: 12 }}>
-          ›
-        </span>
-        <input
-          value={draft}
-          placeholder={
-            session.needsAction ? 'answer…' : session.state === 'idle' ? 'send a new task…' : 'queue a message…'
-          }
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              submit();
-            }
-          }}
-        />
-        {session.queuedPrompts.length > 0 && (
-          <span
-            title={session.queuedPrompts.join('\n')}
-            style={{
-              flex: 'none',
-              fontSize: 10,
-              color: '#d9b184',
-              border: '1px solid #6b5636',
-              borderRadius: 4,
-              padding: '1px 6px',
-            }}
-          >
-            {session.queuedPrompts.length} queued
-          </span>
-        )}
-        <span style={{ flex: 'none', fontSize: 10, color: '#75798c', fontVariantNumeric: 'tabular-nums' }}>
-          {fmtTokens(session.inputTokens + session.outputTokens)}
-        </span>
-        <span style={{ flex: 'none', fontSize: 10, color: '#b5abfc', fontVariantNumeric: 'tabular-nums' }}>
-          {fmtCost(session.costUsd)}
-        </span>
-      </div>
+      <Composer session={session} />
 
       {height !== undefined && (
         <div className="tile-grip" onMouseDown={onGripDown} title="Drag to resize this tile" />

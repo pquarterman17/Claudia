@@ -203,6 +203,15 @@ export class Gateway {
       case 'set_permission_mode':
         void this.manager.get(cmd.sessionId)?.setPermissionMode(cmd.mode);
         return;
+      case 'set_model':
+        void this.manager.get(cmd.sessionId)?.switchModel(cmd.model);
+        return;
+      case 'get_models':
+        this.manager
+          .get(cmd.sessionId)
+          ?.models()
+          .then((models) => this.sendTo(socket, { type: 'models', sessionId: cmd.sessionId, models }));
+        return;
       case 'require_approvals_everywhere':
         for (const s of this.manager.summaries()) {
           if (s.permissionMode === 'bypassPermissions') {

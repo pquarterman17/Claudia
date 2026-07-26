@@ -8,6 +8,7 @@ import type {
   PermissionLaunchMode,
   SessionState,
   SessionSummary,
+  SubAgentRun,
 } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
@@ -16,6 +17,7 @@ import { AsyncQueue } from './async-queue.js';
 import { approvalStep, errorStep, infoStep, summarizeToolInput } from './feed.js';
 import { routeMessage } from './message-router.js';
 import { parseQuestions } from './question-parser.js';
+import { SubAgentTracker } from './sub-agent-tracker.js';
 import { ToolTracker } from './tool-tracker.js';
 
 export interface SessionCallbacks {
@@ -55,6 +57,7 @@ export class ClaudiaSession {
   private errorMessage: string | undefined;
   private needsAction: NeedsAction | undefined;
   private pendingQuestion: PendingQuestion | undefined;
+  private readonly subAgents = new SubAgentTracker();
   /** True until the first prompt is sent, so an empty session reads as idle. */
   private awaitingFirstPrompt = true;
   /** True while swapping the query for a permission change. */
@@ -157,6 +160,7 @@ export class ClaudiaSession {
     if (routed.modelUsage) this.modelUsage = routed.modelUsage;
     if (routed.errorMessage) this.errorMessage = routed.errorMessage;
     if (routed.needsAction !== undefined) this.needsAction = routed.needsAction ?? undefined;
+    if (routed.subAgent) this.mergeSubAgent(routed.subAgent.toolUseId, routed.subAgent.run);
 
     // An empty session is idle, not working: the SDK has started but there is
     // nothing for it to do until someone types.
@@ -330,10 +334,23 @@ export class ClaudiaSession {
     this.setState('error');
   }
 
+  /**
+   * Folds a sub-agent update into the Task step that spawned it, so the feed
+   * shows nested children rather than one opaque line sitting for minutes.
+   */
+  private mergeSubAgent(toolUseId: string, run: Partial<SubAgentRun> & { taskId: string }): void {
+    const stepId = this.tools.stepFor(toolUseId);
+    if (!stepId) return;
+    this.cb.onFeedPatch(this.id, stepId, { subAgents: this.subAgents.merge(stepId, run) });
+  }
+
   /** Stop any tool step spinning forever when its result can no longer arrive. */
   private abandonRunningTools(reason: string): void {
     for (const stepId of this.tools.outstanding()) {
       this.cb.onFeedPatch(this.id, stepId, { status: 'error', meta: `did not finish — ${reason}` });
+    }
+    for (const { stepId, runs } of this.subAgents.abandon()) {
+      this.cb.onFeedPatch(this.id, stepId, { subAgents: runs });
     }
     this.tools.clear();
   }

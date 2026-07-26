@@ -13,9 +13,21 @@ export interface ToolCompletion {
 
 export class ToolTracker {
   private pending = new Map<string, { stepId: string; startedAt: number }>();
+  /**
+   * Outlives `pending`, which is cleared on completion. A sub-agent's final
+   * notification can arrive after its Task tool_result, so the step it belongs
+   * to still has to be findable.
+   */
+  private stepByToolUse = new Map<string, string>();
 
   begin(toolUseId: string, stepId: string, now = Date.now()): void {
     this.pending.set(toolUseId, { stepId, startedAt: now });
+    this.stepByToolUse.set(toolUseId, stepId);
+  }
+
+  /** The step a tool call belongs to, whether or not it has finished. */
+  stepFor(toolUseId: string): string | undefined {
+    return this.stepByToolUse.get(toolUseId);
   }
 
   /** Returns null for an unknown id — a result whose call we never saw. */
@@ -33,5 +45,6 @@ export class ToolTracker {
 
   clear(): void {
     this.pending.clear();
+    this.stepByToolUse.clear();
   }
 }

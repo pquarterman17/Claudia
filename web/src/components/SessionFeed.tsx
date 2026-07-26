@@ -2,6 +2,7 @@ import type { FeedStep } from '@claudia/shared';
 import { useEffect, useRef } from 'react';
 import { fmtDur } from '../format';
 import { COLORS, FEED_ICONS } from '../status';
+import { SubAgentRows } from './SubAgentRows';
 
 interface Props {
   steps: FeedStep[];
@@ -29,7 +30,8 @@ export function SessionFeed({ steps }: Props) {
         const color =
           step.status === 'ok' ? COLORS.ok : step.status === 'error' ? COLORS.err : base.color;
         return (
-          <div key={step.id} style={{ display: 'flex', gap: 9, alignItems: 'flex-start' }}>
+          <div key={step.id}>
+          <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start' }}>
             <span
               style={{
                 width: 16,
@@ -61,6 +63,8 @@ export function SessionFeed({ steps }: Props) {
                 {fmtDur(step.durMs)}
               </span>
             )}
+          </div>
+          {step.subAgents && step.subAgents.length > 0 && <SubAgentRows runs={step.subAgents} />}
           </div>
         );
       })}

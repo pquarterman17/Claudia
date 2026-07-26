@@ -1,4 +1,4 @@
-import type { FeedStep, ModelUsage, NeedsAction, SessionState } from '@claudia/shared';
+import type { FeedStep, ModelUsage, NeedsAction, SessionState, SubAgentRun } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import { errorStep, infoStep, resultStep, stepFromText, stepFromToolUse } from './feed.js';
 
@@ -27,6 +27,8 @@ export interface RoutedMessage {
   toolEnds?: Array<{ toolUseId: string; isError: boolean }>;
   /** Claude ended the turn waiting on the user. `null` clears a previous one. */
   needsAction?: NeedsAction | null;
+  /** Live sub-agent state, to be merged into the parent Task step. */
+  subAgent?: { toolUseId: string; run: Partial<SubAgentRun> & { taskId: string } };
 }
 
 const EMPTY: RoutedMessage = { steps: [] };
@@ -41,6 +43,49 @@ function num(v: unknown): number {
  */
 export function routeMessage(message: Record<string, unknown>, turnStartedAt: number): RoutedMessage {
   const type = message['type'];
+
+  // Sub-agents report progress on their own channel, tagged with the Task
+  // tool_use_id that spawned them — which is what lets them nest.
+  if (type === 'system' && message['subtype'] === 'task_progress') {
+    const toolUseId = String(message['tool_use_id'] ?? '');
+    const taskId = String(message['task_id'] ?? '');
+    if (!toolUseId || !taskId) return EMPTY;
+    const usage = (message['usage'] ?? {}) as Record<string, unknown>;
+    return {
+      steps: [],
+      subAgent: {
+        toolUseId,
+        run: {
+          taskId,
+          agentType: String(message['subagent_type'] ?? 'agent'),
+          description: String(message['description'] ?? ''),
+          lastTool: typeof message['last_tool_name'] === 'string' ? message['last_tool_name'] : undefined,
+          totalTokens: num(usage['total_tokens']),
+          toolUses: num(usage['tool_uses']),
+          durationMs: num(usage['duration_ms']),
+          status: 'running',
+        },
+      },
+    };
+  }
+
+  if (type === 'system' && message['subtype'] === 'task_notification') {
+    const toolUseId = String(message['tool_use_id'] ?? '');
+    const taskId = String(message['task_id'] ?? '');
+    if (!toolUseId || !taskId) return EMPTY;
+    const status = String(message['status'] ?? '');
+    return {
+      steps: [],
+      subAgent: {
+        toolUseId,
+        run: {
+          taskId,
+          status: status === 'completed' ? 'completed' : 'error',
+          summary: typeof message['summary'] === 'string' ? message['summary'] : undefined,
+        },
+      },
+    };
+  }
 
   // The SDK reports, per turn, whether it stopped because it needs the user.
   // Structured, so the question does not have to be spotted in the prose.

@@ -35,6 +35,8 @@ npm run dev     # server on 4317, Vite UI on 4318
 | `server/src/session-manager.ts` | Registry + feed history |
 | `server/src/gateway.ts` | WS fan-out and command dispatch |
 | `server/src/tool-tracker.ts` | Matches tool results to their calls by id (unit tested) |
+| `server/src/sub-agent-tracker.ts` | Merges sub-agent progress into its parent step (unit tested) |
+| `server/src/question-parser.ts` | Reads AskUserQuestion into a picker (unit tested) |
 | `server/src/trigger-engine.ts` | Fires a finish action once every session settles (unit tested) |
 | `server/src/finish-actions.ts` | Per-OS command table for those actions |
 | `server/src/folder-picker.ts` | Native folder dialog + path cleaning (unit tested) |
@@ -57,6 +59,17 @@ npm run dev     # server on 4317, Vite UI on 4318
   `modelUsage` is cumulative per session, so assign it — never add.
 - Sessions inherit your `~/.claude/settings.json` allowlist, so the same commands
   auto-approve here as in your terminal. Everything else surfaces as an approval.
+
+## Sub-agents
+
+A `Task` call is otherwise a single line that sits "running" for minutes telling you nothing.
+Sub-agents now nest under the step that spawned them, showing the agent type, what it is doing
+right now, the tool it last used, and its running token count and duration. The sidebar digest
+names the sub-agent's work rather than just "Agent".
+
+Tokens are shown because the SDK reports them per sub-agent; **cost is not broken out** and is
+deliberately not estimated. One measured sub-agent turn came to 58k tokens, so this is real
+spend that was previously invisible until the turn ended.
 
 ## Notifications
 

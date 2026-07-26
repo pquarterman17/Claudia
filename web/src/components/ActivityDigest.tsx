@@ -133,7 +133,13 @@ function describe(session: SessionSummary, feed: FeedStep[] | undefined): string
   const last = [...(feed ?? [])].reverse().find((s) => s.kind !== 'info');
   if (session.state === 'working' || session.state === 'starting') {
     const running = [...(feed ?? [])].reverse().find((s) => s.status === 'running');
-    if (running) return `${running.title}${running.meta ? ` — ${running.meta}` : ''}`;
+    if (running) {
+      // A Task step is opaque on its own; name what the sub-agents are doing.
+      const live = (running.subAgents ?? []).filter((r) => r.status === 'running');
+      if (live.length === 1 && live[0]) return `${live[0].agentType}: ${live[0].description}`;
+      if (live.length > 1) return `${live.length} sub-agents running`;
+      return `${running.title}${running.meta ? ` — ${running.meta}` : ''}`;
+    }
     return last?.title ?? 'working…';
   }
   return last ? `done — ${last.title}` : 'idle, waiting for a prompt';

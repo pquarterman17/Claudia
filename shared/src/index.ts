@@ -18,6 +18,27 @@ export type SessionState =
  */
 export type PermissionLaunchMode = 'auto' | 'default' | 'acceptEdits' | 'bypassPermissions';
 
+/**
+ * A sub-agent spawned by a Task step, nested under it in the feed.
+ *
+ * The SDK reports tokens, tool count and duration per sub-agent, but not cost
+ * and not the model — `agentType` is the agent kind ("general-purpose"), not a
+ * model id. Tokens are shown because they are real; a per-sub-agent cost would
+ * have to be invented.
+ */
+export interface SubAgentRun {
+  taskId: string;
+  agentType: string;
+  /** What it is doing right now, as the SDK reports it. */
+  description: string;
+  lastTool?: string;
+  totalTokens: number;
+  toolUses: number;
+  durationMs: number;
+  status: 'running' | 'completed' | 'error';
+  summary?: string;
+}
+
 /** One abstracted step in a session's activity feed (the prototype's "feed" view). */
 export interface FeedStep {
   id: string;
@@ -28,10 +49,12 @@ export interface FeedStep {
   durMs?: number;
   /** Tool steps start 'running' and are patched once their result arrives. */
   status?: 'running' | 'ok' | 'error';
+  /** Sub-agents spawned by this step, for Task calls. */
+  subAgents?: SubAgentRun[];
 }
 
 /** Fields of an existing feed step that a later event can revise. */
-export type FeedStepPatch = Pick<FeedStep, 'durMs' | 'status' | 'meta'>;
+export type FeedStepPatch = Pick<FeedStep, 'durMs' | 'status' | 'meta' | 'subAgents'>;
 
 /**
  * Claude finished its turn but is waiting on the user — it asked a question, or

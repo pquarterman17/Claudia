@@ -42,7 +42,7 @@ Server on `127.0.0.1:4317`, UI on `127.0.0.1:4318`. Open the UI, pick a working 
 | `server/src/settings-store.ts` | Preferences on disk, atomically written (unit tested) |
 | `web/src/shortcuts.ts` | Keyboard model, platform-aware (unit tested) |
 | `web/src/components/` | One component per job — tile, feed, approval, launch, topbar, controller, usage |
-| `design/conductor-prototype/` | The Claude Design prototype this is built from (named "Conductor" at design time; the app is Claudia) |
+| `web/src/nocturne.css` | The design tokens everything is styled from |
 | `plans/MAIN_PLAN.md` | Tiered plan; the authoritative work list |
 
 ## Conventions

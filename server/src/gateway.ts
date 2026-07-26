@@ -161,7 +161,8 @@ export class Gateway {
         return;
       }
       case 'browse_folder':
-        pickFolder(this.platform)
+        // Open where they last worked rather than at the drive root.
+        pickFolder(this.platform, this.settings.get().recentDirectories[0])
           .then((path) => this.sendTo(socket, { type: 'folder_picked', path }))
           .catch((err: unknown) =>
             this.sendTo(socket, {

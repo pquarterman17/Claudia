@@ -1,6 +1,9 @@
 import type { HostPlatform } from '@claudia/shared';
 import { execFile } from 'node:child_process';
 import { statSync } from 'node:fs';
+import { join } from 'node:path';
+
+const WIN_PICKER_SCRIPT = join(import.meta.dirname, '..', 'scripts', 'pick-folder.ps1');
 
 /**
  * Opens the host's native folder dialog and returns the chosen absolute path.
@@ -12,19 +15,11 @@ import { statSync } from 'node:fs';
  * is one more reason multi-host is out of scope.)
  */
 const PICKERS: Record<HostPlatform, { file: string; args: string[] }> = {
+  // -STA because shell dialogs need a single-threaded apartment. The script
+  // itself is where the interesting parts live — see pick-folder.ps1.
   win32: {
     file: 'powershell.exe',
-    // -STA: Windows Forms dialogs require a single-threaded apartment.
-    args: [
-      '-NoProfile',
-      '-STA',
-      '-Command',
-      "Add-Type -AssemblyName System.Windows.Forms;" +
-        "$d = New-Object System.Windows.Forms.FolderBrowserDialog;" +
-        "$d.Description = 'Select a working directory for Claudia';" +
-        "$d.ShowNewFolderButton = $false;" +
-        "if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath }",
-    ],
+    args: ['-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', WIN_PICKER_SCRIPT],
   },
   darwin: {
     file: 'osascript',
@@ -36,20 +31,34 @@ const PICKERS: Record<HostPlatform, { file: string; args: string[] }> = {
   },
 };
 
-/** Resolves to the chosen path, or null if the user cancelled. */
-export function pickFolder(platform: HostPlatform): Promise<string | null> {
+/** A cancel looks like a failure on some platforms; these say otherwise. */
+const CANCEL_HINTS = [/user canceled/i, /user cancelled/i];
+
+/**
+ * Resolves to the chosen path, or null if the user cancelled. Rejects if the
+ * picker genuinely failed.
+ *
+ * Distinguishing the two matters: an earlier version treated every non-zero
+ * exit as a cancel, so a broken picker was indistinguishable from the user
+ * changing their mind — the button just went quiet and the real error was lost.
+ */
+export function pickFolder(platform: HostPlatform, startIn?: string): Promise<string | null> {
   const picker = PICKERS[platform];
+  const args = startIn ? [...picker.args, startIn] : picker.args;
   return new Promise((resolve, reject) => {
-    execFile(picker.file, picker.args, { timeout: 180_000 }, (err, stdout) => {
+    execFile(picker.file, args, { timeout: 180_000 }, (err, stdout, stderr) => {
       const chosen = stdout.trim();
-      // Cancel exits non-zero on every platform; that is not an error to report.
-      if (err && !chosen) return resolve(null);
-      if (!chosen) return resolve(null);
-      try {
+      if (chosen) {
         resolve(normalizePath(chosen));
-      } catch (e) {
-        reject(e);
+        return;
       }
+      const message = String(stderr ?? '').trim();
+      // Exit 0 with no output, or an explicit "cancelled", means cancelled.
+      if (!err || CANCEL_HINTS.some((re) => re.test(message))) {
+        resolve(null);
+        return;
+      }
+      reject(new Error(message || `Folder picker exited unexpectedly (${picker.file})`));
     });
   });
 }

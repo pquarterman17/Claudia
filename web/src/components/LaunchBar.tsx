@@ -29,6 +29,14 @@ export function LaunchBar({ recentDirectories }: Props) {
     [],
   );
 
+  // Never strand the button on "Choosing…". If the dialog is missed or the
+  // picker dies, the label has to come back on its own.
+  useEffect(() => {
+    if (!browsing) return;
+    const t = setTimeout(() => setBrowsing(false), 185_000);
+    return () => clearTimeout(t);
+  }, [browsing]);
+
   const launch = () => {
     if (!cwd.trim() || !prompt.trim()) return;
     send({ type: 'launch_session', cwd: cwd.trim(), prompt: prompt.trim(), permissionMode: mode });
@@ -76,7 +84,7 @@ export function LaunchBar({ recentDirectories }: Props) {
       <button
         className="btn btn-secondary"
         disabled={browsing}
-        title="Open a folder picker on this machine"
+        title="Open a folder picker on this machine (look for it in front of the browser)"
         onClick={() => {
           setBrowsing(true);
           send({ type: 'browse_folder' });

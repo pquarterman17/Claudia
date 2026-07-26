@@ -1,11 +1,16 @@
 node_modules/
 dist/
-*.local
-.env
-# original design export folder (locked by design app; copied to design/)
-Conductor for parallel Claude Code projects/
-# local data
-data/
 dist-types/
 *.tsbuildinfo
 .vite/
+*.local
+.env
+
+# Local runtime data (settings actually live in ~/.claudia)
+data/
+
+# Claude Design artefacts: throwaway scaffolding that got this project started,
+# not project source. The app's own copy of the Nocturne design tokens lives at
+# web/src/nocturne.css and IS tracked. These stay local until deleted.
+Conductor for parallel Claude Code projects/
+design/

@@ -237,6 +237,28 @@ export interface ProjectUsage {
   outputTokens: number;
 }
 
+/**
+ * One accounting window from the CLI's own `/cost` reply — see
+ * server/src/cost-parser.ts. `resetsAt` is kept as the raw string the CLI
+ * prints ("Jul 26, 8:30pm (America/New_York)"); turning it into a real Date
+ * would mean guessing a timezone offset the string only names, never encodes.
+ */
+export interface CostWindow {
+  label: string;
+  kind: 'session' | 'week' | 'week-model';
+  model?: string;
+  usedPct: number;
+  resetsAt: string;
+}
+
+/** Real plan usage last fetched via `/cost`, kept alongside the history estimate below. */
+export interface RealUsage {
+  windows: CostWindow[];
+  fetchedAt: number;
+  /** Which session's `/cost` prompt produced this — usage is account-wide, but the UI still names its source. */
+  sessionId: string;
+}
+
 export interface UsageSnapshot {
   tier: PlanTier;
   windows: UsageWindow[];
@@ -246,6 +268,10 @@ export interface UsageSnapshot {
   scannedAt: number;
   /** True while the first (potentially slow) scan is still running. */
   scanning: boolean;
+  /** Real plan allowance from `/cost`, or null if never fetched or the reply didn't parse. The windows above remain the fallback either way. */
+  real: RealUsage | null;
+  /** True while a `/cost` fetch is in flight, so the UI does not fire a second one. */
+  realPending: boolean;
 }
 
 // ---------- server → client ----------
@@ -331,6 +357,12 @@ export type ClientCommand =
   | { type: 'set_plan_tier'; tier: PlanTier }
   /** Ceilings the user has calibrated themselves, used when tier === 'custom'. */
   | { type: 'set_custom_ceilings'; sessionTokens: number; weeklyTokens: number }
+  /**
+   * Sends `/cost` to a live session and captures its reply as real plan
+   * usage. Costs that session tokens and adds two lines to its transcript —
+   * user-triggered only, never sent on a timer.
+   */
+  | { type: 'fetch_real_usage'; sessionId: string }
   | { type: 'set_countdown'; seconds: number }
   /** Empty title reverts to the auto-generated one. */
   | { type: 'rename_session'; sessionId: string; title: string }

@@ -254,6 +254,13 @@ export class Gateway {
         this.usage.setTier(cmd.tier);
         this.settings.update({ planTier: cmd.tier });
         return;
+      case 'fetch_real_usage': {
+        const session = this.manager.get(cmd.sessionId);
+        if (!session) return;
+        // requestReal arms capture first so the reply cannot race ahead of it.
+        this.usage.requestReal(cmd.sessionId, () => session.sendPrompt('/cost'));
+        return;
+      }
       case 'set_custom_ceilings': {
         // A zero or negative ceiling is meaningless, so floor it above zero.
         const customCeilings = {

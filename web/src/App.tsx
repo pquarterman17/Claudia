@@ -7,7 +7,9 @@ import { SessionTile } from './components/SessionTile';
 import { StatusFooter } from './components/StatusFooter';
 import { TopBar } from './components/TopBar';
 import { UsagePanel } from './components/UsagePanel';
+import { CommandPalette } from './components/CommandPalette';
 import { autoRows, DEFAULT_TILE_HEIGHT, gridTemplate, useLayout } from './layout';
+import { buildPaletteActions } from './palette';
 import { newlyNeedingAttention, notificationsEnabled, notify, stateMap } from './notifications';
 import { oldestPendingApproval, resolveShortcut } from './shortcuts';
 import { send, store, useClaudia } from './store';
@@ -31,6 +33,7 @@ export function App() {
   const [now, setNow] = useState(() => Date.now());
   const [usageOpen, setUsageOpen] = useState(false);
   const [focused, setFocused] = useState<string | undefined>();
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const lastStates = useRef(new Map<string, string>());
   const { layout, setColumns, setSizeMode, setSidebarWidth, setHeight, arrangeAll, isArranged } =
     useLayout();
@@ -87,6 +90,12 @@ export function App() {
       if (action.kind === 'toggle_usage') {
         e.preventDefault();
         setUsageOpen((v) => !v);
+        return;
+      }
+      if (action.kind === 'open_palette') {
+        // preventDefault must win over the browser's own Ctrl+K behavior.
+        e.preventDefault();
+        setPaletteOpen(true);
         return;
       }
       const target = ordered[action.index];
@@ -203,6 +212,32 @@ export function App() {
       </div>
 
       <StatusFooter sessions={sessions} platform={platform} />
+
+      {paletteOpen && (
+        <CommandPalette
+          onClose={() => setPaletteOpen(false)}
+          actions={buildPaletteActions({
+            sessions: ordered,
+            focusSession: (id) => {
+              document.getElementById(`session-${id}`)?.scrollIntoView({ block: 'nearest' });
+              setFocused(id);
+            },
+            approveOldest: (() => {
+              const target = oldestPendingApproval(sessions);
+              if (!target?.pendingApproval) return null;
+              const req = target.pendingApproval.requestId;
+              return () => send({ type: 'approve', sessionId: target.id, requestId: req });
+            })(),
+            toggleUsage: () => setUsageOpen((v) => !v),
+            setSizeMode,
+            setColumns,
+            arrangeAll,
+            recentDirectories,
+            defaultPermissionMode,
+            launch: (cwd) => send({ type: 'launch_session', cwd, permissionMode: defaultPermissionMode }),
+          })}
+        />
+      )}
     </div>
   );
 }

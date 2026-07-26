@@ -27,6 +27,25 @@ describe('modifier by platform', () => {
   });
 });
 
+describe('open_palette', () => {
+  it('opens on the platform modifier + k, either case', () => {
+    expect(resolveShortcut(key({ key: 'k', ctrlKey: true }), 'win32')).toEqual({ kind: 'open_palette' });
+    expect(resolveShortcut(key({ key: 'K', ctrlKey: true }), 'win32')).toEqual({ kind: 'open_palette' });
+    expect(resolveShortcut(key({ key: 'k', metaKey: true }), 'darwin')).toEqual({ kind: 'open_palette' });
+  });
+
+  it('reaches through typing, like the approve chord', () => {
+    // Opening the palette must not require leaving the composer first.
+    expect(resolveShortcut(key({ key: 'k', ctrlKey: true, targetTag: 'INPUT' }), 'win32')).toEqual({
+      kind: 'open_palette',
+    });
+  });
+
+  it('plain k while typing stays a keystroke', () => {
+    expect(resolveShortcut(key({ key: 'k', targetTag: 'INPUT' }), 'win32')).toBeNull();
+  });
+});
+
 describe('resolveShortcut', () => {
   it('ignores keys pressed without the modifier', () => {
     expect(resolveShortcut(key(), 'win32')).toBeNull();

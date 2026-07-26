@@ -8,7 +8,8 @@ import type { HostPlatform, SessionSummary } from '@claudia/shared';
 export type ShortcutAction =
   | { kind: 'approve_oldest' }
   | { kind: 'focus_session'; index: number }
-  | { kind: 'toggle_usage' };
+  | { kind: 'toggle_usage' }
+  | { kind: 'open_palette' };
 
 export interface KeyEventLike {
   key: string;
@@ -39,11 +40,15 @@ export function modifierLabel(platform: HostPlatform | undefined): string {
 export function resolveShortcut(e: KeyEventLike, platform: HostPlatform | undefined): ShortcutAction | null {
   const mod = modifierHeld(e, platform);
   const typing = e.targetTag !== undefined && TYPING_TAGS.has(e.targetTag);
+  const key = e.key.toLowerCase();
   if (!mod || e.altKey) return null;
-  if (typing && e.key !== 'Enter') return null;
+  // Enter and K reach through typing, like the approve chord — opening the
+  // palette must not require leaving the composer first.
+  if (typing && e.key !== 'Enter' && key !== 'k') return null;
 
   if (e.key === 'Enter') return { kind: 'approve_oldest' };
-  if (e.key === 'u') return { kind: 'toggle_usage' };
+  if (key === 'k') return { kind: 'open_palette' };
+  if (key === 'u') return { kind: 'toggle_usage' };
 
   if (/^[1-9]$/.test(e.key)) {
     return { kind: 'focus_session', index: Number(e.key) - 1 };

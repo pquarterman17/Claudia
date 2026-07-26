@@ -84,24 +84,28 @@ desktop and a MacBook at different times, so the app must run natively on both �
 16. **"Make a release" finish action** — mentioned as a chain example. Not built: a release
     means different things per repo (tag? changelog? `gh release`? npm publish?). The wrap-up
     script action covers it today; a first-class version needs the owner's actual process.
-17. **Reorder chain steps** — order currently follows click order, and changing it means
-    clearing and re-clicking. Drag-to-reorder, or up/down arrows, would be kinder.
 8. **Hooks monitor tier** — global hook POSTs to server so plain-terminal sessions appear as
    read-only tiles. The only way to see sessions Claudia did not launch. Requires editing the
    owner's global `~/.claude/settings.json`, so ask before touching it.
-14. **Usage: real ceilings** — let the user enter ceilings they have actually calibrated by
-    noticing when they get limited. The tier buttons currently apply unverified estimates; the
-    default (compare against your own history) needs no numbers at all.
 
 ## Tier 3 — Nice-to-Have
 
-9. **Command palette** — `Ctrl/⌘K`. The jump/approve/usage chords already exist.
 11. **Tauri wrap** — native window/tray/notifications around the web UI
 12. **Diff peek + per-project auto-approve rules**
 15. **Feed detail view** — click a step to see the full tool input and result, rather than the
     one-line summary. Raw message log as a fallback view.
 
 ## Completed
+
+- ~~**Delegated wave (items #9, #14, #17 + templates + queue visibility)**~~ (2026-07-25) —
+  four features built by sonnet subagents from file-level specs in manual worktrees, reviewed
+  and integrated by the coordinating model. Session templates; queued-prompt visibility
+  ("N queued" chip; the CLI already queued them invisibly); chain ▲▼ reorder (edit still
+  disarms); custom usage ceilings for the `custom` tier; Ctrl/⌘K command palette.
+  All verified live over the wire. Lessons: two of four agents died mid-run in the same
+  minute (provider stall) — the salvage was cheap because specs were file-level and worktrees
+  kept partial work isolated; union-merges of append-conflicts need a duplicate-JSX check;
+  one agent correctly triggered the ratchet-extraction fallback clause.
 
 - ~~**#1 Walking skeleton**~~ (2026-07-25) — npm workspaces (shared/server/web), WS gateway,
   SessionManager over Agent SDK `query()`, ApprovalGate resolving `canUseTool`, React UI on

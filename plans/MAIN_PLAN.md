@@ -97,6 +97,13 @@ desktop and a MacBook at different times, so the app must run natively on both �
 
 ## Completed
 
+- ~~**GitHub + Linux support**~~ (2026-07-26) — private repo at pquarterman17/Claudia with CI
+  (Ubuntu + Windows: typecheck, both suites, production build), monthly grouped Dependabot,
+  vulnerability alerts. First-ever Linux run of the suite passed. Linux finish actions were
+  broken-by-fallback (ran Windows commands) — fixed with real commands and a test pinning that
+  no Linux action resolves to a .exe. README rewritten for cold pickup on all three platforms
+  with an explicit only-Windows-human-verified honesty note.
+
 - ~~**Delegated wave (items #9, #14, #17 + templates + queue visibility)**~~ (2026-07-25) —
   four features built by sonnet subagents from file-level specs in manual worktrees, reviewed
   and integrated by the coordinating model. Session templates; queued-prompt visibility

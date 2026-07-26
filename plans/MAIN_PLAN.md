@@ -8,7 +8,7 @@ architecture does not. The Claude Design export that started this is deliberatel
 
 **Status:** Active
 **Created:** 2026-07-25
-**Updated:** 2026-07-25
+**Updated:** 2026-07-26
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
 genuinely new work or was deliberately deferred for a decision. 220 tests, clean typecheck.
@@ -76,7 +76,53 @@ is which. Decisions: reading = feed ⇄ transcript toggle per tile; identity = a
 manual rename + color accents, first; review surfaces (edit diffs, plan mode) deliberately a
 later tier since the owner mostly runs with permissions skipped.
 
+### Parity gap audit (2026-07-26)
+
+Full inventory of the interactive terminal against the SDK surface, cross-checked by probing a
+live session rather than trusting docs alone. Two probe results overturned assumptions this
+plan was built on, so they lead the list. Items marked **probe first** have an unverified SDK
+path — measure before building.
+
+30. **Real plan limits from `/cost`** — `/cost` sent as a prompt returns *actual* allowance:
+    "Current session: 20% used · resets Jul 26, 8:30pm", current week, and per-model, plus a
+    contributing-factors breakdown. This contradicts the "no API exists" finding below, which
+    the usage panel's whole estimate-from-history design rests on.
+    - [ ] Parse `/cost` output into the existing `UsageWindow` shape
+    - [ ] Run it per session on a slow interval; fall back to the history estimate when absent
+    - [ ] Retire the invented tier ceilings, keep Custom for people without a subscription
+31. **Context-window awareness via `/context`** — supersedes the `modelUsage.contextWindow`
+    approach in #26: `/context` returns a real usage breakdown. Per-tile fill %, warning
+    before auto-compact territory.
+32. **Plan mode** — the launch bar offers auto/default/acceptEdits/bypassPermissions but not
+    `plan`, which the terminal reaches by Shift+Tab. `permissionMode: 'plan'` plus
+    `planModeInstructions` are supported; the approve-plan transition is ours to render.
+33. **Effort and thinking control** — `effort` at startup and `applyFlagSettings({ effortLevel })`
+    mid-session; `thinking` takes `adaptive|enabled|disabled`. Previously deferred for want of
+    a known API; the API exists. (`setMaxThinkingTokens` is deprecated in favour of `thinking`.)
+34. **Command discovery via `supportedCommands()`** — the init message under-reports: it listed
+    65 commands omitting `/cost` and `/context`, both of which run. `supportedCommands()`
+    returns structured entries, which also gives the composer descriptions and argument hints
+    instead of bare names. Would replace the hard-coded merge shipped 2026-07-26.
+
 ## Tier 2 — Medium Impact
+
+35. **Resume picker** — `listSessions()`, `getSessionInfo()`, `getSessionMessages()`,
+    `renameSession()`, `tagSession()` exist, so the picker is ours to render rather than
+    reverse-engineering `~/.claude`. Refines #25's first half.
+36. **File checkpointing** — `enableFileCheckpointing: true` at launch, then `rewindFiles()`
+    against a per-tile checkpoint list. Refines #25's second half.
+37. **Fork a session** — `forkSession: true` + `resume`. Note this is NOT the terminal's
+    `/branch`: that forks in-process and carries session permission grants, a fork is a fresh
+    process. Label it honestly in the UI.
+38. **MCP panel** — `mcpServerStatus()`, `reconnectMcpServer()`, `toggleMcpServer()`,
+    `setMcpServers()`. Currently invisible in Claudia; a dead MCP server is silent.
+39. **Effective-settings inspector** — `resolveSettings()` resolves the same merge the CLI
+    uses, so "why did this session auto-approve that?" becomes answerable in the UI.
+40. **Background task visibility** — subagent/background-shell lifecycle is already in the
+    stream; `stopTask(taskId)` can stop one. No enumeration API, so build the list from
+    observed events.
+
+7. **"Commit + push" finish action** — deliberately disabled in the UI rather than shipped
 
 25. **Resume + rewind** — `/resume` parity: picker over `~/.claude` session history for a cwd,
     reattach via `resume` (subsumes the resume half of #2); `/rewind` parity via the SDK's
@@ -105,8 +151,33 @@ later tier since the owner mostly runs with permissions skipped.
     approve/revise from the tile (probe what the SDK delivers). Owner: later tier is fine
     while running permission-skipped. Extends #12.
 
+41. **Output style per session** — **probe first.** `initializationResult()` reports the
+    current style and the available ones, but no setter is documented; it may be reachable
+    through the generic `settings` / `applyFlagSettings()` path.
+42. **`@file` mention expansion** — **probe first.** Unknown whether `@path` in a prompt string
+    gets the CLI input box's automatic file inclusion, or arrives as literal text for Claude to
+    Read itself. Measure before building the autocomplete half of #28.
+43. **Compaction visibility** — `/compact [instructions]` runs as prompt text and the SDK emits
+    `system/compact_boundary` with `pre_tokens`. Show compaction in the feed instead of a
+    mysterious context drop.
+
 11. **Tauri wrap** — native window/tray/notifications around the web UI
 12. **Diff peek + per-project auto-approve rules**
+
+### Terminal features with no SDK path (documented, not planned)
+
+Recording these so they are not rediscovered as bugs:
+
+- **Conversation-level rewind.** `rewindFiles()` restores code only. `/rewind`'s "restore
+  conversation", "restore both", and the two point-scoped summarize options have no equivalent.
+- **`/branch` semantics.** A fork is a new process; in-process branch behaviour (carried
+  permission grants, background tasks continuing) is not reproducible.
+- **Force-backgrounding an in-flight tool call** (terminal `Ctrl+B`).
+- **`/status`, `/help`, `/todos` as commands** — measured in a live SDK session: `/todos` is
+  "Unknown command", the other two reply "isn't available in this environment". Todos are still
+  reachable as `TaskCreate`/`TaskUpdate` tool calls in the stream (#27).
+- **Product commands** (`/login`, `/upgrade`, `/ide`, `/install-github-app`…) — out of scope by
+  construction; Claudia is not the Claude Code product.
 
 ## Completed
 
@@ -163,9 +234,15 @@ later tier since the owner mostly runs with permissions skipped.
 - **Repo is `Claudia/`**. The Claude Design export is untracked and will be deleted; the only
   thing that survived it is `web/src/nocturne.css`.
 
-### Plan limits: no API exists (researched + verified 2026-07-25)
+### Plan limits: partly WRONG, corrected 2026-07-26
 
-There is **no public way to read true remaining plan allowance**, so the bars are estimates
+> **Superseded.** Probing a live session showed `/cost` sent as a prompt returns real
+> allowance — session %, weekly %, per-model %, with reset times. The conclusion below held
+> only for *documented HTTP APIs*; it missed that the CLI surfaces its own accounting through a
+> slash command the SDK can send. Item #30 acts on this. The rest of this section stands,
+> including the weighting facts and why invented tier ceilings were removed.
+
+There is no public *HTTP API* for remaining plan allowance, so the bars were estimates
 against a user-set tier. Verified rather than assumed:
 
 - `/usage` exists, but its own docs say the breakdown is computed from *local session history

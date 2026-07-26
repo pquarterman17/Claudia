@@ -116,6 +116,38 @@ describe('routeMessage', () => {
     expect(r.toolEnds).toBeUndefined();
   });
 
+  it('turns post_turn_summary into a needs-action signal', () => {
+    // Structured, so a question does not have to be spotted in the prose.
+    const r = routeMessage(
+      {
+        type: 'system',
+        subtype: 'post_turn_summary',
+        status_category: 'blocked',
+        status_detail: 'indentation style choice needed',
+        needs_action: 'reply: tabs, or spaces?',
+      },
+      T0,
+    );
+    expect(r.needsAction).toMatchObject({
+      request: 'reply: tabs, or spaces?',
+      detail: 'indentation style choice needed',
+    });
+    expect(r.steps[0]?.title).toBe('Waiting on you');
+  });
+
+  it('clears needs-action when a turn ends without one', () => {
+    const r = routeMessage({ type: 'system', subtype: 'post_turn_summary', status_category: 'ok' }, T0);
+    expect(r.needsAction).toBeNull();
+  });
+
+  it('ignores an empty needs_action', () => {
+    const r = routeMessage(
+      { type: 'system', subtype: 'post_turn_summary', needs_action: '   ' },
+      T0,
+    );
+    expect(r.needsAction).toBeNull();
+  });
+
   it('survives a result with no modelUsage', () => {
     const r = routeMessage({ type: 'result', subtype: 'success', total_cost_usd: 1 }, T0);
     expect(r.modelUsage).toBeUndefined();

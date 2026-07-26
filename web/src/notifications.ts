@@ -8,7 +8,7 @@ import type { SessionSummary } from '@claudia/shared';
  * quiet while you are looking at the window — are testable without a browser.
  */
 
-export type Attention = 'awaiting_approval' | 'error';
+export type Attention = 'awaiting_approval' | 'error' | 'question';
 
 export interface AttentionEvent {
   sessionId: string;
@@ -19,17 +19,27 @@ export interface AttentionEvent {
 
 /** Sessions that have *newly* entered a state needing a human. */
 export function newlyNeedingAttention(
-  previous: Map<string, SessionSummary['state']>,
+  previous: Map<string, string>,
   current: SessionSummary[],
 ): AttentionEvent[] {
   const events: AttentionEvent[] = [];
   for (const session of current) {
+    // A question is keyed separately: the session sits in 'idle' while asking,
+    // so watching state alone would never see it.
+    const key = session.needsAction ? `asking:${session.needsAction.since}` : session.state;
     const was = previous.get(session.id);
     // Only the transition matters. Without this every poll would re-notify for
     // a session that is simply still waiting.
-    if (was === session.state) continue;
+    if (was === key) continue;
 
-    if (session.state === 'awaiting_approval' && session.pendingApproval) {
+    if (session.needsAction) {
+      events.push({
+        sessionId: session.id,
+        name: session.name,
+        kind: 'question',
+        detail: session.needsAction.request,
+      });
+    } else if (session.state === 'awaiting_approval' && session.pendingApproval) {
       events.push({
         sessionId: session.id,
         name: session.name,
@@ -48,12 +58,15 @@ export function newlyNeedingAttention(
   return events;
 }
 
-export function stateMap(sessions: SessionSummary[]): Map<string, SessionSummary['state']> {
-  return new Map(sessions.map((s) => [s.id, s.state]));
+/** Keyed by what matters for notifying, not by session state alone. */
+export function stateMap(sessions: SessionSummary[]): Map<string, string> {
+  return new Map(sessions.map((s) => [s.id, s.needsAction ? `asking:${s.needsAction.since}` : s.state]));
 }
 
 export function titleFor(event: AttentionEvent): string {
-  return event.kind === 'error' ? `${event.name} — blocked` : `${event.name} — needs approval`;
+  if (event.kind === 'error') return `${event.name} — blocked`;
+  if (event.kind === 'question') return `${event.name} — asked you a question`;
+  return `${event.name} — needs approval`;
 }
 
 export const NOTIFY_KEY = 'claudia.notify.v1';

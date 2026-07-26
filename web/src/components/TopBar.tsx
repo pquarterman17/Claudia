@@ -15,9 +15,11 @@ interface Props {
 /** Aggregate header: totals, status counts, plan headroom, connection state. */
 export function TopBar({ sessions, connected, usage, usageOpen, onToggleUsage }: Props) {
   const working = sessions.filter((s) => s.state === 'working' || s.state === 'starting').length;
-  const waiting = sessions.filter((s) => s.state === 'awaiting_approval').length;
+  const waiting = sessions.filter((s) => s.state === 'awaiting_approval' || s.needsAction).length;
   const blocked = sessions.filter((s) => s.state === 'error').length;
-  const idle = sessions.filter((s) => s.state === 'idle' || s.state === 'stopped').length;
+  const idle = sessions.filter(
+    (s) => (s.state === 'idle' || s.state === 'stopped') && !s.needsAction,
+  ).length;
   const cost = sessions.reduce((a, s) => a + s.costUsd, 0);
   const tokens = sessions.reduce((a, s) => a + s.inputTokens + s.outputTokens, 0);
   const total = sessions.length || 1;
@@ -52,7 +54,7 @@ export function TopBar({ sessions, connected, usage, usageOpen, onToggleUsage }:
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
         {[
           { n: working, label: 'working', c: COLORS.accent },
-          { n: waiting, label: 'awaiting', c: COLORS.warn },
+          { n: waiting, label: 'need you', c: COLORS.warn },
           { n: blocked, label: 'blocked', c: COLORS.err },
           { n: idle, label: 'idle', c: '#3f424d' },
         ].map((g) => (

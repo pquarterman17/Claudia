@@ -184,6 +184,9 @@ export class Gateway {
       case 'deny':
         this.manager.get(cmd.sessionId)?.deny(cmd.requestId, cmd.message);
         return;
+      case 'answer_question':
+        this.manager.get(cmd.sessionId)?.answerQuestion(cmd.requestId, cmd.answers);
+        return;
       case 'interrupt':
         void this.manager.get(cmd.sessionId)?.interrupt();
         return;
@@ -244,7 +247,10 @@ export class Gateway {
       const session = this.manager.get(summary.id);
       if (!session) continue;
       if (op === 'approve_all') {
-        if (summary.pendingApproval) session.approve(summary.pendingApproval.requestId);
+        // Skip questions: "approving" one would resolve it with no answer.
+        if (summary.pendingApproval && !summary.pendingQuestion) {
+          session.approve(summary.pendingApproval.requestId);
+        }
       } else if (summary.state === 'working' || summary.state === 'starting') {
         void session.interrupt();
       }

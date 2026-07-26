@@ -53,6 +53,16 @@ describe('blockingReason', () => {
     expect(blockingReason([session('idle'), session(state)])).toContain(expected);
   });
 
+  it('holds for a session that asked the user a question', () => {
+    // The dangerous case: a session waiting on an answer reports 'idle', so
+    // without this the chain would shut the machine down mid-conversation.
+    const asking = {
+      ...session('idle'),
+      needsAction: { request: 'tabs or spaces?', since: 0 },
+    };
+    expect(blockingReason([asking])).toContain('waiting on your answer');
+  });
+
   it('reports what needs a human before what is merely slow', () => {
     const sessions = [session('working'), session('error'), session('awaiting_approval')];
     expect(blockingReason(sessions)).toContain('awaiting approval');

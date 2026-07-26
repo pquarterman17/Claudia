@@ -47,6 +47,11 @@ export class ApprovalGate {
     return this.settle(requestId, { behavior: 'allow', updatedInput: this.input });
   }
 
+  /** Allows the call with extra input merged in — how a question is answered. */
+  approveWith(requestId: string, extra: Record<string, unknown>): boolean {
+    return this.settle(requestId, { behavior: 'allow', updatedInput: { ...this.input, ...extra } });
+  }
+
   deny(requestId: string, message?: string): boolean {
     return this.settle(requestId, {
       behavior: 'deny',

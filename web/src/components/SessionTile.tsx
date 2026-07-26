@@ -4,6 +4,7 @@ import { elapsed, fmtCost, fmtModel, fmtTokens } from '../format';
 import { send } from '../store';
 import { COLORS, statusOf } from '../status';
 import { ApprovalBanner } from './ApprovalBanner';
+import { QuestionPicker } from './QuestionPicker';
 import { SessionFeed } from './SessionFeed';
 
 interface Props {
@@ -46,7 +47,11 @@ export function SessionTile({ session, steps, now, index, focused, height, onRes
     setDraft('');
   };
 
-  const cls = ['tile', session.pendingApproval ? 'awaiting' : '', session.state === 'error' ? 'error' : '']
+  const cls = [
+    'tile',
+    session.pendingApproval || session.needsAction || session.pendingQuestion ? 'awaiting' : '',
+    session.state === 'error' ? 'error' : '',
+  ]
     .filter(Boolean)
     .join(' ');
 
@@ -134,7 +139,36 @@ export function SessionTile({ session, steps, now, index, focused, height, onRes
         <SessionFeed steps={steps} />
       </div>
 
-      {session.pendingApproval && (
+      {session.needsAction && !session.pendingApproval && (
+        <div
+          className="approval-banner"
+          style={{ background: '#251f2c', borderTopColor: '#6b5636' }}
+        >
+          <span
+            style={{
+              fontSize: 10,
+              letterSpacing: '.12em',
+              textTransform: 'uppercase',
+              color: COLORS.warn,
+              flex: 'none',
+            }}
+          >
+            Waiting on you
+          </span>
+          <span
+            title={session.needsAction.detail ?? session.needsAction.request}
+            style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: '#e4e7f5' }}
+          >
+            {session.needsAction.request}
+          </span>
+        </div>
+      )}
+
+      {session.pendingQuestion && (
+        <QuestionPicker sessionId={session.id} question={session.pendingQuestion} />
+      )}
+
+      {session.pendingApproval && !session.pendingQuestion && (
         <ApprovalBanner
           approval={session.pendingApproval}
           now={now}
@@ -180,7 +214,9 @@ export function SessionTile({ session, steps, now, index, focused, height, onRes
         </span>
         <input
           value={draft}
-          placeholder={session.state === 'idle' ? 'send a new task…' : 'queue a message…'}
+          placeholder={
+            session.needsAction ? 'answer…' : session.state === 'idle' ? 'send a new task…' : 'queue a message…'
+          }
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {

@@ -18,6 +18,7 @@ interface Props {
 export function ControllerTile({ trigger, sessions, countdownSec, stopOnCloseSec }: Props) {
   const [confirming, setConfirming] = useState(false);
   const waiting = sessions.filter((s) => s.pendingApproval).length;
+  const asking = sessions.filter((s) => s.needsAction).length;
   const busy = sessions.filter((s) => s.state === 'working' || s.state === 'starting').length;
   const unprompted = sessions.filter((s) => s.permissionMode === 'bypassPermissions').length;
   const armed = trigger.state === 'armed' || trigger.state === 'counting';
@@ -168,6 +169,13 @@ export function ControllerTile({ trigger, sessions, countdownSec, stopOnCloseSec
             </span>
           </div>
         </section>
+
+        {asking > 0 && (
+          <div style={{ fontSize: 11, color: COLORS.warn }}>
+            {asking} {asking === 1 ? 'session is' : 'sessions are'} waiting on an answer — the chain
+            will not fire until you reply.
+          </div>
+        )}
 
         <section>
           <div className="kicker" style={{ marginBottom: 6 }}>

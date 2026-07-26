@@ -75,11 +75,36 @@ describe('newlyNeedingAttention', () => {
   });
 });
 
+describe('questions', () => {
+  const asking = (since: number) =>
+    session('a', 'idle', { needsAction: { request: 'tabs or spaces?', since } });
+
+  it('notifies when a session ends its turn asking something', () => {
+    // The session sits in 'idle' while asking, so watching state alone would
+    // never see it — the key has to include the question.
+    const events = newlyNeedingAttention(new Map([['a', 'working']]), [asking(1)]);
+    expect(events[0]).toMatchObject({ kind: 'question', detail: 'tabs or spaces?' });
+  });
+
+  it('does not re-notify for the same unanswered question', () => {
+    const current = [asking(1)];
+    expect(newlyNeedingAttention(stateMap(current), current)).toHaveLength(0);
+  });
+
+  it('notifies again for a genuinely new question', () => {
+    const first = [asking(1)];
+    expect(newlyNeedingAttention(stateMap(first), [asking(2)])).toHaveLength(1);
+  });
+});
+
 describe('titleFor', () => {
   it('distinguishes blocked from needing approval', () => {
     expect(titleFor({ sessionId: 'a', name: 'api', kind: 'error', detail: '' })).toBe('api — blocked');
     expect(titleFor({ sessionId: 'a', name: 'api', kind: 'awaiting_approval', detail: '' })).toBe(
       'api — needs approval',
+    );
+    expect(titleFor({ sessionId: 'a', name: 'api', kind: 'question', detail: '' })).toBe(
+      'api — asked you a question',
     );
   });
 });

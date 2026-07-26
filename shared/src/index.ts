@@ -33,6 +33,34 @@ export interface FeedStep {
 /** Fields of an existing feed step that a later event can revise. */
 export type FeedStepPatch = Pick<FeedStep, 'durMs' | 'status' | 'meta'>;
 
+/**
+ * Claude finished its turn but is waiting on the user — it asked a question, or
+ * hit a decision it cannot make alone. Comes from the SDK's `post_turn_summary`,
+ * so it is structured rather than guessed from the text of the reply.
+ */
+export interface NeedsAction {
+  /** What it wants, e.g. "reply: tabs, or spaces (2 or 4)?" */
+  request: string;
+  /** Why it stopped, e.g. "indentation style choice needed". */
+  detail?: string;
+  since: number;
+}
+
+/**
+ * A multiple-choice question from Claude, rendered as a picker rather than as a
+ * permission prompt. The answer travels back through the same callback.
+ */
+export interface PendingQuestion {
+  requestId: string;
+  questions: Array<{
+    question: string;
+    header: string;
+    multiSelect: boolean;
+    options: Array<{ label: string; description: string }>;
+  }>;
+  requestedAt: number;
+}
+
 export interface PendingApproval {
   requestId: string;
   toolName: string;
@@ -75,6 +103,10 @@ export interface SessionSummary {
   /** Claude Code session id (for resume), once known from the init message. */
   claudeSessionId?: string;
   pendingApproval?: PendingApproval;
+  /** Set when the turn ended with a question rather than a conclusion. */
+  needsAction?: NeedsAction;
+  /** Set while Claude is waiting on a multiple-choice answer. */
+  pendingQuestion?: PendingQuestion;
   /** Last error message when state === 'error'. */
   errorMessage?: string;
 }
@@ -205,6 +237,8 @@ export type ClientCommand =
   | { type: 'send_prompt'; sessionId: string; text: string }
   | { type: 'approve'; sessionId: string; requestId: string }
   | { type: 'deny'; sessionId: string; requestId: string; message?: string }
+  /** Answers keyed by question text, as the AskUserQuestion tool expects. */
+  | { type: 'answer_question'; sessionId: string; requestId: string; answers: Record<string, string> }
   | { type: 'interrupt'; sessionId: string }
   | { type: 'stop_session'; sessionId: string }
   | { type: 'remove_session'; sessionId: string }

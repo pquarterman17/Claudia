@@ -28,6 +28,9 @@ export function blockingReason(sessions: SessionSummary[]): string | null {
   const waiting = count('awaiting_approval');
   if (waiting) return `${waiting} ${plural(waiting)} awaiting approval`;
 
+  const asking = sessions.filter((s) => s.needsAction).length;
+  if (asking) return `${asking} ${plural(asking)} waiting on your answer`;
+
   const errored = count('error');
   if (errored) return `${errored} ${plural(errored)} blocked on an error`;
 

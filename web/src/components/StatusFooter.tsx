@@ -15,7 +15,7 @@ const HOST_NAME: Record<HostPlatform, string> = {
 /** Footer: a one-line state summary and the shortcut hints for this platform. */
 export function StatusFooter({ sessions, platform }: Props) {
   const working = sessions.filter((s) => s.state === 'working' || s.state === 'starting').length;
-  const waiting = sessions.filter((s) => s.pendingApproval).length;
+  const waiting = sessions.filter((s) => s.pendingApproval || s.needsAction).length;
   const blocked = sessions.filter((s) => s.state === 'error').length;
   const mod = modifierLabel(platform);
 
@@ -35,7 +35,7 @@ export function StatusFooter({ sessions, platform }: Props) {
       }}
     >
       <span>
-        {working} working · {waiting} awaiting approval · {blocked} blocked
+        {working} working · {waiting} need you · {blocked} blocked
       </span>
       <span style={{ flex: 1 }} />
       <span>

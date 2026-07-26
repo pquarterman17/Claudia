@@ -1,4 +1,5 @@
-import type { FeedStep, ModelUsage, SessionState } from '@claudia/shared';
+import type { FeedStep, ModelUsage, NeedsAction, SessionState } from '@claudia/shared';
+import { randomUUID } from 'node:crypto';
 import { errorStep, infoStep, resultStep, stepFromText, stepFromToolUse } from './feed.js';
 
 /**
@@ -24,6 +25,8 @@ export interface RoutedMessage {
   toolStarts?: Array<{ toolUseId: string; stepId: string }>;
   /** Tool results carried by this message, to be matched back by id. */
   toolEnds?: Array<{ toolUseId: string; isError: boolean }>;
+  /** Claude ended the turn waiting on the user. `null` clears a previous one. */
+  needsAction?: NeedsAction | null;
 }
 
 const EMPTY: RoutedMessage = { steps: [] };
@@ -39,6 +42,26 @@ function num(v: unknown): number {
 export function routeMessage(message: Record<string, unknown>, turnStartedAt: number): RoutedMessage {
   const type = message['type'];
 
+  // The SDK reports, per turn, whether it stopped because it needs the user.
+  // Structured, so the question does not have to be spotted in the prose.
+  if (type === 'system' && message['subtype'] === 'post_turn_summary') {
+    const request = message['needs_action'];
+    if (typeof request !== 'string' || !request.trim()) return { steps: [], needsAction: null };
+    const detail = typeof message['status_detail'] === 'string' ? message['status_detail'] : undefined;
+    return {
+      steps: [
+        {
+          id: randomUUID(),
+          ts: Date.now(),
+          kind: 'approval',
+          title: 'Waiting on you',
+          meta: request,
+        },
+      ],
+      needsAction: { request, since: Date.now(), ...(detail ? { detail } : {}) },
+    };
+  }
+
   if (type === 'system' && message['subtype'] === 'init') {
     const model = typeof message['model'] === 'string' ? message['model'] : undefined;
     const sessionId = typeof message['session_id'] === 'string' ? message['session_id'] : undefined;
@@ -51,6 +74,7 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
   }
 
   if (type === 'assistant') {
+    // Work resuming means the question, if any, has been answered.
     const inner = message['message'] as Record<string, unknown> | undefined;
     const steps: FeedStep[] = [];
     const toolStarts: Array<{ toolUseId: string; stepId: string }> = [];

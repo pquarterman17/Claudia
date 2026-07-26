@@ -92,7 +92,10 @@ export function ActivityDigest({ sessions, feeds, now }: Props) {
                 style={{
                   display: 'block',
                   fontSize: 10.5,
-                  color: session.pendingApproval ? COLORS.warn : '#75798c',
+                  color:
+                    session.pendingApproval || session.needsAction || session.pendingQuestion
+                      ? COLORS.warn
+                      : '#75798c',
                   marginLeft: 12,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -111,14 +114,19 @@ export function ActivityDigest({ sessions, feeds, now }: Props) {
 
 /** Sessions needing a human sort to the top; that is what the digest is for. */
 function rank(s: SessionSummary): number {
-  if (s.pendingApproval) return 0;
-  if (s.state === 'error') return 1;
-  if (s.state === 'working' || s.state === 'starting') return 2;
-  return 3;
+  if (s.pendingApproval || s.pendingQuestion) return 0;
+  if (s.needsAction) return 1;
+  if (s.state === 'error') return 2;
+  if (s.state === 'working' || s.state === 'starting') return 3;
+  return 4;
 }
 
 function describe(session: SessionSummary, feed: FeedStep[] | undefined): string {
+  if (session.pendingQuestion) {
+    return `asking — ${session.pendingQuestion.questions[0]?.question ?? 'a question'}`;
+  }
   if (session.pendingApproval) return `needs you — ${session.pendingApproval.summary}`;
+  if (session.needsAction) return `asked you — ${session.needsAction.request}`;
   if (session.state === 'error') return session.errorMessage ?? 'errored';
   if (session.state === 'stopped') return 'stopped';
 

@@ -29,7 +29,7 @@ export function App() {
   const [now, setNow] = useState(() => Date.now());
   const [usageOpen, setUsageOpen] = useState(false);
   const [focused, setFocused] = useState<string | undefined>();
-  const lastStates = useRef(new Map<string, SessionSummary['state']>());
+  const lastStates = useRef(new Map<string, string>());
   const { layout, setColumns, setSizeMode, setSidebarWidth, setHeight, arrangeAll, isArranged } =
     useLayout();
   const fitting = layout.sizeMode === 'fit';

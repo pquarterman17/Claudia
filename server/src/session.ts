@@ -3,6 +3,8 @@ import type {
   FeedStep,
   FeedStepPatch,
   ModelUsage,
+  NeedsAction,
+  PendingQuestion,
   PermissionLaunchMode,
   SessionState,
   SessionSummary,
@@ -13,6 +15,7 @@ import { ApprovalGate, type PermissionResult } from './approval-gate.js';
 import { AsyncQueue } from './async-queue.js';
 import { approvalStep, errorStep, infoStep, summarizeToolInput } from './feed.js';
 import { routeMessage } from './message-router.js';
+import { parseQuestions } from './question-parser.js';
 import { ToolTracker } from './tool-tracker.js';
 
 export interface SessionCallbacks {
@@ -50,6 +53,8 @@ export class ClaudiaSession {
   private model: string | undefined;
   private claudeSessionId: string | undefined;
   private errorMessage: string | undefined;
+  private needsAction: NeedsAction | undefined;
+  private pendingQuestion: PendingQuestion | undefined;
   /** True until the first prompt is sent, so an empty session reads as idle. */
   private awaitingFirstPrompt = true;
   /** True while swapping the query for a permission change. */
@@ -79,6 +84,8 @@ export class ClaudiaSession {
       modelUsage: this.modelUsage,
       claudeSessionId: this.claudeSessionId,
       pendingApproval: this.gate.current,
+      needsAction: this.needsAction,
+      pendingQuestion: this.pendingQuestion,
       errorMessage: this.errorMessage,
     };
   }
@@ -149,6 +156,7 @@ export class ClaudiaSession {
     if (routed.costUsd !== undefined) this.costUsd = routed.costUsd;
     if (routed.modelUsage) this.modelUsage = routed.modelUsage;
     if (routed.errorMessage) this.errorMessage = routed.errorMessage;
+    if (routed.needsAction !== undefined) this.needsAction = routed.needsAction ?? undefined;
 
     // An empty session is idle, not working: the SDK has started but there is
     // nothing for it to do until someone types.
@@ -167,9 +175,32 @@ export class ClaudiaSession {
   private onPermissionRequest(toolName: string, input: Record<string, unknown>): Promise<PermissionResult> {
     const summary = summarizeToolInput(toolName, input);
     const promise = this.gate.request(toolName, summary, input);
-    this.cb.onFeed(this.id, approvalStep(toolName, summary));
+
+    // AskUserQuestion is not really a permission: it is a question whose answer
+    // rides back on the same callback. Render it as a picker instead.
+    const questions = toolName === 'AskUserQuestion' ? parseQuestions(input) : null;
+    if (questions) {
+      this.pendingQuestion = {
+        requestId: this.gate.current?.requestId ?? '',
+        questions,
+        requestedAt: Date.now(),
+      };
+      this.cb.onFeed(this.id, infoStep('Asked you a question', questions[0]?.question));
+    } else {
+      this.cb.onFeed(this.id, approvalStep(toolName, summary));
+    }
     this.setState('awaiting_approval');
     return promise;
+  }
+
+  /** Answers an outstanding question, keyed by question text. */
+  answerQuestion(requestId: string, answers: Record<string, string>): boolean {
+    if (this.pendingQuestion?.requestId !== requestId) return false;
+    if (!this.gate.approveWith(requestId, { answers })) return false;
+    this.pendingQuestion = undefined;
+    this.cb.onFeed(this.id, infoStep('Answered', Object.values(answers).join(' · ')));
+    this.setState('working');
+    return true;
   }
 
   approve(requestId: string): boolean {
@@ -183,6 +214,7 @@ export class ClaudiaSession {
   deny(requestId: string, message?: string): boolean {
     const pending = this.gate.current;
     if (!this.gate.deny(requestId, message)) return false;
+    this.pendingQuestion = undefined;
     this.cb.onFeed(this.id, infoStep('Denied', message ?? pending?.summary));
     this.setState('working');
     return true;
@@ -190,6 +222,7 @@ export class ClaudiaSession {
 
   sendPrompt(text: string): void {
     this.awaitingFirstPrompt = false;
+    this.needsAction = undefined;
     this.beginQuery();
     this.pushUserText(text);
     this.lastActivityAt = Date.now();

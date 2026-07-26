@@ -2,16 +2,16 @@
 
 One window over every Claude Code session running in parallel. Sessions are owned by a local
 Node server via the Claude Agent SDK (`query()`), rendered in a React web UI at localhost.
-Supersedes the Tauri+PTY plan drafted during design (kept for reference at
-`design/conductor-prototype/PLAN.md`; its product surface carries over, its PTY architecture
-does not).
+Supersedes the Tauri+PTY plan drafted during design: its product surface carries over, its PTY
+architecture does not. The Claude Design export that started this is deliberately untracked
+(see `.gitignore`) — throwaway scaffolding, not project source.
 
 **Status:** Active
 **Created:** 2026-07-25
 **Updated:** 2026-07-25
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
-genuinely new work or was deliberately deferred for a decision. 141 tests, clean typecheck.
+genuinely new work or was deliberately deferred for a decision. 162 tests, clean typecheck.
 Everything so far was built and verified on Windows only — see #13.
 
 ---
@@ -33,9 +33,9 @@ browser (React, Nocturne DS) ── WebSocket ── server (Node/TS)
 - `server/` — Fastify + ws. Session registry with explicit state machine:
   `starting → working → awaiting_approval → working → idle`, `error` from any, `stopped` terminal.
   States come from SDK events (structured), never from parsing terminal text.
-- `web/` — Vite + React. Ports the prototype UI (`design/conductor-prototype/Conductor.dc.html`):
-  Grid/Focus/Stack, session tiles with feed view, approval banners, controller tile, usage panel.
-  Design tokens from Nocturne (`design/conductor-prototype/_ds/.../styles.css`).
+- `web/` — Vite + React. Session tiles with feed view, approval banners, controller tile with
+  the finish chain, usage panel. The Nocturne design tokens were copied into
+  `web/src/nocturne.css`, which is tracked; nothing reads from the design export.
 - `shared/` — TypeScript types for the WS protocol (events server→client, commands client→server).
 
 ### Key platform facts (researched 2026-07-25)
@@ -116,7 +116,8 @@ desktop and a MacBook at different times, so the app must run natively on both �
   PTY + heuristic-parsing risk is designed out rather than mitigated.
 - **Local web app, not Tauri.** Faster iteration and the second host gets a view for free by
   pointing a browser at it. Tauri stays available as a later wrapper (item 11).
-- **Repo is `Claudia/`**, design prototype preserved under `design/conductor-prototype/`.
+- **Repo is `Claudia/`**. The Claude Design export is untracked and will be deleted; the only
+  thing that survived it is `web/src/nocturne.css`.
 
 ### Plan limits: no API exists (researched + verified 2026-07-25)
 

@@ -76,44 +76,6 @@ is which. Decisions: reading = feed ⇄ transcript toggle per tile; identity = a
 manual rename + color accents, first; review surfaces (edit diffs, plan mode) deliberately a
 later tier since the owner mostly runs with permissions skipped.
 
-22. **Session identity pack** — the owner's stated pain: twins in one repo are confusable.
-    - [ ] Auto-title each session from its task via the SDK's `generateSessionTitle` (same
-          machinery as terminal tab titles), refreshed after the first turn
-    - [ ] Click-to-rename on the tile; manual name wins over auto
-    - [ ] Stable per-session accent color on tile border + digest row
-23. **Quick conversation controls** — the cheap 80% of `/commands`:
-    - [ ] Model picker per session (`setModel`; model list from the init response)
-    - [ ] Effort control (`setMaxThinkingTokens`)
-    - [ ] "New conversation here" button (= `/clear`: fresh session, same cwd/mode)
-    - [ ] Up-arrow prompt history in the composer
-24. **Transcript view** — per-tile toggle feed ⇄ transcript: complete replies rendered as
-    markdown, thinking shown collapsed with token count, tool calls expandable to full
-    input/output. Absorbs #15 (feed detail view). Supervisor board unchanged by default.
-
-
-### Owner testing feedback (2026-07-26) — logged, NOT started at owner's request
-
-18. **Slash commands, full surface** — (expanded by the parity initiative; the easy wins moved
-    to #23). Remaining: probe whether stream-json input interprets "/" at all (the init
-    response lists available commands — /compact and the owner's custom skills are the prizes),
-    then surface whatever works in the palette plus a help list.
-19. **Warm spawn** — a no-prompt session starts nothing until the first prompt (deliberate:
-    the SDK emits init only once it has input, and an eager query once left sessions stuck in
-    'starting'). Perceived as broken. Design: spawn the process eagerly so MCP/boot cost is
-    paid up front, keep state 'idle', accept that init arrives with the first prompt.
-20. **Feed dedup** — Bash steps read "[bash] Bash — cmd": kind marker and title repeat. Drop
-    the redundant title for tool steps whose kind already says it.
-21. **Chain-order legibility** — order = the numbered list, top to bottom, but the owner
-    didn't trust it enough to test shutdown. Add "runs top to bottom" caption and a plain
-    preview sentence ("will: notify, then save learnings, then shut down"), and consider a
-    dry-run mode. Also make the disabled commit+push state visible without hover.
-
-2. **Session resume** — absorbed: resume picker → #25, model picker → #23.
-13. **Verify on macOS** — everything below was built and checked on Windows only. The per-OS
-    paths are unit-tested (`pmset`, `osascript`, POSIX separators) but never executed there:
-    the folder picker's `osascript choose folder`, the notify and sleep commands, and the ⌘
-    modifier all need one real pass on the MacBook.
-
 ## Tier 2 — Medium Impact
 
 25. **Resume + rewind** — `/resume` parity: picker over `~/.claude` session history for a cwd,
@@ -147,6 +109,17 @@ later tier since the owner mostly runs with permissions skipped.
 12. **Diff peek + per-project auto-approve rules**
 
 ## Completed
+
+- ~~**Terminal parity Tier 1 (#22-24 + most of #18/#23)**~~ (2026-07-26) — three sonnet lanes
+  (identity / controls / transcript) around a pre-carved protocol + session core; all three
+  completed this time (the watchdog stayed silent). Shipped: auto-titles via the SDK's
+  generateSessionTitle with click-to-rename and FNV-1a accent colors (same-repo twins now
+  visually distinct); model picker from supportedModels(), slash-command autocomplete over the
+  init-provided list (65 here — slash commands DO execute via stream input, probe-verified),
+  up-arrow prompt history, "new conversation here"; full transcript per session with feed⇄chat
+  toggle, hand-rolled markdown-lite, collapsed thinking and tool I/O. E2E caught one gap —
+  the launch prompt missing from the transcript — fixed and pinned as vectors V19/V20.
+  Deferred from #23: effort control (setMaxThinkingTokens mapping unclear; revisit).
 
 - ~~**Session lifecycle vector suite**~~ (2026-07-26) — 18 deterministic vectors driving
   ClaudiaSession through a fake SDK query injected at the query-factory seam: launch shapes,

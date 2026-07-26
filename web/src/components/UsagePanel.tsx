@@ -28,11 +28,11 @@ interface Props {
  * — it cannot distinguish just-over from ten-times-over. Past that point report
  * the multiple instead, which is the number that actually tells you something.
  */
-function headline(w: UsageWindow): { value: string; suffix: string } {
+export function usageHeadline(w: UsageWindow): { value: string; suffix: string } {
   if (w.referenceTokens === null || w.remainingPct === null) return { value: '—', suffix: 'no baseline' };
   if (w.billableTokens > w.referenceTokens) {
     const ratio = w.billableTokens / w.referenceTokens;
-    return { value: `${ratio.toFixed(1)}×`, suffix: 'of typical' };
+    return { value: `${ratio.toFixed(1)}×`, suffix: 'typical' };
   }
   return { value: `${w.remainingPct}%`, suffix: 'left' };
 }
@@ -49,6 +49,7 @@ export function UsagePanel({ usage, customCeilings }: Props) {
 
   return (
     <div
+      className="usage-panel"
       style={{
         flex: 'none',
         display: 'flex',
@@ -128,9 +129,9 @@ export function UsagePanel({ usage, customCeilings }: Props) {
                 <span style={{ fontSize: 11, color: '#9397ab' }}>{w.label}</span>
                 <span style={{ flex: 1 }} />
                 <span style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', color: LEVEL_COLOR[w.level] }}>
-                  {headline(w).value}
+                  {usageHeadline(w).value}
                 </span>
-                <span style={{ fontSize: 10, color: '#595d6c' }}>{headline(w).suffix}</span>
+                <span style={{ fontSize: 10, color: '#595d6c' }}>{usageHeadline(w).suffix}</span>
               </div>
               <div style={{ height: 5, borderRadius: 3, background: '#2b2e3d', overflow: 'hidden' }}>
                 <div

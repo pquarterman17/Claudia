@@ -6,7 +6,7 @@ import { LaunchBar } from './components/LaunchBar';
 import { SessionTile } from './components/SessionTile';
 import { StatusFooter } from './components/StatusFooter';
 import { TopBar } from './components/TopBar';
-import { UsagePanel } from './components/UsagePanel';
+import { UsageDrawer } from './components/UsageDrawer';
 import { CommandPalette } from './components/CommandPalette';
 import { autoRows, DEFAULT_TILE_HEIGHT, gridTemplate, useLayout } from './layout';
 import { buildPaletteActions } from './palette';
@@ -128,7 +128,9 @@ export function App() {
         usageOpen={usageOpen}
         onToggleUsage={() => setUsageOpen((v) => !v)}
       />
-      {usageOpen && usage && <UsagePanel usage={usage} customCeilings={customCeilings} />}
+      {usageOpen && usage && (
+        <UsageDrawer usage={usage} customCeilings={customCeilings} onClose={() => setUsageOpen(false)} />
+      )}
       <LaunchBar
         recentDirectories={recentDirectories}
         defaultMode={defaultPermissionMode}

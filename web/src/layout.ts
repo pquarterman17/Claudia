@@ -43,7 +43,7 @@ export interface Layout {
 const DEFAULT_LAYOUT: Layout = {
   columns: 0,
   sizeMode: 'fit',
-  attentionFirst: true,
+  attentionFirst: false,
   sidebarOpen: typeof window === 'undefined' ? true : defaultSidebarOpen(window.innerWidth),
   sidebarWidth: DEFAULT_SIDEBAR,
   heights: {},
@@ -59,7 +59,7 @@ function load(): Layout {
     return {
       columns: (parsed.columns ?? 0) as ColumnMode,
       sizeMode: parsed.sizeMode === 'scroll' ? 'scroll' : 'fit',
-      attentionFirst: parsed.attentionFirst ?? true,
+      attentionFirst: parsed.attentionFirst ?? false,
       sidebarOpen: parsed.sidebarOpen ?? DEFAULT_LAYOUT.sidebarOpen,
       sidebarWidth: clamp(parsed.sidebarWidth ?? DEFAULT_SIDEBAR, MIN_SIDEBAR, MAX_SIDEBAR),
       heights: parsed.heights ?? {},

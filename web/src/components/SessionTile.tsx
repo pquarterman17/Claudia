@@ -185,7 +185,6 @@ export function SessionTile({
         </span>
         <span
           style={{
-            display: 'none',
             flex: 'none',
             fontSize: 10,
             border: `1px solid ${yolo ? '#8a4f4f' : '#3f424d'}`,
@@ -204,7 +203,7 @@ export function SessionTile({
           <button
             className="btn btn-ghost"
             title="Interrupt this session"
-            style={{ display: 'none', flex: 'none', fontSize: 10, padding: '2px 6px', color: COLORS.warn }}
+            style={{ flex: 'none', fontSize: 10, padding: '2px 6px', color: COLORS.warn }}
             onClick={() => send({ type: 'interrupt', sessionId: session.id })}
           >
             ⏸

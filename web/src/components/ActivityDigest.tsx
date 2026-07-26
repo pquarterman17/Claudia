@@ -1,4 +1,5 @@
 import type { FeedStep, SessionSummary } from '@claudia/shared';
+import { accentFor } from '../accent';
 import { elapsed, fmtCost, fmtModel, fmtTokens } from '../format';
 import { COLORS, statusOf } from '../status';
 
@@ -55,8 +56,10 @@ export function ActivityDigest({ sessions, feeds, now }: Props) {
                 textAlign: 'left',
                 cursor: 'pointer',
                 border: 0,
+                borderLeft: `2px solid ${accentFor(session.id)}`,
                 background: 'transparent',
                 padding: 0,
+                paddingLeft: 6,
                 fontFamily: 'var(--font-body)',
               }}
             >
@@ -80,7 +83,7 @@ export function ActivityDigest({ sessions, feeds, now }: Props) {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {session.name}
+                  {session.title ?? session.name}
                 </span>
                 <span style={{ flex: 1 }} />
                 <span style={{ fontSize: 9.5, color: '#75798c' }}>{fmtModel(session.model)}</span>

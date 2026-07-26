@@ -200,6 +200,9 @@ export class Gateway {
       case 'remove_session':
         this.manager.remove(cmd.sessionId);
         return;
+      case 'rename_session':
+        this.manager.get(cmd.sessionId)?.rename(cmd.title);
+        return;
       case 'set_permission_mode':
         void this.manager.get(cmd.sessionId)?.setPermissionMode(cmd.mode);
         return;

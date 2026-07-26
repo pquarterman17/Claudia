@@ -1,5 +1,6 @@
 import type { FeedStep, SessionSummary } from '@claudia/shared';
 import { useRef, useState } from 'react';
+import { accentFor } from '../accent';
 import { elapsed, fmtCost, fmtModel, fmtTokens } from '../format';
 import { send } from '../store';
 import { COLORS, statusOf } from '../status';
@@ -39,8 +40,15 @@ export function SessionTile({ session, steps, draft: streaming, now, index, focu
   };
 
   const [draft, setDraft] = useState('');
+  const [renaming, setRenaming] = useState(false);
   const status = statusOf(session.state);
   const yolo = session.permissionMode === 'bypassPermissions';
+  const accent = accentFor(session.id);
+
+  const submitRename = (value: string) => {
+    send({ type: 'rename_session', sessionId: session.id, title: value });
+    setRenaming(false);
+  };
 
   const submit = () => {
     const text = draft.trim();
@@ -66,13 +74,23 @@ export function SessionTile({ session, steps, draft: streaming, now, index, focu
         ...(height === undefined ? { minHeight: 0 } : { height }),
         ...(yolo ? { borderColor: '#5c3b3b', boxShadow: 'inset 0 2px 0 #8a4f4f' } : {}),
         ...(focused ? { outline: '1px solid #796cbf', outlineOffset: 2 } : {}),
+        borderLeft: `3px solid ${accent}`,
       }}
     >
       <div className="tile-head">
         {index < 9 && (
           <span
             title={`jump with the modifier and ${index + 1}`}
-            style={{ flex: 'none', fontSize: 9, color: '#4f5364', fontVariantNumeric: 'tabular-nums' }}
+            style={{
+              flex: 'none',
+              fontSize: 9,
+              color: '#14151b',
+              fontWeight: 600,
+              background: accent,
+              borderRadius: 3,
+              padding: '0 3px',
+              fontVariantNumeric: 'tabular-nums',
+            }}
           >
             {index + 1}
           </span>
@@ -87,7 +105,46 @@ export function SessionTile({ session, steps, draft: streaming, now, index, focu
             animation: status.pulse ? 'claudia-pulse 1.6s ease-in-out infinite' : 'none',
           }}
         />
-        <span style={{ flex: 'none', fontWeight: 500, fontSize: 13, letterSpacing: '-.01em' }}>{session.name}</span>
+        {renaming ? (
+          <input
+            autoFocus
+            defaultValue={session.title ?? ''}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                submitRename((e.target as HTMLInputElement).value);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setRenaming(false);
+              }
+            }}
+            onBlur={() => setRenaming(false)}
+            style={{
+              flex: 'none',
+              width: 130,
+              fontFamily: 'var(--font-body)',
+              fontWeight: 500,
+              fontSize: 13,
+              letterSpacing: '-.01em',
+              color: '#e4e7f5',
+              background: '#12131a',
+              border: '1px solid #3f424d',
+              borderRadius: 4,
+              padding: '0 4px',
+            }}
+          />
+        ) : (
+          <span
+            onClick={() => setRenaming(true)}
+            title="Click to rename this session"
+            style={{ flex: 'none', fontWeight: 500, fontSize: 13, letterSpacing: '-.01em', cursor: 'pointer' }}
+          >
+            {session.title ?? session.name}
+            {session.title && (
+              <span style={{ fontSize: 10, color: '#75798c', marginLeft: 5, fontWeight: 400 }}>{session.name}</span>
+            )}
+          </span>
+        )}
         <span
           className="mono"
           title={session.cwd}

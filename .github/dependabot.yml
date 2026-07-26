@@ -1,0 +1,11 @@
+# Monthly, not weekly: this is a personal tool and PR noise costs more than
+# being a few weeks behind. Security advisories still arrive immediately.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      all-minor-and-patch:
+        update-types: ["minor", "patch"]

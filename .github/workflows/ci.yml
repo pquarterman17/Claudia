@@ -1,0 +1,30 @@
+# Typecheck, tests and a production build on every push and PR.
+#
+# Ubuntu is in the matrix deliberately: development happens on Windows, so CI
+# is the only thing continuously proving the POSIX paths. macOS is left out —
+# GitHub bills macOS minutes at 10x on private repos, and the mac-specific code
+# is a thin per-OS command table that Ubuntu already exercises structurally.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc -b shared server web
+      - run: npm test
+      - run: npm run build

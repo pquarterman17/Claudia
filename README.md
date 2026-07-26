@@ -2,160 +2,167 @@
 
 One window over every Claude Code session running in parallel.
 
-Sessions are **owned** by a local Node server via the Claude Agent SDK, not scraped from
+Sessions are **owned** by a local Node server via the
+[Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/typescript.md), not scraped from
 terminals. That means state is structured, not guessed: a permission prompt is a parked
-`canUseTool` promise, and clicking Approve in the browser resolves it.
+`canUseTool` promise, and clicking Approve in the browser resolves it. A React UI shows every
+session as a tile — live activity feed, nested sub-agents, approvals, questions as clickable
+pickers — with a global sidebar for bulk control and a finish chain that can notify you, save
+learnings to memory, or shut the machine down once everything settles.
 
-## Run it
+Everything runs locally on `127.0.0.1`. Nothing is exposed to the network.
 
-Double-click **`start-claudia.bat`** on Windows or **`start-claudia.command`** on macOS. Each
-installs dependencies on first run, builds the UI if sources changed, and opens the browser the
-moment it answers — about **2 seconds** when the build is current. If Claudia is already
-running it opens the existing instance rather than failing on the port.
+## Prerequisites
 
-Everything is served from **one process on `127.0.0.1:4317`**. Pick a working directory (paste
-a path or hit Browse), optionally type a first prompt, choose a permission mode, hit Launch. A
-session launched with no prompt opens idle, costs nothing, and waits for you to type.
+| Requirement | Notes |
+| --- | --- |
+| **Node.js ≥ 20.11** | Uses `import.meta.dirname`; Node 22/24 recommended |
+| **npm** | Ships with Node; the repo uses npm workspaces |
+| **Claude Code, installed and signed in** | Claudia launches sessions through the Agent SDK, which uses your existing Claude Code auth and plan — there is no separate API key |
+| A browser | Anything modern; Firefox and Chrome are what it's been used with |
 
-For development, two processes with hot reload:
+Sessions inherit your `~/.claude/settings.json` (permission allowlists etc.), so a command that
+auto-approves in your terminal auto-approves here.
+
+## Quick start
+
+| Platform | Do this |
+| --- | --- |
+| **Windows** | Double-click `start-claudia.bat` |
+| **macOS** | Double-click `start-claudia.command` (first time: right-click → Open if Gatekeeper objects) |
+| **Linux** | `./start-claudia.command` (it is a plain bash script) |
+
+Each launcher installs dependencies on first run, rebuilds the UI only if sources changed, and
+opens the browser the moment the app answers — about **2 seconds** when the build is current.
+If Claudia is already running it opens the existing instance instead of failing on the port.
+
+Everything is served by **one process on `http://127.0.0.1:4317`**.
+
+By hand, equivalently:
 
 ```bash
 npm install
-npm run dev     # server on 4317, Vite UI on 4318
+npm start        # build UI if stale, then serve app + API on 4317
 ```
 
-## Layout
+Then: pick a working directory (paste a path, use a template chip, or hit **Browse** —
+ctrl-click several folders to start a session in each), optionally type a first prompt, choose
+a permission mode, **Launch**. A session launched with no prompt opens idle, costs nothing, and
+waits for you.
+
+## Platform support
+
+| | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Core app (sessions, approvals, questions, usage) | ✅ verified | ✅ expected — same Node code | ✅ expected — same Node code |
+| Folder picker | ✅ modern Explorer dialog | ✅ native `choose folder` | needs `zenity` installed |
+| Finish actions (notify / sleep / shutdown / script) | ✅ verified | wired (`osascript`, `pmset`, `shutdown -h`) | wired (`notify-send`, `xset`, `shutdown -h`) |
+| Keyboard modifier | Ctrl | ⌘ (auto-detected) | Ctrl |
+
+**Honesty note:** development and end-to-end verification have all happened on Windows. The
+macOS and Linux paths are unit-tested and CI runs the full suite on Ubuntu, but no human has
+yet clicked through the app on either. The per-OS commands live in one table
+([finish-actions.ts](server/src/finish-actions.ts)) and one picker script per platform
+([folder-picker.ts](server/src/folder-picker.ts)) — if something misbehaves on your OS, it is
+almost certainly in one of those two files.
+
+Wrap-up script location: `~/bin/wrapup.sh` (macOS/Linux) or `C:\bin\wrapup.ps1` (Windows).
+
+## Using it
+
+- **Board** — every session is a tile: status, working dir, model chip
+  ("Opus 5", "Haiku 4.5", "Opus 5 1M"), live feed of reads/edits/commands with real durations
+  and ✓/✕ outcomes, nested sub-agent rows with live token counts. Fill mode divides the window
+  (2 sessions → halves, 4 → quadrants); Scroll mode gives fixed-height tiles you can drag-resize.
+- **Sidebar** — a "Right now" digest (one line per session, things needing you sorted first)
+  plus global control: the finish chain, grace periods, bulk approve/interrupt.
+- **Approvals & questions** — permission prompts show Approve/Deny inline;
+  `AskUserQuestion` renders as a real picker with clickable options and a free-text fallback.
+  A session that asked and is waiting counts as "needs you", not idle.
+- **Finish chain** — stack actions that run in order once every session settles:
+  Notify → Save learnings (Claude updates its memory files) → wrap-up script → sleep → shutdown.
+  A failed step stops the chain; anything after it is skipped. Editing the chain disarms it.
+  Destructive steps need a second confirming click, re-checked server-side.
+- **Usage** — read from Claude Code's own local logs (covers your terminal sessions too).
+  No API exposes real plan limits, so bars compare against a **typical day of your own history**
+  by default, or ceilings you enter yourself under the Custom tier. Past the reference it shows
+  the multiple ("14× of typical"), not a useless "0% left".
+- **Notifications** — turn on **notify** in the header: desktop notification when a session
+  blocks on approval, errors, or asks a question. Fires only on the transition, stays quiet
+  while the window is focused.
+- **Templates** — save a cwd + prompt + permission mode; relaunch from a chip.
+- **Queued prompts** — type the next instruction mid-turn; the tile shows "N queued".
+- **Closing the tab stops sessions** after a grace period (default 30 s; 0 disables). Pages
+  heartbeat, so a reload never kills work but a genuinely closed tab does — even when the
+  browser keeps the socket alive in its back/forward cache.
+
+### Shortcuts
+
+`Ctrl/⌘ K` command palette · `Ctrl/⌘ 1–9` jump to a session · `Ctrl/⌘ ⏎` approve the
+longest-waiting approval · `Ctrl/⌘ U` usage panel. The modifier follows the host OS.
+
+## Development
+
+```bash
+npm run dev        # two processes with hot reload: server on 4317, Vite UI on 4318
+npm run typecheck  # tsc -b across all three workspaces
+npm test           # server + web vitest suites
+npm run build      # production UI bundle into web/dist
+```
 
 | Path | Role |
 | --- | --- |
-| `shared/src/index.ts` | WS protocol types — the server/UI contract |
-| `server/src/session.ts` | One SDK `query()` per session; owns state |
-| `server/src/message-router.ts` | Pure SDK-message → state/feed mapping (unit tested) |
-| `server/src/approval-gate.ts` | Parks `canUseTool` until the UI answers (unit tested) |
-| `server/src/session-manager.ts` | Registry + feed history |
-| `server/src/gateway.ts` | WS fan-out and command dispatch |
-| `server/src/tool-tracker.ts` | Matches tool results to their calls by id (unit tested) |
-| `server/src/sub-agent-tracker.ts` | Merges sub-agent progress into its parent step (unit tested) |
-| `server/src/question-parser.ts` | Reads AskUserQuestion into a picker (unit tested) |
-| `server/src/trigger-engine.ts` | Fires a finish action once every session settles (unit tested) |
-| `server/src/finish-actions.ts` | Per-OS command table for those actions |
-| `server/src/folder-picker.ts` | Native folder dialog + path cleaning (unit tested) |
-| `server/src/usage-reader.ts` | Incremental streaming reader for Claude Code's JSONL logs |
-| `server/src/usage-store.ts` | Bucketed rolling usage; window maths (unit tested) |
-| `server/src/plan-limits.ts` | Token weighting and the self-derived baseline (unit tested) |
-| `server/src/settings-store.ts` | Preferences on disk, atomically written (unit tested) |
-| `web/src/shortcuts.ts` | Keyboard model, platform-aware (unit tested) |
-| `web/src/components/` | One component per job — tile, feed, approval, launch, topbar, controller, usage |
-| `web/src/nocturne.css` | The design tokens everything is styled from |
-| `plans/MAIN_PLAN.md` | Tiered plan; the authoritative work list |
+| `shared/src/index.ts` | WS protocol types — the single server/UI contract |
+| `server/src/session.ts` | One SDK `query()` per session; owns the state machine |
+| `server/src/message-router.ts` | Pure SDK-message → state/feed mapping |
+| `server/src/approval-gate.ts` | Parks `canUseTool` until the UI answers |
+| `server/src/question-parser.ts` | Reads `AskUserQuestion` into a picker |
+| `server/src/sub-agent-tracker.ts` | Merges sub-agent progress into its parent step |
+| `server/src/trigger-engine.ts` | The finish chain: arm → countdown → run in order |
+| `server/src/finish-actions.ts` | Per-OS command table |
+| `server/src/usage-reader.ts` | Incremental streaming reader for `~/.claude` JSONL logs |
+| `server/src/plan-limits.ts` | Token weighting + the self-derived usage baseline |
+| `server/src/settings-store.ts` | Preferences, atomically written to `~/.claudia/settings.json` |
+| `web/src/store.ts` | One WS connection; immutable snapshots; heartbeat |
+| `web/src/palette.ts`, `shortcuts.ts`, `layout.ts` | Pure UI logic, unit tested |
+| `web/src/components/` | One component per job |
+| `plans/MAIN_PLAN.md` | The authoritative work list |
 
-## Conventions
+### Conventions
 
-- **Size ratchet**: every `.ts`/`.tsx` file stays under 400 lines
-  (`server/test/repo-integrity.test.ts`). Never raise it — split the file instead.
-- **State comes from SDK events**, never from parsing output text.
-- **Usage comes only from `result.modelUsage`.** Assistant-message `usage` is a placeholder
-  (measured 1 against a real 306) and its cache-read counts double-count within a turn.
-  `modelUsage` is cumulative per session, so assign it — never add.
-- Sessions inherit your `~/.claude/settings.json` allowlist, so the same commands
-  auto-approve here as in your terminal. Everything else surfaces as an approval.
+- **Size ratchet** — every source `.ts`/`.tsx` stays under 400 lines, enforced by
+  `server/test/repo-integrity.test.ts`. Never raise it; split the file.
+- **State comes from structured SDK events**, never from parsing prose.
+- **Usage numbers come only from `result.modelUsage`** — assistant-message usage is a
+  placeholder (measured 1 vs a real 306) and cache reads double-count within a turn.
+- Anything decision-shaped lives in a pure module with unit tests; I/O classes stay thin.
+- Commits: `feat(scope): imperative lowercase`.
 
-## Sub-agents
-
-A `Task` call is otherwise a single line that sits "running" for minutes telling you nothing.
-Sub-agents now nest under the step that spawned them, showing the agent type, what it is doing
-right now, the tool it last used, and its running token count and duration. The sidebar digest
-names the sub-agent's work rather than just "Agent".
-
-Tokens are shown because the SDK reports them per sub-agent; **cost is not broken out** and is
-deliberately not estimated. One measured sub-agent turn came to 58k tokens, so this is real
-spend that was previously invisible until the turn ended.
-
-## Notifications
-
-Turn on **notify** in the header to get a desktop notification when a session needs you —
-blocked on approval, or errored. It fires only on the transition into that state, and stays
-quiet while the window is focused, since there is no point interrupting you with something
-already on screen.
-
-## Closing the tab stops the sessions
-
-A session with no window on it is invisible work that still spends tokens — the exact thing
-this app exists to prevent. So when the last live browser goes away, sessions are stopped
-after a grace period (30s by default, adjustable in the controller; set it to 0 to leave them
-running). A page reload is well inside the grace period, so refreshing never kills work.
-
-"Live" means the page is actually running, not merely that a socket is open. Pages send a
-heartbeat, and a socket that stops beating counts as gone. This matters in practice: Firefox
-keeps a navigated-away page **and its WebSocket** alive in the back/forward cache, so going by
-socket state alone meant sessions were never stopped at all.
-
-## Usage
-
-The panel reads Claude Code's own session logs, so it counts your terminal sessions too — not
-just the ones Claudia launched. It resumes each log from the last byte offset it read, so the
-first pass over ~80 MB takes about half a second and every later one about 20 ms.
-
-**There is no API for real plan limits.** No CLI flag, no SDK method, no documented endpoint;
-even `/usage` computes from local history. So by default the bars compare against *a typical
-day of your own* rather than an invented ceiling — self-calibrating, and honest about what it
-knows. Past that reference it shows the multiple ("14× of typical") instead of "0% left",
-because that distinguishes slightly-busy from unusually-busy. Tier buttons are available as an
-override and are labelled as estimates.
-
-Cache reads are weighted at 10%, as billing weights them; counted raw they dwarf everything
-else and any total becomes meaningless.
-
-## Shortcuts
-
-`Ctrl/⌘ 1–9` jump to a session · `Ctrl/⌘ ⏎` approve the longest-waiting approval ·
-`Ctrl/⌘ U` toggle usage. The modifier follows the host the server reports.
-
-## The finish chain
-
-Pick what happens when every session settles. Actions stack: click them in the order you want
-them to run, and each step starts only once the previous one reports success.
-
-    1. Save learnings  →  2. Wrap-up script  →  3. Shut down host
-
-**A failure stops the chain.** Anything after a failed step is marked skipped and never runs —
-that ordering is the safety property. If a push fails, the shutdown behind it must not fire and
-quietly lose the work.
-
-Any session that needs you — awaiting approval, or errored — **holds** the trigger and cancels
-an in-flight countdown; it restarts from full when the session clears, never from where it left
-off. An empty app never fires. A chain containing a destructive step needs a second confirming
-click before it can be armed, and the server re-checks that rather than trusting the UI. Editing
-the chain always disarms, so a countdown can never carry over onto different steps. Once the
-chain starts it runs to completion — a half-run chain is worse than a finished one.
-
-Available: **Notify me** · **Save learnings** (Claude reviews the work and updates its memory
-files) · **Wrap-up script** · **Sleep displays** · **Shut down host**. *Commit + push* is
-deliberately disabled until there are rules for which repos qualify and what to do with a dirty
-tree — better a struck-through button than one that silently does nothing.
-
-## Checks
+### End-to-end checks (server must be running)
 
 ```bash
-npm run typecheck && npm test
+node scripts/smoke.mjs "C:/path/to/repo" "Run bash: docker --version"   # approval round-trip
+node scripts/chain-test.mjs                                             # full finish chain
+npx tsx scripts/memory-test.mjs "C:/path/to/repo"                       # Save-learnings action (~2 min)
 ```
 
-End-to-end against a live session (server must be running):
+Use forward slashes in these paths — most shells eat backslashes.
 
-```bash
-node scripts/smoke.mjs "C:/path/to/repo" "Run bash: docker --version"
-```
+## Troubleshooting
 
-Drive a whole finish chain — builds it, arms it, launches a session, reports each step:
+- **"Not connected" in the header** — the server died or the port is squatted. Check
+  `http://127.0.0.1:4317/health`; `live` counts sessions still holding a process.
+- **Port 4317 already in use** — a previous instance is still up (the launcher would have
+  reused it). Find it: `netstat -ano | findstr 4317` (Windows) / `lsof -i :4317` (macOS/Linux).
+- **Browse does nothing on Linux** — install `zenity`.
+- **Every tool call asks for approval** — that's `default` mode doing its job; launch with
+  `Auto` (the default) or toggle "skip perms" on the tile. Loosening a *running* session
+  restarts it under the hood with the conversation preserved — that's an SDK restriction, the
+  same one `claude` has in a terminal.
+- **The usage bars look wrong** — they are estimates from local logs, by design; other
+  machines' usage is invisible. See the note inside the panel.
 
-```bash
-node scripts/chain-test.mjs
-```
+## Status
 
-The memory action on its own, since it is the slow one (~2 minutes):
-
-```bash
-npx tsx scripts/memory-test.mjs "C:/path/to/repo"
-```
-
-Use forward slashes in paths for these — backslashes get eaten by most shells.
+Personal tool, built fast and verified as it grew: 258 unit tests plus scripted live
+end-to-end checks. Windows is the daily driver; macOS/Linux passes welcome. Not yet public.

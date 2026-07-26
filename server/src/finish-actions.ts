@@ -26,6 +26,11 @@ const NOTIFY_MAC = (body: string): Command => ({
   args: ['-e', `display notification "${body}" with title "Claudia"`],
 });
 
+const NOTIFY_LINUX = (body: string): Command => ({
+  file: 'notify-send',
+  args: ['Claudia', body],
+});
+
 const NOTIFY_WIN = (body: string): Command => ({
   file: 'powershell.exe',
   args: [
@@ -43,7 +48,12 @@ export const FINISH_ACTIONS: FinishActionSpec[] = [
     key: 'notify',
     label: 'Notify me',
     destructive: false,
-    command: (p) => (p === 'darwin' ? NOTIFY_MAC('All sessions settled') : NOTIFY_WIN('All sessions settled')),
+    command: (p) =>
+      p === 'darwin'
+        ? NOTIFY_MAC('All sessions settled')
+        : p === 'linux'
+          ? NOTIFY_LINUX('All sessions settled')
+          : NOTIFY_WIN('All sessions settled'),
   },
   {
     key: 'memory',
@@ -67,14 +77,16 @@ export const FINISH_ACTIONS: FinishActionSpec[] = [
     command: (p) =>
       p === 'darwin'
         ? { file: 'pmset', args: ['displaysleepnow'] }
-        : { file: 'rundll32.exe', args: ['user32.dll,LockWorkStation'] },
+        : p === 'linux'
+          ? { file: 'xset', args: ['dpms', 'force', 'off'] }
+          : { file: 'rundll32.exe', args: ['user32.dll,LockWorkStation'] },
   },
   {
     key: 'shutdown',
     label: 'Shut down host',
     destructive: true,
     command: (p) =>
-      p === 'darwin'
+      p === 'darwin' || p === 'linux'
         ? { file: 'shutdown', args: ['-h', 'now'] }
         : { file: 'shutdown.exe', args: ['/s', '/t', '0'] },
   },
@@ -83,9 +95,9 @@ export const FINISH_ACTIONS: FinishActionSpec[] = [
     label: 'Run wrap-up script',
     destructive: false,
     command: (p) =>
-      p === 'darwin'
-        ? { file: `${homedir()}/bin/wrapup.sh`, args: [] }
-        : { file: 'powershell.exe', args: ['-NoProfile', '-File', 'C:\\bin\\wrapup.ps1'] },
+      p === 'win32'
+        ? { file: 'powershell.exe', args: ['-NoProfile', '-File', 'C:\\bin\\wrapup.ps1'] }
+        : { file: `${homedir()}/bin/wrapup.sh`, args: [] },
   },
 ];
 

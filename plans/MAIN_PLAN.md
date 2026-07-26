@@ -11,7 +11,7 @@ architecture does not. The Claude Design export that started this is deliberatel
 **Updated:** 2026-07-25
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
-genuinely new work or was deliberately deferred for a decision. 162 tests, clean typecheck.
+genuinely new work or was deliberately deferred for a decision. 220 tests, clean typecheck.
 Everything so far was built and verified on Windows only — see #13.
 
 ---
@@ -250,6 +250,28 @@ Running it for real, as the owner would, surfaced things no unit test did:
 - Four orphaned dev-server process trees had accumulated from manual restarts; `tsx watch`
   cannot rebind a held port, so each failed silently and left its npm wrapper alive. The
   launcher's already-running check exists for this.
+
+- ~~**Sub-agent nesting**~~ (2026-07-25) — sub-agents appear as indented rows under the Task
+  step, with agent type, live description, last tool, tokens and duration. No inference needed:
+  the SDK tags progress with the spawning `tool_use_id` and reports the rest on its own channel.
+  Cost is *not* broken out — the payload doesn't carry it, and inventing one would repeat the
+  mistake the usage panel already corrected. The merge rule is the subtle part and is tested:
+  progress carries usage but no final status, completion carries status but no usage.
+- ~~**Clickable questions**~~ (2026-07-25) — `AskUserQuestion` arrives through `canUseTool` but
+  is not a permission: the answer rides back as `updatedInput.answers`, keyed by question text.
+  Rendered as a picker with the real options plus a free-text fallback. **Correction to an
+  earlier claim in this file's history:** the tool *is* available in SDK sessions; a probe that
+  said otherwise had failed to load it as a deferred tool.
+- ~~**Waiting-on-you state**~~ (2026-07-25) — from `post_turn_summary`'s `needs_action`, so it is
+  structured rather than guessed from prose. This also closed a safety hole: a session waiting on
+  an answer reports `idle`, so the finish chain would have shut the machine down mid-conversation.
+- ~~**Live permission switching**~~ (2026-07-25) — was silently broken. The SDK refuses to loosen
+  in place ("not launched with --dangerously-skip-permissions"), exactly as a terminal does, and
+  the toggle swallowed that error then reported success. Tightening applies live; loosening
+  relaunches with `resume`, which preserves the whole conversation.
+- ~~**Model visibility, fill-to-window board, multi-folder launch**~~ (2026-07-25) — chips read
+  "Opus 5" / "Haiku 4.5" / "Opus 5 1M" instead of "claude"; Fill mode divides the window (2 →
+  halves, 4 → quadrants); ctrl-clicking repos in Browse starts a session in each.
 
 ### Resolved decisions (2026-07-25, round 2)
 

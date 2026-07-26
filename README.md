@@ -128,6 +128,7 @@ npm run build      # production UI bundle into web/dist
 | `web/src/store.ts` | One WS connection; immutable snapshots; heartbeat |
 | `web/src/palette.ts`, `shortcuts.ts`, `layout.ts` | Pure UI logic, unit tested |
 | `web/src/components/` | One component per job |
+| `server/test/fake-query.ts` | Fake SDK query: drives session lifecycle vectors deterministically |
 | `plans/MAIN_PLAN.md` | The authoritative work list |
 
 ### Conventions

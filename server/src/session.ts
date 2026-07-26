@@ -306,6 +306,9 @@ export class ClaudiaSession {
   private async relaunchWith(mode: PermissionLaunchMode): Promise<void> {
     const resumeId = this.claudeSessionId;
     this.gate.abandon('Restarting with new permissions');
+    // A half-streamed draft belongs to the old query; without this it lingers
+    // as ghost text until the next complete message happens to clear it.
+    if (this.draft.clear()) this.cb.onDraft(this.id, null);
     abandonRunningSteps(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), 'session restarted');
     this.queryGen += 1; // everything belonging to the old query is now inert
     try {

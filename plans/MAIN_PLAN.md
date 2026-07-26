@@ -97,6 +97,15 @@ desktop and a MacBook at different times, so the app must run natively on both �
 
 ## Completed
 
+- ~~**Session lifecycle vector suite**~~ (2026-07-26) — 18 deterministic vectors driving
+  ClaudiaSession through a fake SDK query injected at the query-factory seam: launch shapes,
+  every permission-toggle path including the exact shipped race (superseded loop terminating
+  late), input-queue carryover, termination, streaming, turn queue. Two vectors failed on
+  first run: one exposed a real live bug (a relaunch left the half-streamed draft as ghost
+  text — fixed), one exposed wrong fake semantics (corrected against the live repro's observed
+  behaviour). This suite exists because the toggle bug shipped with every unit test green —
+  the failure lived in orchestration nothing exercised.
+
 - ~~**GitHub + Linux support**~~ (2026-07-26) — private repo at pquarterman17/Claudia with CI
   (Ubuntu + Windows: typecheck, both suites, production build), monthly grouped Dependabot,
   vulnerability alerts. First-ever Linux run of the suite passed. Linux finish actions were

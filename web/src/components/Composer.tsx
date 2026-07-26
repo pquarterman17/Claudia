@@ -268,20 +268,35 @@ export function Composer({ session }: Props) {
             {modelChoices?.length === 0 && (
               <div style={{ padding: '6px 9px', fontSize: 10.5, color: '#75798c' }}>no models reported</div>
             )}
-            {modelChoices?.map((m) => (
-              <div
-                key={m.value}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  send({ type: 'set_model', sessionId: session.id, model: m.value });
-                  setModelOpen(false);
-                }}
-                style={{ padding: '5px 9px', cursor: 'pointer', borderBottom: '1px solid #26293a' }}
-              >
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#e4e7f5' }}>{m.displayName}</div>
-                {m.description && <div style={{ fontSize: 9.5, color: '#75798c' }}>{m.description}</div>}
-              </div>
-            ))}
+            {modelChoices?.map((m) => {
+              // Marks the pick the moment it is made. Without this the menu
+              // looked inert, because a switch does not reach the chip until
+              // the next turn reports which model actually ran.
+              const chosen = session.selectedModel === m.value;
+              return (
+                <div
+                  key={m.value}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    send({ type: 'set_model', sessionId: session.id, model: m.value });
+                    setModelOpen(false);
+                  }}
+                  style={{
+                    padding: '5px 9px',
+                    cursor: 'pointer',
+                    borderBottom: '1px solid #26293a',
+                    background: chosen ? '#2b2741' : 'transparent',
+                  }}
+                >
+                  <div style={{ fontSize: 11, fontWeight: 600, color: chosen ? '#d2cefd' : '#e4e7f5' }}>
+                    {chosen ? '✓ ' : ''}
+                    {m.displayName}
+                    {chosen && <span style={{ color: COLORS.warn, fontWeight: 400 }}> · next turn</span>}
+                  </div>
+                  {m.description && <div style={{ fontSize: 9.5, color: '#75798c' }}>{m.description}</div>}
+                </div>
+              );
+            })}
           </div>
         )}
       </span>

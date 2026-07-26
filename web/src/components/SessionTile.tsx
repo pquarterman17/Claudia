@@ -194,9 +194,18 @@ export function SessionTile({
             fontVariantNumeric: 'tabular-nums',
             color: yolo ? '#e0a0a0' : '#b5abfc',
           }}
-          title={`${session.model ?? 'model unknown'} · ${session.permissionMode}`}
+          title={
+            session.selectedModel
+              ? `Running ${session.model ?? 'unknown'} · switching to ${session.selectedModel} on the next turn`
+              : `${session.model ?? 'model unknown'} · ${session.permissionMode}`
+          }
         >
           {fmtModel(session.model)}
+          {/* A switch only takes effect next turn, so show it as pending rather
+              than pretending the running turn changed model. */}
+          {session.selectedModel && (
+            <span style={{ color: COLORS.warn }}> → {fmtModel(session.selectedModel)}</span>
+          )}
           {yolo ? ' ⚠' : ''}
         </span>
         {(session.state === 'working' || session.state === 'starting') && (

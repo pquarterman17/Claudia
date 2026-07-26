@@ -1,6 +1,7 @@
 import type { FeedStep, ModelUsage, NeedsAction, SessionState, SubAgentRun, TranscriptItem } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import { errorStep, infoStep, resultStep, stepFromText, stepFromToolUse } from './feed.js';
+import { mergeCommands } from './parity-controls.js';
 
 /**
  * What one SDK message means for a session: feed steps, state, and — on result
@@ -131,7 +132,7 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
     const sessionId = typeof message['session_id'] === 'string' ? message['session_id'] : undefined;
     const rawCommands = message['slash_commands'];
     const slashCommands = Array.isArray(rawCommands)
-      ? rawCommands.filter((c): c is string => typeof c === 'string')
+      ? mergeCommands(rawCommands.filter((c): c is string => typeof c === 'string'))
       : undefined;
     return {
       steps: [infoStep('Session started', [model, message['cwd']].filter(Boolean).join(' · '))],

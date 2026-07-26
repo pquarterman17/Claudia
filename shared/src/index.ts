@@ -115,6 +115,8 @@ export interface SessionSummary {
   title?: string;
   cwd: string;
   model?: string;
+  /** A model the user picked that has not run yet — the SDK applies it next turn. */
+  selectedModel?: string;
   permissionMode: PermissionLaunchMode;
   state: SessionState;
   startedAt: number;

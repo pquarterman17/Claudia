@@ -19,7 +19,7 @@ import { DraftBuffer } from './draft-buffer.js';
 import { approvalStep, errorStep, infoStep, summarizeToolInput } from './feed.js';
 import * as gateActions from './gate-actions.js';
 import { routeMessage } from './message-router.js';
-import { autoTitle, listModels, type ParityQuery } from './parity-controls.js';
+import { autoTitle, listModels, modelMatches, type ParityQuery } from './parity-controls.js';
 import { TranscriptLog } from './transcript-log.js';
 import { abandonRunningSteps, patchSubAgent } from './step-patcher.js';
 import { createSessionQuery, userMessage } from './query-factory.js';
@@ -61,6 +61,8 @@ export class ClaudiaSession {
   private costUsd = 0;
   private modelUsage: ModelUsage[] = [];
   private model: string | undefined;
+  /** The user's explicit pick, held until a turn confirms it took effect. */
+  private selectedModel: string | undefined;
   private claudeSessionId: string | undefined;
   private errorMessage: string | undefined;
   private needsAction: NeedsAction | undefined;
@@ -90,6 +92,7 @@ export class ClaudiaSession {
       title: this.customTitle ?? this.generatedTitle,
       cwd: this.opts.cwd,
       model: this.model,
+      selectedModel: this.selectedModel,
       permissionMode: this.opts.permissionMode,
       state: this.state,
       startedAt: this.startedAt,
@@ -187,7 +190,11 @@ export class ClaudiaSession {
     }
 
     if (routed.claudeSessionId) this.claudeSessionId = routed.claudeSessionId;
-    if (routed.model) this.model = routed.model;
+    if (routed.model) {
+      this.model = routed.model;
+      // The pending choice has landed; stop advertising it as pending.
+      if (modelMatches(this.selectedModel, routed.model)) this.selectedModel = undefined;
+    }
     if (routed.slashCommands) this.cb.onCommands(this.id, routed.slashCommands);
     // Cost and usage are cumulative in the SDK's result message — assign, never add.
     // A result also ends the current turn, so the next queued prompt (if any)
@@ -277,8 +284,12 @@ export class ClaudiaSession {
   async switchModel(model: string): Promise<void> {
     const q = this.q as ParityQuery | null;
     await q?.setModel?.(model).catch(() => undefined);
-    this.model = model;
-    this.cb.onFeed(this.id, infoStep('Model switched', model));
+    // Record the choice rather than overwriting `model`: the SDK applies a
+    // switch from the next turn, and `model` is what a turn actually ran on. A
+    // turn already in flight would otherwise report its own model and look like
+    // the switch had been ignored.
+    this.selectedModel = model;
+    this.cb.onFeed(this.id, infoStep('Model switched', `${model} — from the next turn`));
     this.cb.onUpdate(this.summary());
   }
 

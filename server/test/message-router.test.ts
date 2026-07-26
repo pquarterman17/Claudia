@@ -27,7 +27,10 @@ describe('routeMessage', () => {
       },
       T0,
     );
-    expect(r.slashCommands).toEqual(['compact', 'clear', 'my-skill']);
+    // Advertised commands are all kept; the CLI's unadvertised-but-working
+    // built-ins are merged in on top (see mergeCommands).
+    expect(r.slashCommands).toEqual(expect.arrayContaining(['compact', 'clear', 'my-skill']));
+    expect(r.slashCommands).toContain('cost');
   });
 
   it('system/init omits slashCommands when absent', () => {
@@ -50,7 +53,10 @@ describe('routeMessage', () => {
       },
       T0,
     );
-    expect(r.slashCommands).toEqual(['compact', 'clear']);
+    expect(r.slashCommands).toEqual(expect.arrayContaining(['compact', 'clear']));
+    // The point of this case: nothing non-string survives the filter.
+    expect(r.slashCommands?.every((c) => typeof c === 'string')).toBe(true);
+    expect(r.slashCommands).not.toContain('nope');
   });
 
   it('assistant tool_use produces a feed step classified by tool', () => {

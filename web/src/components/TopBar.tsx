@@ -1,4 +1,6 @@
 import type { SessionSummary, UsageSnapshot } from '@claudia/shared';
+import { useState } from 'react';
+import { canNotify, notificationsEnabled, requestPermission, setNotificationsEnabled } from '../notifications';
 import { fmtCost, fmtTokens } from '../format';
 import { COLORS } from '../status';
 
@@ -91,6 +93,7 @@ export function TopBar({ sessions, connected, usage, usageOpen, onToggleUsage }:
             </span>
           </span>
         </button>
+        <NotifyToggle />
         <span
           title={connected ? 'connected to server' : 'reconnecting…'}
           style={{
@@ -125,6 +128,57 @@ function tightColor(usage?: UsageSnapshot): string {
   const w = tightest(usage);
   if (!w) return COLORS.mute;
   return w.level === 'critical' ? COLORS.err : w.level === 'low' ? COLORS.warn : '#d2cefd';
+}
+
+/**
+ * Desktop-notification switch. Permission can only be requested from a user
+ * gesture, so turning it on is what asks the browser.
+ */
+function NotifyToggle() {
+  const [on, setOn] = useState(() => notificationsEnabled() && canNotify());
+  const [denied, setDenied] = useState(
+    () => typeof Notification !== 'undefined' && Notification.permission === 'denied',
+  );
+
+  const toggle = async () => {
+    if (on) {
+      setNotificationsEnabled(false);
+      setOn(false);
+      return;
+    }
+    const granted = await requestPermission();
+    if (!granted) {
+      setDenied(true);
+      return;
+    }
+    setNotificationsEnabled(true);
+    setOn(true);
+  };
+
+  return (
+    <button
+      onClick={() => void toggle()}
+      title={
+        denied
+          ? 'Your browser has blocked notifications for this site'
+          : on
+            ? 'Notifying when a session needs you — click to turn off'
+            : 'Get notified when a session needs approval or errors'
+      }
+      style={{
+        cursor: denied ? 'not-allowed' : 'pointer',
+        border: `1px solid ${on ? '#796cbf' : '#33364a'}`,
+        background: on ? '#2b2741' : 'transparent',
+        borderRadius: 8,
+        padding: '5px 9px',
+        fontFamily: 'var(--font-body)',
+        fontSize: 11,
+        color: denied ? '#595d6c' : on ? '#d2cefd' : '#9397ab',
+      }}
+    >
+      {denied ? 'notify blocked' : on ? 'notify on' : 'notify off'}
+    </button>
+  );
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

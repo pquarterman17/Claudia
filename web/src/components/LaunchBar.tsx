@@ -1,5 +1,5 @@
 import type { PermissionLaunchMode } from '@claudia/shared';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { onFolderPicked, send } from '../store';
 
 const MODES: Array<{ key: PermissionLaunchMode; label: string; danger?: boolean }> = [
@@ -10,13 +10,21 @@ const MODES: Array<{ key: PermissionLaunchMode; label: string; danger?: boolean 
 
 interface Props {
   recentDirectories: string[];
+  /** Last mode used, remembered server-side so a chosen posture sticks. */
+  defaultMode: PermissionLaunchMode;
 }
 
 /** Launch a new Claudia-owned session: cwd + first prompt + permission mode. */
-export function LaunchBar({ recentDirectories }: Props) {
+export function LaunchBar({ recentDirectories, defaultMode }: Props) {
   const [cwd, setCwd] = useState('');
   const [prompt, setPrompt] = useState('');
-  const [mode, setMode] = useState<PermissionLaunchMode>('default');
+  const [mode, setMode] = useState<PermissionLaunchMode>(defaultMode);
+
+  // Adopt the remembered mode once it arrives, unless already changed by hand.
+  const touched = useRef(false);
+  useEffect(() => {
+    if (!touched.current) setMode(defaultMode);
+  }, [defaultMode]);
   const [browsing, setBrowsing] = useState(false);
 
   // The native dialog runs on the server; its answer arrives over the socket.

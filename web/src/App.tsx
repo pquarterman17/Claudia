@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import type { SessionSummary } from '@claudia/shared';
+import { useEffect, useRef, useState } from 'react';
 import { BoardControls } from './components/BoardControls';
 import { ControlSidebar } from './components/ControlSidebar';
 import { LaunchBar } from './components/LaunchBar';
@@ -7,6 +8,7 @@ import { StatusFooter } from './components/StatusFooter';
 import { TopBar } from './components/TopBar';
 import { UsagePanel } from './components/UsagePanel';
 import { DEFAULT_TILE_HEIGHT, gridTemplate, useLayout } from './layout';
+import { newlyNeedingAttention, notificationsEnabled, notify, stateMap } from './notifications';
 import { oldestPendingApproval, resolveShortcut } from './shortcuts';
 import { send, store, useClaudia } from './store';
 
@@ -22,10 +24,12 @@ export function App() {
     countdownSec,
     platform,
     stopSessionsWhenClosedSec,
+    defaultPermissionMode,
   } = useClaudia();
   const [now, setNow] = useState(() => Date.now());
   const [usageOpen, setUsageOpen] = useState(false);
   const [focused, setFocused] = useState<string | undefined>();
+  const lastStates = useRef(new Map<string, SessionSummary['state']>());
   const { layout, setColumns, setSidebarWidth, setHeight, arrangeAll, isArranged } = useLayout();
 
   useEffect(() => {
@@ -39,6 +43,20 @@ export function App() {
   }, []);
 
   const ordered = [...sessions].sort((a, b) => a.startedAt - b.startedAt);
+
+  // Tell the user when a session needs them, but only on the transition and
+  // only when they are not already looking at the window.
+  useEffect(() => {
+    if (notificationsEnabled()) {
+      for (const event of newlyNeedingAttention(lastStates.current, sessions)) {
+        notify(event, (id) => {
+          document.getElementById(`session-${id}`)?.scrollIntoView({ block: 'nearest' });
+          setFocused(id);
+        });
+      }
+    }
+    lastStates.current = stateMap(sessions);
+  }, [sessions]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -88,7 +106,7 @@ export function App() {
         onToggleUsage={() => setUsageOpen((v) => !v)}
       />
       {usageOpen && usage && <UsagePanel usage={usage} />}
-      <LaunchBar recentDirectories={recentDirectories} />
+      <LaunchBar recentDirectories={recentDirectories} defaultMode={defaultPermissionMode} />
       {lastError && (
         <div
           style={{

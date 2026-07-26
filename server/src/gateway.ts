@@ -50,6 +50,7 @@ export class Gateway {
         recentDirectories: settings.get().recentDirectories,
         countdownSec: settings.get().countdownSec,
         stopSessionsWhenClosedSec: settings.get().stopSessionsWhenClosedSec,
+        defaultPermissionMode: settings.get().defaultPermissionMode,
       });
       this.lastSeen.set(socket, Date.now());
       this.onClientCountChanged();
@@ -131,6 +132,7 @@ export class Gateway {
       recentDirectories: s.recentDirectories,
       countdownSec: s.countdownSec,
       stopSessionsWhenClosedSec: s.stopSessionsWhenClosedSec,
+      defaultPermissionMode: s.defaultPermissionMode,
     });
   }
 
@@ -157,6 +159,8 @@ export class Gateway {
           permissionMode: cmd.permissionMode ?? 'default',
         });
         this.settings.rememberDirectory(cwd);
+        // The launch mode is sticky: most people keep one posture.
+        this.settings.update({ defaultPermissionMode: cmd.permissionMode ?? 'default' });
         this.broadcastSettings();
         return;
       }

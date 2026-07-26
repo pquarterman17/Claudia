@@ -8,19 +8,21 @@ terminals. That means state is structured, not guessed: a permission prompt is a
 
 ## Run it
 
-Double-click **`start-claudia.bat`** on Windows or **`start-claudia.command`** on macOS. Either
-one installs dependencies on first run, starts both processes, and opens the browser — and if
-Claudia is already running it just opens the existing instance instead of failing on the port.
+Double-click **`start-claudia.bat`** on Windows or **`start-claudia.command`** on macOS. Each
+installs dependencies on first run, builds the UI if sources changed, and opens the browser the
+moment it answers — about **2 seconds** when the build is current. If Claudia is already
+running it opens the existing instance rather than failing on the port.
 
-Or by hand:
+Everything is served from **one process on `127.0.0.1:4317`**. Pick a working directory (paste
+a path or hit Browse), optionally type a first prompt, choose a permission mode, hit Launch. A
+session launched with no prompt opens idle, costs nothing, and waits for you to type.
+
+For development, two processes with hot reload:
 
 ```bash
 npm install
-npm run dev
+npm run dev     # server on 4317, Vite UI on 4318
 ```
-
-Server on `127.0.0.1:4317`, UI on `127.0.0.1:4318`. Open the UI, pick a working directory
-(paste a path or hit Browse), type a first prompt, choose a permission mode, hit Launch.
 
 ## Layout
 
@@ -55,6 +57,13 @@ Server on `127.0.0.1:4317`, UI on `127.0.0.1:4318`. Open the UI, pick a working 
   `modelUsage` is cumulative per session, so assign it — never add.
 - Sessions inherit your `~/.claude/settings.json` allowlist, so the same commands
   auto-approve here as in your terminal. Everything else surfaces as an approval.
+
+## Notifications
+
+Turn on **notify** in the header to get a desktop notification when a session needs you —
+blocked on approval, or errored. It fires only on the transition into that state, and stays
+quiet while the window is focused, since there is no point interrupting you with something
+already on screen.
 
 ## Closing the tab stops the sessions
 

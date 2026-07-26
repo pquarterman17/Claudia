@@ -167,6 +167,7 @@ export type ServerEvent =
       recentDirectories: string[];
       countdownSec: number;
       stopSessionsWhenClosedSec: number;
+      defaultPermissionMode: PermissionLaunchMode;
     }
   | { type: 'session_upsert'; session: SessionSummary }
   | { type: 'session_removed'; sessionId: string }
@@ -179,6 +180,7 @@ export type ServerEvent =
       recentDirectories: string[];
       countdownSec: number;
       stopSessionsWhenClosedSec: number;
+      defaultPermissionMode: PermissionLaunchMode;
     }
   /** Result of a browse_folder request; path is null if the user cancelled. */
   | { type: 'folder_picked'; path: string | null }

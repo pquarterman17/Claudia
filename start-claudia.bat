@@ -9,7 +9,7 @@ rem Already running? Just show it rather than failing on a port clash.
 netstat -ano | findstr "LISTENING" | findstr "127.0.0.1:4317" >nul 2>&1
 if %errorlevel%==0 (
   echo Claudia is already running - opening it.
-  start "" "http://localhost:4318"
+  start "" "http://localhost:4317"
   timeout /t 2 /nobreak >nul
   exit /b 0
 )
@@ -40,17 +40,16 @@ if not exist "node_modules\" (
 
 rem Open the browser the moment the UI answers, rather than after a fixed wait.
 rem A flat sleep here made every start feel four seconds slower than it was.
-start "" powershell -NoProfile -WindowStyle Hidden -Command "$u='http://localhost:4318'; for ($i=0; $i -lt 120; $i++) { try { Invoke-WebRequest -UseBasicParsing $u -TimeoutSec 1 | Out-Null; break } catch { Start-Sleep -Milliseconds 250 } }; Start-Process $u"
+start "" powershell -NoProfile -WindowStyle Hidden -Command "$u='http://localhost:4317'; for ($i=0; $i -lt 120; $i++) { try { Invoke-WebRequest -UseBasicParsing $u -TimeoutSec 1 | Out-Null; break } catch { Start-Sleep -Milliseconds 250 } }; Start-Process $u"
 
 echo.
 echo   Claudia is starting.
-echo   UI:     http://localhost:4318
-echo   Server: http://127.0.0.1:4317
+echo   http://localhost:4317
 echo.
 echo   Close this window, or press Ctrl+C, to stop it.
 echo.
 
-call npm run dev
+call npm start
 
 rem Only reached if the dev server exits on its own, which means something broke.
 echo.

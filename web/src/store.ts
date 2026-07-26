@@ -4,6 +4,7 @@ import {
   type ClientCommand,
   type FeedStep,
   type HostPlatform,
+  type PermissionLaunchMode,
   type ServerEvent,
   type SessionSummary,
   type TriggerStatus,
@@ -19,7 +20,10 @@ import { useSyncExternalStore } from 'react';
  */
 function serverUrl(): string {
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${scheme}://${location.hostname}:${CLAUDIA_PORT}/ws`;
+  // In production the server serves the UI too, so it is simply this origin.
+  // In dev the UI comes from Vite on another port, so aim at the server's.
+  const host = import.meta.env.DEV ? `${location.hostname}:${CLAUDIA_PORT}` : location.host;
+  return `${scheme}://${host}/ws`;
 }
 
 export interface ClaudiaState {
@@ -32,6 +36,7 @@ export interface ClaudiaState {
   recentDirectories: string[];
   countdownSec: number;
   stopSessionsWhenClosedSec: number;
+  defaultPermissionMode: PermissionLaunchMode;
   lastError?: string;
 }
 
@@ -49,6 +54,7 @@ class Store {
     recentDirectories: [],
     countdownSec: 30,
     stopSessionsWhenClosedSec: 30,
+    defaultPermissionMode: 'default',
   };
   private listeners = new Set<Listener>();
   private ws: WebSocket | null = null;
@@ -154,6 +160,7 @@ class Store {
           recentDirectories: event.recentDirectories,
           countdownSec: event.countdownSec,
           stopSessionsWhenClosedSec: event.stopSessionsWhenClosedSec,
+          defaultPermissionMode: event.defaultPermissionMode,
           lastError: undefined,
         });
         return;
@@ -162,6 +169,7 @@ class Store {
           recentDirectories: event.recentDirectories,
           countdownSec: event.countdownSec,
           stopSessionsWhenClosedSec: event.stopSessionsWhenClosedSec,
+          defaultPermissionMode: event.defaultPermissionMode,
         });
         return;
       case 'trigger_status':

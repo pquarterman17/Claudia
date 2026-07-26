@@ -15,9 +15,9 @@ port_busy() {
 
 open_ui() {
   if command -v open >/dev/null 2>&1; then
-    open "http://localhost:4318"
+    open "http://localhost:4317"
   elif command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "http://localhost:4318"
+    xdg-open "http://localhost:4317"
   fi
 }
 
@@ -55,7 +55,7 @@ fi
 # A flat sleep here made every start feel four seconds slower than it was.
 (
   for _ in $(seq 1 120); do
-    if curl -fsS -o /dev/null --max-time 1 "http://localhost:4318" 2>/dev/null; then break; fi
+    if curl -fsS -o /dev/null --max-time 1 "http://localhost:4317" 2>/dev/null; then break; fi
     sleep 0.25
   done
   open_ui
@@ -64,14 +64,13 @@ fi
 cat <<'BANNER'
 
   Claudia is starting.
-  UI:     http://localhost:4318
-  Server: http://127.0.0.1:4317
+  http://localhost:4317
 
   Press Ctrl+C to stop it.
 
 BANNER
 
-npm run dev
+npm start
 
 echo
 echo "  Claudia stopped."

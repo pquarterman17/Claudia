@@ -1,15 +1,21 @@
 import { CLAUDIA_PORT } from '@claudia/shared';
 import { createServer } from 'node:http';
+import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
 import { updateMemories } from './memory-action.js';
 import { SessionManager } from './session-manager.js';
+import { createStaticHandler } from './static-files.js';
 import { SettingsStore } from './settings-store.js';
 import { TriggerEngine } from './trigger-engine.js';
 import { UsageService } from './usage-service.js';
 
 const platform = hostPlatform();
+
+// Serves the built UI when web/dist exists, so production is one process on one
+// port. In development Vite serves the UI on its own port instead.
+const serveStatic = createStaticHandler(join(import.meta.dirname, '..', '..', 'web', 'dist'));
 
 const httpServer = createServer((req, res) => {
   if (req.url === '/health') {
@@ -28,6 +34,7 @@ const httpServer = createServer((req, res) => {
     );
     return;
   }
+  if (serveStatic(req, res)) return;
   res.writeHead(404).end();
 });
 
@@ -72,7 +79,7 @@ usage.start();
 const ticker = setInterval(() => trigger.tick(manager.summaries()), 1000);
 
 httpServer.listen(CLAUDIA_PORT, '127.0.0.1', () => {
-  console.log(`[claudia] server listening on http://127.0.0.1:${CLAUDIA_PORT} (ws at /ws) · ${platform}`);
+  console.log(`[claudia] listening on http://127.0.0.1:${CLAUDIA_PORT} · ${platform}`);
 });
 
 // Wire teardown to real lifecycle signals, not atexit-style hooks.

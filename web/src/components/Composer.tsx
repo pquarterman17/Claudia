@@ -126,7 +126,7 @@ export function Composer({ session }: Props) {
           color: yolo ? COLORS.err : '#595d6c',
         }}
       >
-        skip perms
+        {yolo ? 'Approvals off' : 'Skip approvals'}
       </button>
       <span className="mono" style={{ color: status.color, fontSize: 12 }}>
         ›
@@ -234,7 +234,7 @@ export function Composer({ session }: Props) {
         onClick={() => send({ type: 'launch_session', cwd: session.cwd, permissionMode: session.permissionMode })}
         style={{ flex: 'none', fontSize: 10, padding: '2px 6px', color: '#75798c' }}
       >
-        ↻ new
+        New session
       </button>
       <span style={{ position: 'relative', flex: 'none' }}>
         <button
@@ -243,7 +243,7 @@ export function Composer({ session }: Props) {
           onClick={toggleModelPicker}
           style={{ fontSize: 10, padding: '2px 6px', color: '#75798c' }}
         >
-          model
+          Choose model
         </button>
         {modelOpen && (
           <div

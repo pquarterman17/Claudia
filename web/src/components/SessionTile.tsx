@@ -38,6 +38,7 @@ export function SessionTile({
 }: Props) {
   const tileRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<'feed' | 'chat'>('feed');
+  const [menuOpen, setMenuOpen] = useState(false);
   const backfilledRef = useRef(false);
 
   useEffect(() => {
@@ -69,6 +70,12 @@ export function SessionTile({
   const submitRename = (value: string) => {
     send({ type: 'rename_session', sessionId: session.id, title: value });
     setRenaming(false);
+  };
+
+  const removeSession = () => {
+    if (window.confirm(`Stop and remove ${session.title ?? session.name}? This cannot be undone.`)) {
+      send({ type: 'remove_session', sessionId: session.id });
+    }
   };
 
   const cls = [
@@ -152,9 +159,10 @@ export function SessionTile({
           <button
             type="button"
             aria-label={`Rename session ${session.title ?? session.name}`}
+            className="btn btn-ghost"
             onClick={() => setRenaming(true)}
-            title="Click to rename this session"
-            style={{ flex: 'none', fontFamily: 'inherit', fontWeight: 500, fontSize: 13, letterSpacing: '-.01em', cursor: 'pointer', color: 'inherit', background: 'transparent', border: 0, padding: '4px 2px' }}
+            title="Rename this session"
+            style={{ flex: 'none', fontWeight: 500, fontSize: 13, letterSpacing: '-.01em', cursor: 'pointer' }}
           >
             {session.title ?? session.name}
             {session.title && (
@@ -177,6 +185,7 @@ export function SessionTile({
         </span>
         <span
           style={{
+            display: 'none',
             flex: 'none',
             fontSize: 10,
             border: `1px solid ${yolo ? '#8a4f4f' : '#3f424d'}`,
@@ -195,7 +204,7 @@ export function SessionTile({
           <button
             className="btn btn-ghost"
             title="Interrupt this session"
-            style={{ flex: 'none', fontSize: 10, padding: '2px 6px', color: COLORS.warn }}
+            style={{ display: 'none', flex: 'none', fontSize: 10, padding: '2px 6px', color: COLORS.warn }}
             onClick={() => send({ type: 'interrupt', sessionId: session.id })}
           >
             ⏸
@@ -203,12 +212,22 @@ export function SessionTile({
         )}
         <button
           className="btn btn-ghost"
-          title="Stop and remove this session"
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
+          title="Session actions"
           style={{ flex: 'none', fontSize: 10, padding: '2px 6px', color: '#75798c' }}
-          onClick={() => send({ type: 'remove_session', sessionId: session.id })}
+          onClick={() => setMenuOpen((open) => !open)}
         >
-          ✕
+          ⋯
         </button>
+        {menuOpen && (
+          <div role="menu" aria-label={`Actions for ${session.title ?? session.name}`} style={{ position: 'absolute', right: 12, zIndex: 10, minWidth: 190, padding: 4, background: '#1d1f2c', border: '1px solid #33364a', borderRadius: 6, boxShadow: '0 6px 18px rgba(0, 0, 0, 0.4)' }}>
+            <div style={{ padding: '4px 6px 6px', fontSize: 10, color: '#75798c' }}>{fmtModel(session.model)} · {yolo ? 'approvals skipped' : 'approvals on'}</div>
+            <MenuAction onClick={() => { setRenaming(true); setMenuOpen(false); }}>Rename</MenuAction>
+            {(session.state === 'working' || session.state === 'starting') && <MenuAction color={COLORS.warn} onClick={() => { send({ type: 'interrupt', sessionId: session.id }); setMenuOpen(false); }}>Interrupt</MenuAction>}
+            <MenuAction color="#e0a0a0" onClick={removeSession}>Stop and remove…</MenuAction>
+          </div>
+        )}
       </div>
 
       <div className="tile-body">
@@ -230,7 +249,7 @@ export function SessionTile({
                 color: view === v ? '#b5abfc' : '#595d6c',
               }}
             >
-              {v}
+              {v === 'feed' ? 'Activity' : 'Chat'}
             </button>
           ))}
         </div>
@@ -288,4 +307,8 @@ export function SessionTile({
       )}
     </div>
   );
+}
+
+function MenuAction({ children, color, onClick }: { children: string; color?: string; onClick: () => void }) {
+  return <button role="menuitem" className="btn btn-ghost" onClick={onClick} style={{ display: 'block', width: '100%', padding: '5px 7px', textAlign: 'left', fontSize: 11, color }}>{children}</button>;
 }

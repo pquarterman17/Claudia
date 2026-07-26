@@ -14,6 +14,8 @@ interface Props {
   sizeMode: SizeMode;
   onSizeMode: (m: SizeMode) => void;
   onArrangeAll: () => void;
+  sidebarOpen: boolean;
+  onToggleSidebar: () => void;
   /** True when no tile has been resized, so Arrange all would do nothing. */
   arranged: boolean;
   sessionCount: number;
@@ -26,6 +28,8 @@ export function BoardControls({
   sizeMode,
   onSizeMode,
   onArrangeAll,
+  sidebarOpen,
+  onToggleSidebar,
   arranged,
   sessionCount,
 }: Props) {
@@ -43,6 +47,15 @@ export function BoardControls({
       }}
     >
       <span className="kicker">Board</span>
+      <button
+        onClick={onToggleSidebar}
+        aria-pressed={sidebarOpen}
+        title={sidebarOpen ? 'Hide the session digest and automation' : 'Show the session digest and automation'}
+        className="btn btn-secondary"
+        style={{ fontSize: 11, padding: '3px 9px', borderColor: '#3f424d', color: '#9397ab' }}
+      >
+        {sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+      </button>
       <span role="group" aria-label="Board columns" style={{ display: 'flex', gap: 2, border: '1px solid #33364a', borderRadius: 7, padding: 2 }}>
         {MODES.map((m) => {
           const on = columns === m.value;

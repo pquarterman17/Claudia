@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { autoColumns, autoRows, gridTemplate } from '../src/layout';
+import { autoColumns, autoRows, defaultSidebarOpen, gridTemplate } from '../src/layout';
+
+describe('defaultSidebarOpen', () => {
+  it('keeps the board wide on laptop-sized viewports', () => {
+    expect(defaultSidebarOpen(1024)).toBe(false);
+    expect(defaultSidebarOpen(1199)).toBe(false);
+  });
+
+  it('shows the digest by default on wide screens', () => {
+    expect(defaultSidebarOpen(1200)).toBe(true);
+    expect(defaultSidebarOpen(1600)).toBe(true);
+  });
+});
 
 describe('autoColumns — fill the window', () => {
   it.each([

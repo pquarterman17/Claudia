@@ -37,8 +37,16 @@ export function App() {
   const [focused, setFocused] = useState<string | undefined>();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const lastStates = useRef(new Map<string, string>());
-  const { layout, setColumns, setSizeMode, setSidebarWidth, setHeight, arrangeAll, isArranged } =
-    useLayout();
+  const {
+    layout,
+    setColumns,
+    setSizeMode,
+    setSidebarOpen,
+    setSidebarWidth,
+    setHeight,
+    arrangeAll,
+    isArranged,
+  } = useLayout();
   const fitting = layout.sizeMode === 'fit';
 
   useEffect(() => {
@@ -158,7 +166,7 @@ export function App() {
       )}
 
       <div className="workspace">
-        {trigger && (
+        {trigger && ordered.length > 0 && layout.sidebarOpen && (
           <ControlSidebar
             trigger={trigger}
             sessions={sessions}
@@ -172,15 +180,19 @@ export function App() {
         )}
 
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <BoardControls
-            columns={layout.columns}
-            onColumns={setColumns}
-            sizeMode={layout.sizeMode}
-            onSizeMode={setSizeMode}
-            onArrangeAll={arrangeAll}
-            arranged={isArranged}
-            sessionCount={ordered.length}
-          />
+          {ordered.length > 0 && (
+            <BoardControls
+              columns={layout.columns}
+              onColumns={setColumns}
+              sizeMode={layout.sizeMode}
+              onSizeMode={setSizeMode}
+              onArrangeAll={arrangeAll}
+              sidebarOpen={layout.sidebarOpen}
+              onToggleSidebar={() => setSidebarOpen(!layout.sidebarOpen)}
+              arranged={isArranged}
+              sessionCount={ordered.length}
+            />
+          )}
           <div
             className={fitting ? 'board board-fit' : 'board'}
             style={{
@@ -206,9 +218,15 @@ export function App() {
               />
             ))}
             {ordered.length === 0 && (
-              <div style={{ color: '#595d6c', fontSize: 12, padding: 20 }}>
-                No sessions yet — pick a working directory above and hit Launch. A first prompt is
-                optional; the session will wait for you.
+              <div className="empty-state">
+                <span className="kicker">Start here</span>
+                <h1>Launch your first session</h1>
+                <p>Choose a repository above, add a task if you have one, then launch.</p>
+                <ol>
+                  <li>Paste a path or browse for a folder</li>
+                  <li>Optionally describe the first task</li>
+                  <li>Launch — an empty task simply waits for you</li>
+                </ol>
               </div>
             )}
           </div>

@@ -173,99 +173,56 @@ export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) 
         placeholder="first prompt (optional)…"
         style={{ flex: 1, minWidth: 120, fontSize: 11.5, padding: '4px 8px' }}
       />
-      <span role="group" aria-label="Launch permission mode" style={{ display: 'flex', gap: 4, flex: 'none' }}>
-        {MODES.map((m) => {
-          const on = mode === m.key;
-          return (
-            <button
-              key={m.key}
-              type="button"
-              aria-pressed={on}
-              onClick={() => setMode(m.key)}
-              style={{
-                cursor: 'pointer',
-                borderRadius: 7,
-                padding: '4px 9px',
-                fontFamily: 'var(--font-body)',
-                fontSize: 11,
-                whiteSpace: 'nowrap',
-                border: `1px solid ${on ? (m.danger ? '#8a4f4f' : '#796cbf') : '#33364a'}`,
-                background: on ? (m.danger ? '#2e2226' : '#2b2741') : 'transparent',
-                color: on ? (m.danger ? '#e0a0a0' : '#d2cefd') : '#9397ab',
-              }}
-            >
-              {m.label}
-            </button>
-          );
-        })}
-      </span>
-      {templates.length > 0 && (
-        <span aria-label="Session templates" style={{ display: 'flex', gap: 4, flex: 'none', flexWrap: 'wrap' }}>
+      <label className={`launch-mode ${danger ? 'danger' : ''}`}>
+        <span className="sr-only">Permission mode</span>
+        <select
+          value={mode}
+          title={MODES.find((m) => m.key === mode)?.title}
+          onChange={(e) => {
+            touched.current = true;
+            setMode(e.target.value as PermissionLaunchMode);
+          }}
+        >
+          {MODES.map((m) => (
+            <option key={m.key} value={m.key}>
+              Permissions: {m.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <details className="launch-more">
+        <summary>{templates.length > 0 ? `Templates (${templates.length})` : 'Save template'}</summary>
+        <div className="launch-more-panel">
           {templates.map((t) => (
-            <span
-              key={t.name}
-              style={{
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 4,
-                borderRadius: 7,
-                padding: '4px 6px 4px 9px',
-                fontFamily: 'var(--font-body)',
-                fontSize: 11,
-                border: '1px solid #33364a',
-                background: 'transparent',
-                color: '#9397ab',
-              }}
-            >
+            <div className="launch-template-row" key={t.name}>
               <button
                 type="button"
                 title={`${t.cwd} — ${modeLabel(t.permissionMode)}`}
-                aria-label={`Launch template ${t.name}`}
                 onClick={() => launchTemplate(t)}
-                style={{
-                  cursor: 'pointer', border: 0, background: 'transparent', color: 'inherit', font: 'inherit', padding: 0,
-                  maxWidth: 120,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
               >
-                {t.name}
+                <span>{t.name}</span>
+                <small>{modeLabel(t.permissionMode)}</small>
               </button>
               <button
                 type="button"
                 aria-label={`Delete template ${t.name}`}
-                title="delete template"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  send({ type: 'delete_template', name: t.name });
-                }}
-                style={{
-                  cursor: 'pointer',
-                  border: 0,
-                  background: 'transparent',
-                  color: '#9397ab',
-                  fontSize: 10,
-                  lineHeight: 1,
-                  padding: 0, minWidth: 28, minHeight: 28,
-                }}
+                title="Delete template"
+                onClick={() => send({ type: 'delete_template', name: t.name })}
               >
                 ✕
               </button>
-            </span>
+            </div>
           ))}
-        </span>
-      )}
-      <button
-        className="btn btn-secondary"
-        disabled={!cwd.trim()}
-        title="Save current cwd, prompt, and mode as a template"
-        onClick={saveTemplate}
-        style={{ flex: 'none', fontSize: 11.5, padding: '4px 10px', borderColor: '#3f424d', color: '#9397ab' }}
-      >
-        Save…
-      </button>
+          <button
+            className="btn btn-secondary"
+            disabled={!cwd.trim()}
+            title="Save current cwd, prompt, and mode as a template"
+            onClick={saveTemplate}
+          >
+            Save current setup…
+          </button>
+        </div>
+      </details>
       <button
         className="btn btn-primary"
         onClick={launch}

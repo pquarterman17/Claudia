@@ -1,5 +1,5 @@
 import type { FeedStep, SessionSummary, TriggerStatus } from '@claudia/shared';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityDigest } from './ActivityDigest';
 import { ControllerTile } from './ControllerTile';
 
@@ -33,6 +33,12 @@ export function ControlSidebar({
   onResize,
 }: Props) {
   const dragging = useRef(false);
+  const active = trigger.state !== 'disarmed';
+  const [automationOpen, setAutomationOpen] = useState(active);
+
+  useEffect(() => {
+    if (active) setAutomationOpen(true);
+  }, [active]);
 
   const onGripDown = useCallback(
     (e: React.MouseEvent) => {
@@ -70,12 +76,34 @@ export function ControlSidebar({
           }}
         >
           <ActivityDigest sessions={sessions} feeds={feeds} now={now} />
-          <ControllerTile
-            trigger={trigger}
-            sessions={sessions}
-            countdownSec={countdownSec}
-            stopOnCloseSec={stopOnCloseSec}
-          />
+          <section>
+            <button
+              type="button"
+              className="sidebar-section-toggle"
+              aria-expanded={automationOpen}
+              onClick={() => setAutomationOpen((open) => !open)}
+            >
+              <span>
+                <span className="kicker">Automation</span>
+                <span className="sidebar-section-summary">
+                  {active
+                    ? trigger.state
+                    : `${trigger.chain.length} finish step${trigger.chain.length === 1 ? '' : 's'}`}
+                </span>
+              </span>
+              <span aria-hidden="true">{automationOpen ? '−' : '+'}</span>
+            </button>
+            {automationOpen && (
+              <div style={{ marginTop: 14 }}>
+                <ControllerTile
+                  trigger={trigger}
+                  sessions={sessions}
+                  countdownSec={countdownSec}
+                  stopOnCloseSec={stopOnCloseSec}
+                />
+              </div>
+            )}
+          </section>
         </div>
       </div>
       <div

@@ -68,6 +68,23 @@ desktop and a MacBook at different times, so the app must run natively on both �
 
 ## Tier 1 — High Impact
 
+### Owner testing feedback (2026-07-26) — logged, NOT started at owner's request
+
+18. **Slash commands** — "/model" etc. do nothing (SDK sessions treat them as prose). The SDK
+    exposes `setModel`/`setMaxThinkingTokens`, and its init response lists available commands —
+    so: probe whether stream-json input interprets "/" at all, wire the real controls (model
+    picker first), and add a GUI entry point + help list of what's supported.
+19. **Warm spawn** — a no-prompt session starts nothing until the first prompt (deliberate:
+    the SDK emits init only once it has input, and an eager query once left sessions stuck in
+    'starting'). Perceived as broken. Design: spawn the process eagerly so MCP/boot cost is
+    paid up front, keep state 'idle', accept that init arrives with the first prompt.
+20. **Feed dedup** — Bash steps read "[bash] Bash — cmd": kind marker and title repeat. Drop
+    the redundant title for tool steps whose kind already says it.
+21. **Chain-order legibility** — order = the numbered list, top to bottom, but the owner
+    didn't trust it enough to test shutdown. Add "runs top to bottom" caption and a plain
+    preview sentence ("will: notify, then save learnings, then shut down"), and consider a
+    dry-run mode. Also make the disabled commit+push state visible without hover.
+
 2. **Session resume** — reattach to a previous session via `claudeSessionId` (the SDK supports
    `resume` / `forkSession`; nothing in the UI exposes it yet). Also a per-session model picker.
 13. **Verify on macOS** — everything below was built and checked on Windows only. The per-OS

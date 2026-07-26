@@ -165,7 +165,28 @@ Use forward slashes in these paths — most shells eat backslashes.
 - **The usage bars look wrong** — they are estimates from local logs, by design; other
   machines' usage is invisible. See the note inside the panel.
 
+## Security
+
+Claudia can launch sessions that read, write, and run commands — so "it only listens on
+`127.0.0.1`" is not, by itself, an access control. Two attacks get past a loopback bind and
+both are blocked explicitly:
+
+- **Cross-origin WebSocket.** Browsers do not apply the same-origin policy to WebSockets —
+  no preflight, no CORS — so any page you have open could otherwise connect and send
+  `launch_session`. The `Origin` header must be a loopback host, or the upgrade gets a 401.
+- **DNS rebinding.** An attacker domain pointed at `127.0.0.1` looks same-origin to the
+  browser, but still names itself in `Host`. A non-loopback `Host` gets a 403 before any
+  handler runs.
+
+Both live in [origin-guard.ts](server/src/origin-guard.ts) with tests. Subprocesses use
+`execFile` with argument arrays (never a shell string), static paths cannot escape the build
+directory, and Claudia stores no credentials of its own — it uses the Claude Code auth
+already on the machine.
+
+Full threat model, the parts that are dangerous by design, and how to report a
+vulnerability: **[SECURITY.md](SECURITY.md)**.
+
 ## Status
 
-Personal tool, built fast and verified as it grew: 258 unit tests plus scripted live
+Personal tool, built fast and verified as it grew: 354 unit tests plus scripted live
 end-to-end checks. Windows is the daily driver; macOS/Linux passes welcome. Not yet public.

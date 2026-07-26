@@ -11,6 +11,12 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege for GITHUB_TOKEN. CI only ever reads the repository, and
+# `npm ci` runs third-party install scripts — a token that cannot write is one
+# a compromised dependency cannot push with.
+permissions:
+  contents: read
+
 jobs:
   check:
     strategy:

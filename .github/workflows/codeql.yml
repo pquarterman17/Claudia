@@ -1,0 +1,33 @@
+# Static analysis for the JS/TS sources.
+#
+# Gated on visibility: CodeQL is free for public repositories but needs GitHub
+# Advanced Security on a private one, where it would fail every run. The `if`
+# means this starts working by itself the day the repository is made public,
+# with no edit needed — and skips (never errors) until then.
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so newly published query packs find old code too.
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    if: github.event.repository.visibility == 'public'
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+      - uses: github/codeql-action/analyze@v3

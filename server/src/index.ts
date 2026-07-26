@@ -1,10 +1,11 @@
 import { CLAUDIA_PORT } from '@claudia/shared';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
 import { updateMemories } from './memory-action.js';
+import { isAllowedHost, isAllowedOrigin } from './origin-guard.js';
 import { SessionManager } from './session-manager.js';
 import { createStaticHandler } from './static-files.js';
 import { SettingsStore } from './settings-store.js';
@@ -18,6 +19,12 @@ const platform = hostPlatform();
 const serveStatic = createStaticHandler(join(import.meta.dirname, '..', '..', 'web', 'dist'));
 
 const httpServer = createServer((req, res) => {
+  // Refuse before doing any work: a request naming a host that is not loopback
+  // reached us through DNS rebinding, not through a link the user clicked.
+  if (!isAllowedHost(req.headers.host)) {
+    res.writeHead(403, { 'content-type': 'text/plain' }).end('Claudia only serves loopback hosts\n');
+    return;
+  }
   if (req.url === '/health') {
     const all = manager.summaries();
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -38,7 +45,19 @@ const httpServer = createServer((req, res) => {
   res.writeHead(404).end();
 });
 
-const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+// A Claudia command can launch a session with permissions bypassed in any
+// directory, so an unchecked socket is remote code execution. Browsers exempt
+// WebSockets from the same-origin policy, which makes this check — not the
+// loopback bind — the thing that keeps a visited page out.
+const wss = new WebSocketServer({
+  server: httpServer,
+  path: '/ws',
+  verifyClient: ({ origin, req }: { origin?: string; req: IncomingMessage }) => {
+    if (isAllowedOrigin(origin) && isAllowedHost(req.headers.host)) return true;
+    console.warn(`[claudia] refused a socket from origin=${origin ?? '(none)'} host=${req.headers.host ?? '(none)'}`);
+    return false;
+  },
+});
 const gateway = new Gateway(wss, platform);
 
 const settings = new SettingsStore();

@@ -9,3 +9,13 @@ updates:
     groups:
       all-minor-and-patch:
         update-types: ["minor", "patch"]
+
+  # Workflow actions are dependencies too, and a compromised action runs with
+  # whatever the job's token allows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

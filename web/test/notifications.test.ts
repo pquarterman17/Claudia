@@ -15,6 +15,7 @@ function session(id: string, state: SessionState, extra: Partial<SessionSummary>
     inputTokens: 0,
     outputTokens: 0,
     modelUsage: [],
+    queuedPrompts: [],
     ...extra,
   };
 }

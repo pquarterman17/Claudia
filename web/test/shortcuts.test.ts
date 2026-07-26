@@ -79,6 +79,7 @@ function withApproval(id: string, requestedAt: number | null): SessionSummary {
     inputTokens: 0,
     outputTokens: 0,
     modelUsage: [],
+    queuedPrompts: [],
     ...(requestedAt === null
       ? {}
       : { pendingApproval: { requestId: `r-${id}`, toolName: 'Bash', summary: 'x', requestedAt } }),

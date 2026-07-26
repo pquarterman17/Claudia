@@ -132,6 +132,8 @@ export interface SessionSummary {
   pendingQuestion?: PendingQuestion;
   /** Last error message when state === 'error'. */
   errorMessage?: string;
+  /** Prompts sent while a turn was in flight, FIFO order. Empty when nothing is queued. */
+  queuedPrompts: string[];
 }
 
 // ---------- finish trigger ----------

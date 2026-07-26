@@ -16,7 +16,9 @@ import { ApprovalGate, type PermissionResult } from './approval-gate.js';
 import { AsyncQueue } from './async-queue.js';
 import { approvalStep, errorStep, infoStep, summarizeToolInput } from './feed.js';
 import { routeMessage } from './message-router.js';
+import { describeMode } from './permission-labels.js';
 import { parseQuestions } from './question-parser.js';
+import { PromptQueue } from './prompt-queue.js';
 import { SubAgentTracker } from './sub-agent-tracker.js';
 import { ToolTracker } from './tool-tracker.js';
 
@@ -58,6 +60,7 @@ export class ClaudiaSession {
   private needsAction: NeedsAction | undefined;
   private pendingQuestion: PendingQuestion | undefined;
   private readonly subAgents = new SubAgentTracker();
+  private readonly promptQueue = new PromptQueue();
   /** True until the first prompt is sent, so an empty session reads as idle. */
   private awaitingFirstPrompt = true;
   /** True while swapping the query for a permission change. */
@@ -90,6 +93,7 @@ export class ClaudiaSession {
       needsAction: this.needsAction,
       pendingQuestion: this.pendingQuestion,
       errorMessage: this.errorMessage,
+      queuedPrompts: this.promptQueue.list(),
     };
   }
 
@@ -156,7 +160,12 @@ export class ClaudiaSession {
     if (routed.claudeSessionId) this.claudeSessionId = routed.claudeSessionId;
     if (routed.model) this.model = routed.model;
     // Cost and usage are cumulative in the SDK's result message — assign, never add.
-    if (routed.costUsd !== undefined) this.costUsd = routed.costUsd;
+    // A result also ends the current turn, so the next queued prompt (if any)
+    // becomes the active one.
+    if (routed.costUsd !== undefined) {
+      this.costUsd = routed.costUsd;
+      this.promptQueue.shift();
+    }
     if (routed.modelUsage) this.modelUsage = routed.modelUsage;
     if (routed.errorMessage) this.errorMessage = routed.errorMessage;
     if (routed.needsAction !== undefined) this.needsAction = routed.needsAction ?? undefined;
@@ -225,6 +234,11 @@ export class ClaudiaSession {
   }
 
   sendPrompt(text: string): void {
+    // A prompt sent while a turn is already in flight joins the SDK's input
+    // queue rather than starting immediately — track it so the UI can show it.
+    if (this.state === 'working' || this.state === 'awaiting_approval' || this.state === 'starting') {
+      this.promptQueue.push(text);
+    }
     this.awaitingFirstPrompt = false;
     this.needsAction = undefined;
     this.beginQuery();
@@ -317,6 +331,7 @@ export class ClaudiaSession {
   stop(): void {
     this.gate.abandon('Session stopped');
     this.abandonRunningTools('session stopped');
+    this.promptQueue.clear();
     this.input.close();
     try {
       (this.q as { close?: () => void } | null)?.close?.();
@@ -330,6 +345,7 @@ export class ClaudiaSession {
     this.errorMessage = message;
     this.gate.abandon(`Session failed: ${message}`);
     this.abandonRunningTools(message);
+    this.promptQueue.clear();
     this.cb.onFeed(this.id, errorStep('Session error', message));
     this.setState('error');
   }
@@ -369,19 +385,5 @@ export class ClaudiaSession {
     if (this.state === 'stopped' && state !== 'stopped') return;
     this.state = state;
     this.cb.onUpdate(this.summary());
-  }
-}
-
-/** Plain-English description of a permission mode, for the feed. */
-function describeMode(mode: PermissionLaunchMode): string {
-  switch (mode) {
-    case 'bypassPermissions':
-      return 'permissions skipped — tools run without asking';
-    case 'acceptEdits':
-      return 'edits auto-accepted; commands still ask';
-    case 'auto':
-      return 'auto — Claude decides what needs asking';
-    default:
-      return 'approvals required';
   }
 }

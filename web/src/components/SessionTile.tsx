@@ -225,6 +225,21 @@ export function SessionTile({ session, steps, now, index, focused, height, onRes
             }
           }}
         />
+        {session.queuedPrompts.length > 0 && (
+          <span
+            title={session.queuedPrompts.join('\n')}
+            style={{
+              flex: 'none',
+              fontSize: 10,
+              color: '#d9b184',
+              border: '1px solid #6b5636',
+              borderRadius: 4,
+              padding: '1px 6px',
+            }}
+          >
+            {session.queuedPrompts.length} queued
+          </span>
+        )}
         <span style={{ flex: 'none', fontSize: 10, color: '#75798c', fontVariantNumeric: 'tabular-nums' }}>
           {fmtTokens(session.inputTokens + session.outputTokens)}
         </span>

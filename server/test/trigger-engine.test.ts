@@ -15,6 +15,7 @@ function session(state: SessionState): SessionSummary {
     inputTokens: 0,
     outputTokens: 0,
     modelUsage: [],
+    queuedPrompts: [],
   };
 }
 

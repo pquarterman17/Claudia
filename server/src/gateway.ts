@@ -51,6 +51,7 @@ export class Gateway {
         countdownSec: settings.get().countdownSec,
         stopSessionsWhenClosedSec: settings.get().stopSessionsWhenClosedSec,
         defaultPermissionMode: settings.get().defaultPermissionMode,
+        templates: settings.get().templates,
       });
       this.lastSeen.set(socket, Date.now());
       this.onClientCountChanged();
@@ -133,6 +134,7 @@ export class Gateway {
       countdownSec: s.countdownSec,
       stopSessionsWhenClosedSec: s.stopSessionsWhenClosedSec,
       defaultPermissionMode: s.defaultPermissionMode,
+      templates: s.templates,
     });
   }
 
@@ -237,6 +239,14 @@ export class Gateway {
       case 'set_countdown':
         this.trigger.setCountdown(cmd.seconds);
         this.settings.update({ countdownSec: this.trigger.countdownLength });
+        this.broadcastSettings();
+        return;
+      case 'save_template':
+        this.settings.saveTemplate(cmd.template);
+        this.broadcastSettings();
+        return;
+      case 'delete_template':
+        this.settings.deleteTemplate(cmd.name);
         this.broadcastSettings();
         return;
     }

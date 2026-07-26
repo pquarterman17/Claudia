@@ -26,7 +26,7 @@ const DEFAULTS: Settings = {
   // not leave sessions spending tokens unattended.
   stopSessionsWhenClosedSec: 30,
   recentDirectories: [],
-  defaultPermissionMode: 'default',
+  defaultPermissionMode: 'auto',
 };
 
 const MAX_RECENT = 8;

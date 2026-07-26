@@ -7,7 +7,7 @@ import { SessionTile } from './components/SessionTile';
 import { StatusFooter } from './components/StatusFooter';
 import { TopBar } from './components/TopBar';
 import { UsagePanel } from './components/UsagePanel';
-import { DEFAULT_TILE_HEIGHT, gridTemplate, useLayout } from './layout';
+import { autoRows, DEFAULT_TILE_HEIGHT, gridTemplate, useLayout } from './layout';
 import { newlyNeedingAttention, notificationsEnabled, notify, stateMap } from './notifications';
 import { oldestPendingApproval, resolveShortcut } from './shortcuts';
 import { send, store, useClaudia } from './store';
@@ -30,7 +30,9 @@ export function App() {
   const [usageOpen, setUsageOpen] = useState(false);
   const [focused, setFocused] = useState<string | undefined>();
   const lastStates = useRef(new Map<string, SessionSummary['state']>());
-  const { layout, setColumns, setSidebarWidth, setHeight, arrangeAll, isArranged } = useLayout();
+  const { layout, setColumns, setSizeMode, setSidebarWidth, setHeight, arrangeAll, isArranged } =
+    useLayout();
+  const fitting = layout.sizeMode === 'fit';
 
   useEffect(() => {
     store.connect();
@@ -156,11 +158,22 @@ export function App() {
           <BoardControls
             columns={layout.columns}
             onColumns={setColumns}
+            sizeMode={layout.sizeMode}
+            onSizeMode={setSizeMode}
             onArrangeAll={arrangeAll}
             arranged={isArranged}
             sessionCount={ordered.length}
           />
-          <div className="board" style={{ gridTemplateColumns: gridTemplate(layout.columns) }}>
+          <div
+            className={fitting ? 'board board-fit' : 'board'}
+            style={{
+              gridTemplateColumns: gridTemplate(layout.columns, layout.sizeMode, ordered.length),
+              // Equal shares of the visible area, so the board always fills it.
+              ...(fitting
+                ? { gridTemplateRows: `repeat(${autoRows(ordered.length, layout.columns)}, minmax(0, 1fr))` }
+                : {}),
+            }}
+          >
             {ordered.map((session, i) => (
               <SessionTile
                 key={session.id}
@@ -169,7 +182,7 @@ export function App() {
                 now={now}
                 index={i}
                 focused={focused === session.id}
-                height={layout.heights[session.id] ?? DEFAULT_TILE_HEIGHT}
+                height={fitting ? undefined : (layout.heights[session.id] ?? DEFAULT_TILE_HEIGHT)}
                 onResize={(px) => setHeight(session.id, px)}
               />
             ))}

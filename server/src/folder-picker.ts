@@ -23,11 +23,31 @@ const PICKERS: Record<HostPlatform, { file: string; args: string[] }> = {
   },
   darwin: {
     file: 'osascript',
-    args: ['-e', 'POSIX path of (choose folder with prompt "Select a working directory for Claudia")'],
+    // `with multiple selections allowed` returns a list; one POSIX path per line.
+    args: [
+      '-e',
+      'set dirs to choose folder with prompt "Select working directories for Claudia" with multiple selections allowed',
+      '-e',
+      'set out to ""',
+      '-e',
+      'repeat with d in dirs',
+      '-e',
+      'set out to out & POSIX path of d & linefeed',
+      '-e',
+      'end repeat',
+      '-e',
+      'return out',
+    ],
   },
   linux: {
     file: 'zenity',
-    args: ['--file-selection', '--directory', '--title=Select a working directory for Claudia'],
+    args: [
+      '--file-selection',
+      '--directory',
+      '--multiple',
+      '--separator=\n',
+      '--title=Select working directories for Claudia',
+    ],
   },
 };
 
@@ -35,27 +55,34 @@ const PICKERS: Record<HostPlatform, { file: string; args: string[] }> = {
 const CANCEL_HINTS = [/user canceled/i, /user cancelled/i];
 
 /**
- * Resolves to the chosen path, or null if the user cancelled. Rejects if the
- * picker genuinely failed.
+ * Resolves to the chosen paths — several when the user ctrl-clicks — or an
+ * empty list if they cancelled. Rejects if the picker genuinely failed.
  *
  * Distinguishing the two matters: an earlier version treated every non-zero
  * exit as a cancel, so a broken picker was indistinguishable from the user
  * changing their mind — the button just went quiet and the real error was lost.
  */
-export function pickFolder(platform: HostPlatform, startIn?: string): Promise<string | null> {
+export function pickFolders(platform: HostPlatform, startIn?: string): Promise<string[]> {
   const picker = PICKERS[platform];
   const args = startIn ? [...picker.args, startIn] : picker.args;
   return new Promise((resolve, reject) => {
     execFile(picker.file, args, { timeout: 180_000 }, (err, stdout, stderr) => {
       const chosen = stdout.trim();
       if (chosen) {
-        resolve(normalizePath(chosen));
+        // The picker prints one path per line; ctrl-clicking several folders
+        // starts a session in each.
+        resolve(
+          chosen
+            .split(/\r?\n/)
+            .map((line) => normalizePath(line))
+            .filter(Boolean),
+        );
         return;
       }
       const message = String(stderr ?? '').trim();
       // Exit 0 with no output, or an explicit "cancelled", means cancelled.
       if (!err || CANCEL_HINTS.some((re) => re.test(message))) {
-        resolve(null);
+        resolve([]);
         return;
       }
       reject(new Error(message || `Folder picker exited unexpectedly (${picker.file})`));

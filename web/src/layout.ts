@@ -20,14 +20,28 @@ export const MAX_SIDEBAR = 620;
 /** 0 means "fit as many as the window allows". */
 export type ColumnMode = 0 | 1 | 2 | 3 | 4;
 
+/**
+ * 'fit' divides the visible area between the sessions — 2 become halves, 4
+ * become quadrants — so the board always uses the whole window. 'scroll' keeps
+ * tiles at a fixed height and lets the board scroll, which is better when there
+ * are many sessions and each needs room to read.
+ */
+export type SizeMode = 'fit' | 'scroll';
+
 export interface Layout {
   columns: ColumnMode;
+  sizeMode: SizeMode;
   sidebarWidth: number;
   /** Per-session overrides; anything absent uses the default height. */
   heights: Record<string, number>;
 }
 
-const DEFAULT_LAYOUT: Layout = { columns: 0, sidebarWidth: DEFAULT_SIDEBAR, heights: {} };
+const DEFAULT_LAYOUT: Layout = {
+  columns: 0,
+  sizeMode: 'fit',
+  sidebarWidth: DEFAULT_SIDEBAR,
+  heights: {},
+};
 
 export const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, Math.round(v)));
 
@@ -38,6 +52,7 @@ function load(): Layout {
     const parsed = JSON.parse(raw) as Partial<Layout>;
     return {
       columns: (parsed.columns ?? 0) as ColumnMode,
+      sizeMode: parsed.sizeMode === 'scroll' ? 'scroll' : 'fit',
       sidebarWidth: clamp(parsed.sidebarWidth ?? DEFAULT_SIDEBAR, MIN_SIDEBAR, MAX_SIDEBAR),
       heights: parsed.heights ?? {},
     };
@@ -47,8 +62,24 @@ function load(): Layout {
 }
 
 /** `grid-template-columns` for a column mode. */
-export function gridTemplate(columns: ColumnMode): string {
-  return columns === 0 ? 'repeat(auto-fill, minmax(440px, 1fr))' : `repeat(${columns}, minmax(0, 1fr))`;
+export function gridTemplate(columns: ColumnMode, sizeMode: SizeMode, count: number): string {
+  if (columns !== 0) return `repeat(${columns}, minmax(0, 1fr))`;
+  // Fitting the window means choosing a near-square arrangement: 2 side by
+  // side, 4 as quadrants, 6 as 3x2 — rather than as many 440px columns as fit.
+  if (sizeMode === 'fit') return `repeat(${autoColumns(count)}, minmax(0, 1fr))`;
+  return 'repeat(auto-fill, minmax(440px, 1fr))';
+}
+
+/** Columns for a near-square grid of n tiles, capped so tiles stay readable. */
+export function autoColumns(count: number): number {
+  if (count <= 1) return 1;
+  return Math.min(4, Math.ceil(Math.sqrt(count)));
+}
+
+/** Rows the fitted grid will occupy, so each can be given an equal share. */
+export function autoRows(count: number, columns: ColumnMode): number {
+  const cols = columns === 0 ? autoColumns(count) : columns;
+  return Math.max(1, Math.ceil(count / cols));
 }
 
 export function useLayout() {
@@ -63,6 +94,8 @@ export function useLayout() {
   }, [layout]);
 
   const setColumns = useCallback((columns: ColumnMode) => setLayout((l) => ({ ...l, columns })), []);
+
+  const setSizeMode = useCallback((sizeMode: SizeMode) => setLayout((l) => ({ ...l, sizeMode })), []);
 
   const setSidebarWidth = useCallback(
     (px: number) => setLayout((l) => ({ ...l, sidebarWidth: clamp(px, MIN_SIDEBAR, MAX_SIDEBAR) })),
@@ -83,5 +116,5 @@ export function useLayout() {
 
   const isArranged = Object.keys(layout.heights).length === 0;
 
-  return { layout, setColumns, setSidebarWidth, setHeight, arrangeAll, isArranged };
+  return { layout, setColumns, setSizeMode, setSidebarWidth, setHeight, arrangeAll, isArranged };
 }

@@ -11,7 +11,12 @@ export type SessionState =
   | 'error'
   | 'stopped';
 
-export type PermissionLaunchMode = 'default' | 'acceptEdits' | 'bypassPermissions';
+/**
+ * Mirrors the SDK's PermissionMode. 'auto' lets Claude decide what genuinely
+ * needs asking and is the sensible default; 'default' asks about everything not
+ * already allowlisted.
+ */
+export type PermissionLaunchMode = 'auto' | 'default' | 'acceptEdits' | 'bypassPermissions';
 
 /** One abstracted step in a session's activity feed (the prototype's "feed" view). */
 export interface FeedStep {
@@ -182,8 +187,8 @@ export type ServerEvent =
       stopSessionsWhenClosedSec: number;
       defaultPermissionMode: PermissionLaunchMode;
     }
-  /** Result of a browse_folder request; path is null if the user cancelled. */
-  | { type: 'folder_picked'; path: string | null }
+  /** Result of a browse_folder request; empty when the user cancelled. */
+  | { type: 'folders_picked'; paths: string[] }
   | { type: 'server_error'; message: string };
 
 // ---------- client → server ----------

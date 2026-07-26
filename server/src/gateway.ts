@@ -1,7 +1,7 @@
 import type { ClientCommand, HostPlatform, ServerEvent } from '@claudia/shared';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isClientLive } from './client-liveness.js';
-import { assertUsableDirectory, normalizePath, pickFolder } from './folder-picker.js';
+import { assertUsableDirectory, normalizePath, pickFolders } from './folder-picker.js';
 import type { SessionManager } from './session-manager.js';
 import type { SettingsStore } from './settings-store.js';
 import type { TriggerEngine } from './trigger-engine.js';
@@ -156,18 +156,18 @@ export class Gateway {
           cwd,
           prompt: cmd.prompt,
           model: cmd.model,
-          permissionMode: cmd.permissionMode ?? 'default',
+          permissionMode: cmd.permissionMode ?? 'auto',
         });
         this.settings.rememberDirectory(cwd);
         // The launch mode is sticky: most people keep one posture.
-        this.settings.update({ defaultPermissionMode: cmd.permissionMode ?? 'default' });
+        this.settings.update({ defaultPermissionMode: cmd.permissionMode ?? 'auto' });
         this.broadcastSettings();
         return;
       }
       case 'browse_folder':
         // Open where they last worked rather than at the drive root.
-        pickFolder(this.platform, this.settings.get().recentDirectories[0])
-          .then((path) => this.sendTo(socket, { type: 'folder_picked', path }))
+        pickFolders(this.platform, this.settings.get().recentDirectories[0])
+          .then((paths) => this.sendTo(socket, { type: 'folders_picked', paths }))
           .catch((err: unknown) =>
             this.sendTo(socket, {
               type: 'server_error',
@@ -198,7 +198,9 @@ export class Gateway {
         return;
       case 'require_approvals_everywhere':
         for (const s of this.manager.summaries()) {
-          if (s.permissionMode !== 'default') void this.manager.get(s.id)?.setPermissionMode('default');
+          if (s.permissionMode === 'bypassPermissions') {
+            void this.manager.get(s.id)?.setPermissionMode('default');
+          }
         }
         return;
       case 'toggle_finish_action':

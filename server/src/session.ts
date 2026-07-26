@@ -52,6 +52,8 @@ export class ClaudiaSession {
   private errorMessage: string | undefined;
   /** True until the first prompt is sent, so an empty session reads as idle. */
   private awaitingFirstPrompt = true;
+  /** True while swapping the query for a permission change. */
+  private relaunching = false;
 
   constructor(
     private readonly opts: LaunchOptions,
@@ -115,6 +117,9 @@ export class ClaudiaSession {
       for await (const message of this.q as AsyncIterable<Record<string, unknown>>) {
         this.applyMessage(message);
       }
+      // A relaunch closes the old query on purpose; that is not the end of the
+      // session, so don't mark it stopped.
+      if (this.relaunching) return;
       if (this.state !== 'error') this.setState('stopped');
     } catch (err) {
       this.fail(err instanceof Error ? err.message : String(err));
@@ -192,18 +197,75 @@ export class ClaudiaSession {
     this.setState('working');
   }
 
-  /** Change permissions on a live session — the escape hatch from skip-permissions. */
-  async setPermissionMode(mode: PermissionLaunchMode): Promise<void> {
-    if (this.opts.permissionMode === mode) return;
+  /**
+   * Change permissions on a running session.
+   *
+   * Tightening applies in place. Loosening cannot: the SDK refuses with
+   * "the session was not launched with --dangerously-skip-permissions", the
+   * same restriction `claude` has in a terminal. So the session is relaunched
+   * with `resume`, which preserves the whole conversation — the terminal
+   * workflow of restarting with the flag, done automatically.
+   *
+   * Returns how it was applied so the UI can say which happened.
+   */
+  async setPermissionMode(mode: PermissionLaunchMode): Promise<'in-place' | 'relaunched' | 'unchanged'> {
+    if (this.opts.permissionMode === mode) return 'unchanged';
+
     const q = this.q as { setPermissionMode?: (m: PermissionLaunchMode) => Promise<void> } | null;
-    await q?.setPermissionMode?.(mode).catch(() => undefined);
+    if (q?.setPermissionMode) {
+      try {
+        await q.setPermissionMode(mode);
+        this.opts.permissionMode = mode;
+        this.cb.onFeed(this.id, infoStep('Permission mode', describeMode(mode)));
+        this.cb.onUpdate(this.summary());
+        return 'in-place';
+      } catch {
+        // Expected when loosening; fall through to a resuming relaunch.
+      }
+    }
+
+    await this.relaunchWith(mode);
+    return 'relaunched';
+  }
+
+  /**
+   * Tears down the current query and starts a new one that resumes the same
+   * Claude session, so history survives. Used where the mode cannot change in
+   * place.
+   */
+  private async relaunchWith(mode: PermissionLaunchMode): Promise<void> {
+    const resumeId = this.claudeSessionId;
+    this.gate.abandon('Restarting with new permissions');
+    this.abandonRunningTools('session restarted');
+    this.relaunching = true;
+    try {
+      (this.q as { close?: () => void } | null)?.close?.();
+    } catch {
+      /* already closed */
+    }
+    this.q = null;
     this.opts.permissionMode = mode;
+
     this.cb.onFeed(
       this.id,
-      mode === 'bypassPermissions'
-        ? errorStep('Permissions skipped', 'every tool call now runs without asking')
-        : infoStep('Permission mode', mode === 'acceptEdits' ? 'edits auto-accepted' : 'approvals required'),
+      infoStep(
+        'Restarted with new permissions',
+        `${describeMode(mode)}${resumeId ? ' · conversation kept' : ''}`,
+      ),
     );
+
+    this.q = query({
+      prompt: this.input as AsyncIterable<never>,
+      options: {
+        cwd: this.opts.cwd,
+        ...(this.opts.model ? { model: this.opts.model } : {}),
+        ...(resumeId ? { resume: resumeId } : {}),
+        permissionMode: mode,
+        canUseTool: (toolName, input) => this.onPermissionRequest(toolName, input),
+      },
+    });
+    this.relaunching = false;
+    void this.consume();
     this.cb.onUpdate(this.summary());
   }
 
@@ -257,5 +319,19 @@ export class ClaudiaSession {
     if (this.state === 'stopped' && state !== 'stopped') return;
     this.state = state;
     this.cb.onUpdate(this.summary());
+  }
+}
+
+/** Plain-English description of a permission mode, for the feed. */
+function describeMode(mode: PermissionLaunchMode): string {
+  switch (mode) {
+    case 'bypassPermissions':
+      return 'permissions skipped — tools run without asking';
+    case 'acceptEdits':
+      return 'edits auto-accepted; commands still ask';
+    case 'auto':
+      return 'auto — Claude decides what needs asking';
+    default:
+      return 'approvals required';
   }
 }

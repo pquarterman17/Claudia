@@ -1,11 +1,17 @@
 import type { PermissionLaunchMode } from '@claudia/shared';
 import { useEffect, useRef, useState } from 'react';
-import { onFolderPicked, send } from '../store';
+import { onFoldersPicked, send } from '../store';
 
-const MODES: Array<{ key: PermissionLaunchMode; label: string; danger?: boolean }> = [
-  { key: 'default', label: 'Ask each time' },
-  { key: 'acceptEdits', label: 'Auto-accept edits' },
-  { key: 'bypassPermissions', label: 'Skip all permissions', danger: true },
+const MODES: Array<{ key: PermissionLaunchMode; label: string; title: string; danger?: boolean }> = [
+  { key: 'auto', label: 'Auto', title: 'Claude decides what genuinely needs asking' },
+  { key: 'default', label: 'Ask each time', title: 'Prompt for anything not already allowlisted' },
+  { key: 'acceptEdits', label: 'Accept edits', title: 'Edits apply without asking; commands still prompt' },
+  {
+    key: 'bypassPermissions',
+    label: 'Skip all',
+    title: 'Every tool call runs unprompted — nothing will stop to ask you',
+    danger: true,
+  },
 ];
 
 interface Props {
@@ -30,11 +36,27 @@ export function LaunchBar({ recentDirectories, defaultMode }: Props) {
   // The native dialog runs on the server; its answer arrives over the socket.
   useEffect(
     () =>
-      onFolderPicked((path) => {
+      onFoldersPicked((paths) => {
         setBrowsing(false);
-        if (path) setCwd(path);
+        if (paths.length === 0) return;
+        if (paths.length === 1) {
+          setCwd(paths[0] ?? '');
+          return;
+        }
+        // Several folders chosen: start one session in each, rather than making
+        // the user launch them one at a time.
+        for (const dir of paths) {
+          send({
+            type: 'launch_session',
+            cwd: dir,
+            ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+            permissionMode: mode,
+          });
+        }
+        setCwd(paths[paths.length - 1] ?? '');
+        setPrompt('');
       }),
-    [],
+    [prompt, mode],
   );
 
   // Never strand the button on "Choosing…". If the dialog is missed or the
@@ -98,7 +120,7 @@ export function LaunchBar({ recentDirectories, defaultMode }: Props) {
       <button
         className="btn btn-secondary"
         disabled={browsing}
-        title="Open a folder picker on this machine (look for it in front of the browser)"
+        title="Pick a folder — ctrl-click several to start a session in each"
         onClick={() => {
           setBrowsing(true);
           send({ type: 'browse_folder' });

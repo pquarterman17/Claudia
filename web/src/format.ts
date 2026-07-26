@@ -24,3 +24,24 @@ export function fmtDur(ms?: number): string {
   if (s < 90) return `${s.toFixed(1)}s`;
   return `${Math.round(s / 60)}m`;
 }
+
+/**
+ * Short, readable model name. Raw ids look like
+ * "claude-opus-4-5-20251101" or "claude-opus-5[1m]"; splitting on the first
+ * dash gave "claude", which told you nothing about which model was running.
+ */
+export function fmtModel(model: string | undefined): string {
+  if (!model) return 'model?';
+  const longContext = /\[1m\]/.test(model);
+  const core = model
+    .replace(/\[1m\]/, '')
+    .replace(/^claude-/, '')
+    .replace(/-\d{8}$/, '');
+  const parts = core.split('-');
+  const family = parts[0] ?? core;
+  const version = parts.slice(1).filter((p) => /^[\d.]+$/.test(p)).join('.');
+  const name = version ? `${cap(family)} ${version}` : cap(family);
+  return longContext ? `${name} 1M` : name;
+}
+
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);

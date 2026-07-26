@@ -85,6 +85,13 @@ body,
   align-content: start;
 }
 
+/* Fit mode: the grid owns the visible area and divides it, so nothing scrolls
+   and every tile gets an equal share. */
+.board-fit {
+  overflow: hidden;
+  align-content: stretch;
+}
+
 .tile {
   position: relative;
   display: flex;

@@ -61,8 +61,46 @@ namespace ClaudiaPicker {
     void GetResult(out IShellItem ppsi);
   }
 
+  [ComImport, Guid("d57c7288-d4ad-4768-be02-9d969532d960"),
+   InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IFileOpenDialog {
+    // IFileDialog's slots come first: this interface extends it, and COM
+    // dispatch is by slot order.
+    [PreserveSig] int Show(IntPtr hwndOwner);
+    void SetFileTypes(); void SetFileTypeIndex(); void GetFileTypeIndex();
+    void Advise(); void Unadvise();
+    void SetOptions(uint fos);
+    void GetOptions(out uint fos);
+    void SetDefaultFolder(IShellItem psi);
+    void SetFolder(IShellItem psi);
+    void GetFolder(out IShellItem ppsi);
+    void GetCurrentSelection(out IShellItem ppsi);
+    void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+    void GetFileName();
+    void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string pszTitle);
+    void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string pszText);
+    void SetFileNameLabel();
+    void GetResult(out IShellItem ppsi);
+    void AddPlace(); void SetDefaultExtension(); void Close(); void SetClientGuid();
+    void ClearClientData(); void SetFilter();
+    // IFileOpenDialog adds these two.
+    void GetResults(out IShellItemArray ppenum);
+    void GetSelectedItems(out IShellItemArray ppsai);
+  }
+
+  [ComImport, Guid("b63ea76d-1f85-456f-a19c-48159efa858b"),
+   InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IShellItemArray {
+    void BindToHandler(); void GetPropertyStore(); void GetPropertyDescriptionList();
+    void GetAttributes();
+    void GetCount(out uint pdwNumItems);
+    void GetItemAt(uint dwIndex, out IShellItem ppsi);
+    void EnumItems();
+  }
+
   public static class Picker {
     const uint FOS_PICKFOLDERS = 0x00000020;
+    const uint FOS_ALLOWMULTISELECT = 0x00000200;
     const uint FOS_FORCEFILESYSTEM = 0x00000040;
     const uint SIGDN_FILESYSPATH = 0x80058000;
     const int S_OK = 0;
@@ -74,14 +112,17 @@ namespace ClaudiaPicker {
     static extern IShellItem SHCreateItemFromParsingName(
       string path, IntPtr bc, [In] ref Guid riid);
 
-    /// <summary>Chosen folder, or null if the user cancelled.</summary>
+    /// <summary>
+    /// Chosen folders, one per line, or null if cancelled. Multi-select is on,
+    /// so ctrl-clicking several repos starts a session in each.
+    /// </summary>
     public static string Choose(IntPtr owner, string startPath) {
       // This cast is the QueryInterface that PowerShell cannot do.
-      IFileDialog dialog = (IFileDialog)(new FileOpenDialogCoClass());
+      IFileOpenDialog dialog = (IFileOpenDialog)(new FileOpenDialogCoClass());
       try {
-        dialog.SetOptions(FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
-        dialog.SetTitle("Select a working directory for Claudia");
-        dialog.SetOkButtonLabel("Use this folder");
+        dialog.SetOptions(FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_ALLOWMULTISELECT);
+        dialog.SetTitle("Select working directories for Claudia (ctrl-click for several)");
+        dialog.SetOkButtonLabel("Use these folders");
 
         if (!string.IsNullOrEmpty(startPath)) {
           try {
@@ -94,12 +135,24 @@ namespace ClaudiaPicker {
 
         if (dialog.Show(owner) != S_OK) return null;   // cancelled
 
-        IShellItem item;
-        dialog.GetResult(out item);
-        string path;
-        item.GetDisplayName(SIGDN_FILESYSPATH, out path);
-        Marshal.ReleaseComObject(item);
-        return path;
+        IShellItemArray items;
+        dialog.GetResults(out items);
+        uint count;
+        items.GetCount(out count);
+        var paths = new System.Text.StringBuilder();
+        for (uint i = 0; i < count; i++) {
+          IShellItem item;
+          items.GetItemAt(i, out item);
+          string path;
+          item.GetDisplayName(SIGDN_FILESYSPATH, out path);
+          // (char)10 rather than an escape: this C# lives inside a PowerShell
+          // here-string, where a backslash escape is one more thing to get wrong.
+          if (paths.Length > 0) paths.Append((char)10);
+          paths.Append(path);
+          Marshal.ReleaseComObject(item);
+        }
+        Marshal.ReleaseComObject(items);
+        return paths.ToString();
       } finally {
         Marshal.ReleaseComObject(dialog);
       }

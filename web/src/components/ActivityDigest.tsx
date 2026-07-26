@@ -1,5 +1,5 @@
 import type { FeedStep, SessionSummary } from '@claudia/shared';
-import { elapsed, fmtCost, fmtTokens } from '../format';
+import { elapsed, fmtCost, fmtModel, fmtTokens } from '../format';
 import { COLORS, statusOf } from '../status';
 
 interface Props {
@@ -83,6 +83,7 @@ export function ActivityDigest({ sessions, feeds, now }: Props) {
                   {session.name}
                 </span>
                 <span style={{ flex: 1 }} />
+                <span style={{ fontSize: 9.5, color: '#75798c' }}>{fmtModel(session.model)}</span>
                 <span style={{ fontSize: 10, color: '#595d6c', fontVariantNumeric: 'tabular-nums' }}>
                   {elapsed(session.lastActivityAt, now)}
                 </span>

@@ -1,6 +1,6 @@
 import type { FeedStep, SessionSummary } from '@claudia/shared';
 import { useRef, useState } from 'react';
-import { elapsed, fmtCost, fmtTokens } from '../format';
+import { elapsed, fmtCost, fmtModel, fmtTokens } from '../format';
 import { send } from '../store';
 import { COLORS, statusOf } from '../status';
 import { ApprovalBanner } from './ApprovalBanner';
@@ -12,7 +12,8 @@ interface Props {
   now: number;
   index: number;
   focused: boolean;
-  height: number;
+  /** Fixed height in scroll mode; undefined lets the grid size the tile. */
+  height: number | undefined;
   onResize: (px: number) => void;
 }
 
@@ -55,7 +56,7 @@ export function SessionTile({ session, steps, now, index, focused, height, onRes
       id={`session-${session.id}`}
       className={cls}
       style={{
-        height,
+        ...(height === undefined ? { minHeight: 0 } : { height }),
         ...(yolo ? { borderColor: '#5c3b3b', boxShadow: 'inset 0 2px 0 #8a4f4f' } : {}),
         ...(focused ? { outline: '1px solid #796cbf', outlineOffset: 2 } : {}),
       }}
@@ -97,14 +98,16 @@ export function SessionTile({ session, steps, now, index, focused, height, onRes
           style={{
             flex: 'none',
             fontSize: 10,
-            color: '#9397ab',
-            border: `1px solid ${yolo ? '#8a4f4f' : '#33364a'}`,
-            background: yolo ? '#2e2226' : 'transparent',
+            border: `1px solid ${yolo ? '#8a4f4f' : '#3f424d'}`,
+            background: yolo ? '#2e2226' : '#22252f',
             borderRadius: 4,
-            padding: '1px 5px',
+            padding: '1px 6px',
+            fontVariantNumeric: 'tabular-nums',
+            color: yolo ? '#e0a0a0' : '#b5abfc',
           }}
+          title={`${session.model ?? 'model unknown'} · ${session.permissionMode}`}
         >
-          {session.model?.split(/[-\s]/)[0] ?? '—'}
+          {fmtModel(session.model)}
           {yolo ? ' ⚠' : ''}
         </span>
         {(session.state === 'working' || session.state === 'starting') && (
@@ -194,7 +197,9 @@ export function SessionTile({ session, steps, now, index, focused, height, onRes
         </span>
       </div>
 
-      <div className="tile-grip" onMouseDown={onGripDown} title="Drag to resize this tile" />
+      {height !== undefined && (
+        <div className="tile-grip" onMouseDown={onGripDown} title="Drag to resize this tile" />
+      )}
     </div>
   );
 }

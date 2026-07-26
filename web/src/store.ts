@@ -54,7 +54,7 @@ class Store {
     recentDirectories: [],
     countdownSec: 30,
     stopSessionsWhenClosedSec: 30,
-    defaultPermissionMode: 'default',
+    defaultPermissionMode: 'auto',
   };
   private listeners = new Set<Listener>();
   private ws: WebSocket | null = null;
@@ -62,9 +62,9 @@ class Store {
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private pingTimer: ReturnType<typeof setInterval> | undefined;
   /** One-off replies (folder picker) that aren't part of the rendered snapshot. */
-  private folderListeners = new Set<(path: string | null) => void>();
+  private folderListeners = new Set<(paths: string[]) => void>();
 
-  onFolderPicked = (fn: (path: string | null) => void): (() => void) => {
+  onFoldersPicked = (fn: (paths: string[]) => void): (() => void) => {
     this.folderListeners.add(fn);
     return () => this.folderListeners.delete(fn);
   };
@@ -178,8 +178,8 @@ class Store {
       case 'usage':
         this.set({ usage: event.usage });
         return;
-      case 'folder_picked':
-        for (const listener of this.folderListeners) listener(event.path);
+      case 'folders_picked':
+        for (const listener of this.folderListeners) listener(event.paths);
         return;
       case 'session_upsert': {
         const rest = this.state.sessions.filter((s) => s.id !== event.session.id);
@@ -227,4 +227,4 @@ export function useClaudia(): ClaudiaState {
 }
 
 export const send = (cmd: ClientCommand): void => store.send(cmd);
-export const onFolderPicked = store.onFolderPicked;
+export const onFoldersPicked = store.onFoldersPicked;

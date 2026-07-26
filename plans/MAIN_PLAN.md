@@ -68,12 +68,35 @@ desktop and a MacBook at different times, so the app must run natively on both �
 
 ## Tier 1 — High Impact
 
+### Terminal-parity initiative (2026-07-26)
+
+Goal: full functional parity with the interactive Claude Code terminal, keeping Claudia's
+multi-session legibility — the owner likes the terminal and only loses track of which window
+is which. Decisions: reading = feed ⇄ transcript toggle per tile; identity = auto-titles +
+manual rename + color accents, first; review surfaces (edit diffs, plan mode) deliberately a
+later tier since the owner mostly runs with permissions skipped.
+
+22. **Session identity pack** — the owner's stated pain: twins in one repo are confusable.
+    - [ ] Auto-title each session from its task via the SDK's `generateSessionTitle` (same
+          machinery as terminal tab titles), refreshed after the first turn
+    - [ ] Click-to-rename on the tile; manual name wins over auto
+    - [ ] Stable per-session accent color on tile border + digest row
+23. **Quick conversation controls** — the cheap 80% of `/commands`:
+    - [ ] Model picker per session (`setModel`; model list from the init response)
+    - [ ] Effort control (`setMaxThinkingTokens`)
+    - [ ] "New conversation here" button (= `/clear`: fresh session, same cwd/mode)
+    - [ ] Up-arrow prompt history in the composer
+24. **Transcript view** — per-tile toggle feed ⇄ transcript: complete replies rendered as
+    markdown, thinking shown collapsed with token count, tool calls expandable to full
+    input/output. Absorbs #15 (feed detail view). Supervisor board unchanged by default.
+
+
 ### Owner testing feedback (2026-07-26) — logged, NOT started at owner's request
 
-18. **Slash commands** — "/model" etc. do nothing (SDK sessions treat them as prose). The SDK
-    exposes `setModel`/`setMaxThinkingTokens`, and its init response lists available commands —
-    so: probe whether stream-json input interprets "/" at all, wire the real controls (model
-    picker first), and add a GUI entry point + help list of what's supported.
+18. **Slash commands, full surface** — (expanded by the parity initiative; the easy wins moved
+    to #23). Remaining: probe whether stream-json input interprets "/" at all (the init
+    response lists available commands — /compact and the owner's custom skills are the prizes),
+    then surface whatever works in the palette plus a help list.
 19. **Warm spawn** — a no-prompt session starts nothing until the first prompt (deliberate:
     the SDK emits init only once it has input, and an eager query once left sessions stuck in
     'starting'). Perceived as broken. Design: spawn the process eagerly so MCP/boot cost is
@@ -85,14 +108,19 @@ desktop and a MacBook at different times, so the app must run natively on both �
     preview sentence ("will: notify, then save learnings, then shut down"), and consider a
     dry-run mode. Also make the disabled commit+push state visible without hover.
 
-2. **Session resume** — reattach to a previous session via `claudeSessionId` (the SDK supports
-   `resume` / `forkSession`; nothing in the UI exposes it yet). Also a per-session model picker.
+2. **Session resume** — absorbed: resume picker → #25, model picker → #23.
 13. **Verify on macOS** — everything below was built and checked on Windows only. The per-OS
     paths are unit-tested (`pmset`, `osascript`, POSIX separators) but never executed there:
     the folder picker's `osascript choose folder`, the notify and sleep commands, and the ⌘
     modifier all need one real pass on the MacBook.
 
 ## Tier 2 — Medium Impact
+
+25. **Resume + rewind** — `/resume` parity: picker over `~/.claude` session history for a cwd,
+    reattach via `resume` (subsumes the resume half of #2); `/rewind` parity via the SDK's
+    `rewindFiles` with a checkpoint list in the tile.
+26. **Context-window awareness** — per-tile context-fill %, from `modelUsage.contextWindow`,
+    with a visible warning before auto-compact territory. Terminal-statusline parity.
 
 7. **"Commit + push" finish action** — deliberately disabled in the UI rather than shipped
    as a silent no-op. Needs per-repo rules before it pushes unreviewed work: which repos are
@@ -107,10 +135,16 @@ desktop and a MacBook at different times, so the app must run natively on both �
 
 ## Tier 3 — Nice-to-Have
 
+27. **Session todo list** — render the session's own TaskCreate/TodoWrite list in the tile,
+    as the terminal does.
+28. **Input niceties** — paste images into the composer (SDK user messages take image blocks);
+    `@file` mention autocomplete (needs a small server file-search endpoint).
+29. **Review surfaces** — edit approvals show a real diff; plan mode rendered with
+    approve/revise from the tile (probe what the SDK delivers). Owner: later tier is fine
+    while running permission-skipped. Extends #12.
+
 11. **Tauri wrap** — native window/tray/notifications around the web UI
 12. **Diff peek + per-project auto-approve rules**
-15. **Feed detail view** — click a step to see the full tool input and result, rather than the
-    one-line summary. Raw message log as a fallback view.
 
 ## Completed
 

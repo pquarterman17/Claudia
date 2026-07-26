@@ -87,7 +87,13 @@ const manager = new SessionManager({
     gateway.broadcast({ type: 'feed_update', sessionId, stepId, patch }),
   onDraft: (sessionId, text) => gateway.broadcast({ type: 'draft', sessionId, text }),
   onCommands: (sessionId, commands) => gateway.broadcast({ type: 'session_commands', sessionId, commands }),
-  onTranscript: (sessionId, item) => gateway.broadcast({ type: 'transcript_append', sessionId, item }),
+  onTranscript: (sessionId, item) => {
+    // A `/cost` reply is just another assistant transcript item; this is the
+    // one place every session's transcript already flows through, so it is
+    // where the real-usage capture gets a look at each one.
+    usage.captureReal(sessionId, item);
+    gateway.broadcast({ type: 'transcript_append', sessionId, item });
+  },
   onRemoved: (sessionId) => gateway.broadcast({ type: 'session_removed', sessionId }),
 });
 

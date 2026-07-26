@@ -1,4 +1,4 @@
-import type { PlanTier, UsageSnapshot, UsageWindow } from '@claudia/shared';
+import type { PlanTier, SessionSummary, UsageSnapshot, UsageWindow } from '@claudia/shared';
 import { fmtTokens } from '../format';
 import { send } from '../store';
 import { COLORS } from '../status';
@@ -21,6 +21,17 @@ const LEVEL_BAR = {
 interface Props {
   usage: UsageSnapshot;
   customCeilings?: { sessionTokens: number; weeklyTokens: number };
+  sessions: SessionSummary[];
+}
+
+/**
+ * `/cost` has to be sent to a live session, so a target has to be chosen.
+ * An idle one is preferred — sending it to a session mid-turn still works
+ * (the SDK just queues it) but delays the answer behind whatever it was
+ * already doing.
+ */
+function pickCostTarget(sessions: SessionSummary[]): SessionSummary | undefined {
+  return sessions.find((s) => s.state === 'idle') ?? sessions.find((s) => s.state !== 'stopped');
 }
 
 /**
@@ -38,14 +49,16 @@ export function usageHeadline(w: UsageWindow): { value: string; suffix: string }
 }
 
 /**
- * Plan usage from local session history. Every number here is an estimate —
- * no API exposes real allowances — so the panel says so rather than implying
- * server truth.
+ * Plan usage from local session history, plus real usage when it has been
+ * fetched via `/cost`. The history windows below are always an estimate —
+ * no API exposes real allowances on its own — but `/cost` sent as a prompt
+ * to a live session does, so the panel shows that instead whenever it has it.
  */
-export function UsagePanel({ usage, customCeilings }: Props) {
+export function UsagePanel({ usage, customCeilings, sessions }: Props) {
   const sendCeilings = (session: number, weekly: number) =>
     send({ type: 'set_custom_ceilings', sessionTokens: session, weeklyTokens: weekly });
   const maxProject = Math.max(1, ...usage.byProject.map((p) => p.billableTokens));
+  const costTarget = pickCostTarget(sessions);
 
   return (
     <div
@@ -60,6 +73,63 @@ export function UsagePanel({ usage, customCeilings }: Props) {
         background: '#1c1e2b',
       }}
     >
+      <div style={{ minWidth: 200 }}>
+        <div className="kicker" style={{ marginBottom: 8 }}>
+          Real plan limits
+        </div>
+        <button
+          type="button"
+          disabled={!costTarget || usage.realPending}
+          onClick={() => costTarget && send({ type: 'fetch_real_usage', sessionId: costTarget.id })}
+          title={
+            costTarget
+              ? `Sends /cost to "${costTarget.name}" — costs that session a few tokens and adds two lines to its transcript`
+              : 'No live session to ask — launch one first'
+          }
+          style={{
+            cursor: !costTarget || usage.realPending ? 'not-allowed' : 'pointer',
+            borderRadius: 7,
+            minHeight: 28,
+            padding: '4px 10px',
+            fontFamily: 'var(--font-body)',
+            fontSize: 11.5,
+            border: '1px solid #33364a',
+            background: 'transparent',
+            color: !costTarget ? '#595d6c' : '#9397ab',
+            opacity: usage.realPending ? 0.6 : 1,
+          }}
+        >
+          {usage.realPending ? 'asking the CLI…' : 'Refresh from /cost'}
+        </button>
+
+        {usage.real ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+            {usage.real.windows.map((w) => (
+              <div key={w.label}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ fontSize: 11, color: '#9397ab' }}>{w.label}</span>
+                  <span style={{ flex: 1 }} />
+                  <span style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums', color: '#d2cefd' }}>
+                    {w.usedPct}%
+                  </span>
+                </div>
+                <div style={{ fontSize: 10, color: '#595d6c' }}>resets {w.resetsAt}</div>
+              </div>
+            ))}
+            <div style={{ fontSize: 10, color: '#595d6c' }}>
+              real, via {sessions.find((s) => s.id === usage.real?.sessionId)?.name ?? 'a session'} ·{' '}
+              {new Date(usage.real.fetchedAt).toLocaleTimeString()}
+            </div>
+          </div>
+        ) : (
+          <p style={{ fontSize: 10.5, color: '#595d6c', marginTop: 8, lineHeight: 1.5 }}>
+            {costTarget
+              ? 'Not fetched yet — the windows below stay a local-history estimate until you ask the CLI directly.'
+              : 'No live session to ask. Launch one, then refresh.'}
+          </p>
+        )}
+      </div>
+
       <div style={{ minWidth: 260 }}>
         <div className="kicker" style={{ marginBottom: 8 }}>
           Measured against
@@ -238,9 +308,11 @@ export function UsagePanel({ usage, customCeilings }: Props) {
         </div>
         <p style={{ fontSize: 10, color: '#595d6c', marginTop: 12, lineHeight: 1.5 }}>
           Counted from this machine's own session logs — terminal sessions included, other
-          machines not. No API reports real plan allowances, so the default compares against a
-          typical day of your own rather than inventing a ceiling. Cache reads are weighted at
-          10%, as billing does.
+          machines not.{' '}
+          {usage.real
+            ? 'Real plan allowance is shown on the left, fetched on demand via /cost — these windows stay a local-history estimate.'
+            : 'No API reports real plan allowances on its own, so the default compares against a typical day of your own rather than inventing a ceiling.'}{' '}
+          Cache reads are weighted at 10%, as billing does.
         </p>
       </div>
     </div>

@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
-import type { UsageSnapshot } from '@claudia/shared';
+import type { SessionSummary, UsageSnapshot } from '@claudia/shared';
 import { UsagePanel, usageHeadline } from './UsagePanel';
 
 interface Props {
   usage: UsageSnapshot;
   customCeilings?: { sessionTokens: number; weeklyTokens: number };
+  sessions: SessionSummary[];
   onClose: () => void;
 }
 
@@ -16,7 +17,7 @@ function summary(usage: UsageSnapshot) {
 }
 
 /** A modal surface so usage details never steal height from the session board. */
-export function UsageDrawer({ usage, customCeilings, onClose }: Props) {
+export function UsageDrawer({ usage, customCeilings, sessions, onClose }: Props) {
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -55,7 +56,7 @@ export function UsageDrawer({ usage, customCeilings, onClose }: Props) {
           </button>
         </header>
         <div className="usage-drawer-content">
-          <UsagePanel usage={usage} customCeilings={customCeilings} />
+          <UsagePanel usage={usage} customCeilings={customCeilings} sessions={sessions} />
         </div>
       </section>
     </div>

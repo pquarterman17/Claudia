@@ -1,4 +1,5 @@
-import type { PlanTier, UsageSnapshot, UsageWindow } from '@claudia/shared';
+import type { PlanTier, RealUsage, TranscriptItem, UsageSnapshot, UsageWindow } from '@claudia/shared';
+import { parseCostReply } from './cost-parser.js';
 import {
   billableTokens,
   referenceFromCustom,
@@ -20,6 +21,9 @@ export class UsageService {
   private tier: PlanTier = 'auto';
   private customCeilings: { sessionTokens: number; weeklyTokens: number } | undefined;
   private timer: NodeJS.Timeout | undefined;
+  private real: RealUsage | null = null;
+  /** The session a `/cost` fetch is armed for, or null when none is in flight. */
+  private pendingReal: string | null = null;
 
   constructor(private readonly onChange: () => void) {}
 
@@ -40,6 +44,32 @@ export class UsageService {
 
   setCustomCeilings(c: { sessionTokens: number; weeklyTokens: number }): void {
     this.customCeilings = c;
+    this.onChange();
+  }
+
+  /**
+   * Arms capture of the next assistant reply from `sessionId` as real plan
+   * usage, then runs `sendCost` (the caller's `session.sendPrompt('/cost')`).
+   * Sending is the caller's job, not this service's, so this file never
+   * touches a session directly — it only knows the shape of the reply.
+   */
+  requestReal(sessionId: string, sendCost: () => void): void {
+    this.pendingReal = sessionId;
+    sendCost();
+    this.onChange();
+  }
+
+  /**
+   * Every transcript item flows through here; only the one this is armed for
+   * matters. The arm clears whether or not parsing found anything — a
+   * `/cost` reply is exactly one assistant message, so leaving it armed past
+   * that would risk a later, unrelated reply being mistaken for the answer.
+   */
+  captureReal(sessionId: string, item: TranscriptItem): void {
+    if (this.pendingReal !== sessionId || item.kind !== 'assistant') return;
+    this.pendingReal = null;
+    const windows = parseCostReply(item.text);
+    if (windows.length > 0) this.real = { windows, fetchedAt: Date.now(), sessionId };
     this.onChange();
   }
 
@@ -80,6 +110,8 @@ export class UsageService {
         .map((g) => ({ model: g.key, billableTokens: billableTokens(g.tokens) })),
       scannedAt: this.reader.scannedAt,
       scanning: this.reader.isScanning,
+      real: this.real,
+      realPending: this.pendingReal !== null,
     };
   }
 

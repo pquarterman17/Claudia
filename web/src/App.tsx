@@ -131,7 +131,7 @@ export function App() {
         onToggleUsage={() => setUsageOpen((v) => !v)}
       />
       {usageOpen && usage && (
-        <UsageDrawer usage={usage} customCeilings={customCeilings} onClose={() => setUsageOpen(false)} />
+        <UsageDrawer usage={usage} customCeilings={customCeilings} sessions={sessions} onClose={() => setUsageOpen(false)} />
       )}
       <LaunchBar
         recentDirectories={recentDirectories}

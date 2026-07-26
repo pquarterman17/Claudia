@@ -1,4 +1,4 @@
-import type { FeedStep, ModelUsage, NeedsAction, SessionState, SubAgentRun } from '@claudia/shared';
+import type { FeedStep, ModelUsage, NeedsAction, SessionState, SubAgentRun, TranscriptItem } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import { errorStep, infoStep, resultStep, stepFromText, stepFromToolUse } from './feed.js';
 
@@ -31,6 +31,8 @@ export interface RoutedMessage {
   subAgent?: { toolUseId: string; run: Partial<SubAgentRun> & { taskId: string } };
   /** A streamed text fragment of the reply currently being written. */
   draftDelta?: string;
+  /** Full-fidelity transcript entries this message produced, never truncated. */
+  transcriptItems?: TranscriptItem[];
 }
 
 const EMPTY: RoutedMessage = { steps: [] };
@@ -138,25 +140,34 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
     const inner = message['message'] as Record<string, unknown> | undefined;
     const steps: FeedStep[] = [];
     const toolStarts: Array<{ toolUseId: string; stepId: string }> = [];
+    const transcriptItems: TranscriptItem[] = [];
     const content = inner?.['content'];
     if (Array.isArray(content)) {
       for (const block of content as Array<Record<string, unknown>>) {
         if (block['type'] === 'tool_use') {
-          const step = stepFromToolUse(
-            String(block['name'] ?? 'tool'),
-            (block['input'] as Record<string, unknown>) ?? {},
-          );
+          const name = String(block['name'] ?? 'tool');
+          const input = (block['input'] as Record<string, unknown>) ?? {};
+          const step = stepFromToolUse(name, input);
           step.status = 'running';
           steps.push(step);
           const id = block['id'];
           if (typeof id === 'string') toolStarts.push({ toolUseId: id, stepId: step.id });
+          transcriptItems.push({ ts: Date.now(), kind: 'tool_use', toolName: name, text: JSON.stringify(input, null, 2) });
         } else if (block['type'] === 'text' && typeof block['text'] === 'string') {
           const step = stepFromText(block['text']);
           if (step) steps.push(step);
+          if (block['text'].trim()) transcriptItems.push({ ts: Date.now(), kind: 'assistant', text: block['text'] });
+        } else if (block['type'] === 'thinking' && typeof block['thinking'] === 'string' && block['thinking'].trim()) {
+          transcriptItems.push({ ts: Date.now(), kind: 'thinking', text: block['thinking'] });
         }
       }
     }
-    return { steps, state: 'working', ...(toolStarts.length ? { toolStarts } : {}) };
+    return {
+      steps,
+      state: 'working',
+      ...(toolStarts.length ? { toolStarts } : {}),
+      ...(transcriptItems.length ? { transcriptItems } : {}),
+    };
   }
 
   // User messages carry tool_result blocks — the other half of each tool call.
@@ -165,13 +176,17 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
     const content = inner?.['content'];
     if (!Array.isArray(content)) return EMPTY;
     const toolEnds: Array<{ toolUseId: string; isError: boolean }> = [];
+    const transcriptItems: TranscriptItem[] = [];
     for (const block of content as Array<Record<string, unknown>>) {
       if (block['type'] !== 'tool_result') continue;
       const id = block['tool_use_id'];
       // is_error is absent on success rather than false, so coerce.
       if (typeof id === 'string') toolEnds.push({ toolUseId: id, isError: block['is_error'] === true });
+      const resultContent = block['content'];
+      const text = typeof resultContent === 'string' ? resultContent : JSON.stringify(resultContent, null, 2);
+      transcriptItems.push({ ts: Date.now(), kind: 'tool_result', text });
     }
-    return toolEnds.length ? { steps: [], toolEnds } : EMPTY;
+    return toolEnds.length ? { steps: [], toolEnds, transcriptItems } : EMPTY;
   }
 
   if (type === 'result') {

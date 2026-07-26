@@ -194,6 +194,13 @@ export class Gateway {
       case 'interrupt':
         void this.manager.get(cmd.sessionId)?.interrupt();
         return;
+      case 'get_transcript':
+        this.sendTo(socket, {
+          type: 'transcript',
+          sessionId: cmd.sessionId,
+          items: this.manager.get(cmd.sessionId)?.transcript.list() ?? [],
+        });
+        return;
       case 'stop_session':
         this.manager.get(cmd.sessionId)?.stop();
         return;

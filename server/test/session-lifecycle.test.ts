@@ -1,4 +1,4 @@
-import type { FeedStep, FeedStepPatch, SessionSummary } from '@claudia/shared';
+import type { FeedStep, FeedStepPatch, SessionSummary, TranscriptItem } from '@claudia/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FakeQuery, assistantText, initMsg, resultMsg, streamDelta, tick } from './fake-query.js';
 
@@ -33,10 +33,11 @@ interface Recorded {
   feeds: FeedStep[];
   patches: Array<{ stepId: string; patch: FeedStepPatch }>;
   drafts: Array<string | null>;
+  transcriptItems: TranscriptItem[];
 }
 
 function launch(opts: { prompt?: string; permissionMode?: SessionSummary['permissionMode'] } = {}): Recorded {
-  const rec: Recorded = { session: null as never, updates: [], feeds: [], patches: [], drafts: [] };
+  const rec: Recorded = { session: null as never, updates: [], feeds: [], patches: [], drafts: [], transcriptItems: [] };
   rec.session = new ClaudiaSession(
     { cwd: 'C:/x', permissionMode: opts.permissionMode ?? 'auto', ...(opts.prompt ? { prompt: opts.prompt } : {}) },
     {
@@ -44,6 +45,7 @@ function launch(opts: { prompt?: string; permissionMode?: SessionSummary['permis
       onFeed: (_id, step) => rec.feeds.push(step),
       onFeedPatch: (_id, stepId, patch) => rec.patches.push({ stepId, patch }),
       onDraft: (_id, text) => rec.drafts.push(text),
+      onTranscript: (_id, item) => rec.transcriptItems.push(item),
     },
   );
   rec.session.start();

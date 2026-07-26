@@ -215,3 +215,100 @@ describe('routeMessage', () => {
     expect(() => routeMessage({ type: 'assistant', message: { content: 'nope' } }, T0)).not.toThrow();
   });
 });
+
+describe('routeMessage transcript extraction', () => {
+  it('extracts assistant text in full, without truncation', () => {
+    const longText = 'a very long reply. '.repeat(50); // far past the feed's 200-char truncation
+    const r = routeMessage(
+      { type: 'assistant', message: { content: [{ type: 'text', text: longText }] } },
+      T0,
+    );
+    expect(r.transcriptItems).toHaveLength(1);
+    expect(r.transcriptItems?.[0]).toMatchObject({ kind: 'assistant', text: longText });
+    expect(r.transcriptItems?.[0]?.text.length).toBe(longText.length);
+    expect(typeof r.transcriptItems?.[0]?.ts).toBe('number');
+  });
+
+  it('extracts thinking blocks with their text under the thinking key', () => {
+    const r = routeMessage(
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'thinking', thinking: 'considering the options' }] },
+      },
+      T0,
+    );
+    expect(r.transcriptItems).toEqual([
+      expect.objectContaining({ kind: 'thinking', text: 'considering the options' }),
+    ]);
+  });
+
+  it('extracts tool_use blocks with the tool name and formatted input', () => {
+    const r = routeMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'npm test' } }],
+        },
+      },
+      T0,
+    );
+    expect(r.transcriptItems).toEqual([
+      expect.objectContaining({
+        kind: 'tool_use',
+        toolName: 'Bash',
+        text: JSON.stringify({ command: 'npm test' }, null, 2),
+      }),
+    ]);
+  });
+
+  it('extracts a mix of text, thinking and tool_use from one assistant message, in order', () => {
+    const r = routeMessage(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'thinking', thinking: 'first, think' },
+            { type: 'text', text: 'here is the answer' },
+            { type: 'tool_use', name: 'Read', input: { file_path: '/a.ts' } },
+          ],
+        },
+      },
+      T0,
+    );
+    expect(r.transcriptItems?.map((i) => i.kind)).toEqual(['thinking', 'assistant', 'tool_use']);
+  });
+
+  it('extracts tool_result content that is a plain string', () => {
+    const r = routeMessage(
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'a', content: 'file contents here' }] },
+      },
+      T0,
+    );
+    expect(r.transcriptItems).toEqual([
+      expect.objectContaining({ kind: 'tool_result', text: 'file contents here' }),
+    ]);
+  });
+
+  it('extracts tool_result content that is an object, as formatted JSON', () => {
+    const payload = [{ type: 'text', text: 'nested content block' }];
+    const r = routeMessage(
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'a', content: payload }] },
+      },
+      T0,
+    );
+    expect(r.transcriptItems).toEqual([
+      expect.objectContaining({ kind: 'tool_result', text: JSON.stringify(payload, null, 2) }),
+    ]);
+  });
+
+  it('a message with no transcript content yields no items', () => {
+    expect(routeMessage({ type: 'result', subtype: 'success', total_cost_usd: 0.1 }, T0).transcriptItems).toBeUndefined();
+    expect(routeMessage({ type: 'system', subtype: 'init', model: 'm' }, T0).transcriptItems).toBeUndefined();
+    expect(routeMessage({ type: 'assistant', message: { content: [{ type: 'text', text: '   ' }] } }, T0).transcriptItems).toBeUndefined();
+    expect(routeMessage({ type: 'user', message: { content: 'just text' } }, T0).transcriptItems).toBeUndefined();
+  });
+});

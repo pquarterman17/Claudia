@@ -1,4 +1,4 @@
-import type { SessionSummary } from '@claudia/shared';
+import type { SessionSummary, SlashCommandInfo } from '@claudia/shared';
 import { useRef, useState } from 'react';
 import { fmtCost, fmtTokens } from '../format';
 import { PromptHistory } from '../prompt-history';
@@ -22,14 +22,14 @@ function historyFor(sessionId: string): PromptHistory {
 }
 
 /** startsWith matches rank above includes matches; capped at 8 for a dropdown, not a page. */
-function matchCommands(names: string[], query: string): string[] {
+function matchCommands(commands: SlashCommandInfo[], query: string): SlashCommandInfo[] {
   const q = query.toLowerCase();
-  const starts: string[] = [];
-  const contains: string[] = [];
-  for (const name of names) {
-    const lower = name.toLowerCase();
-    if (lower.startsWith(q)) starts.push(name);
-    else if (lower.includes(q)) contains.push(name);
+  const starts: SlashCommandInfo[] = [];
+  const contains: SlashCommandInfo[] = [];
+  for (const c of commands) {
+    const lower = c.name.toLowerCase();
+    if (lower.startsWith(q)) starts.push(c);
+    else if (lower.includes(q)) contains.push(c);
   }
   return [...starts, ...contains].slice(0, 8);
 }
@@ -46,6 +46,10 @@ export function Composer({ session }: Props) {
   /** Whether Up/Down is currently walking history, and what to restore past the newest entry. */
   const recalling = useRef(false);
   const preRecallDraft = useRef('');
+  /** Fetch the structured command list (descriptions, argument hints) once we
+   * know the user wants it, rather than on every session — most tiles never
+   * open the composer's slash autocomplete. */
+  const requestedCommands = useRef(false);
 
   const status = statusOf(session.state);
   const yolo = session.permissionMode === 'bypassPermissions';
@@ -82,6 +86,15 @@ export function Composer({ session }: Props) {
 
   const commandQuery = draft.startsWith('/') ? draft.slice(1) : null;
   const commandMatches = commandQuery === null ? [] : matchCommands(commands[session.id] ?? [], commandQuery);
+
+  /** First "/" in this tile: ask for the structured list (descriptions, argument
+   * hints) via supportedCommands(). Until it resolves, matches still come from
+   * whatever the init message already gave us — see the store's fallback guard. */
+  const requestCommandsOnce = () => {
+    if (requestedCommands.current) return;
+    requestedCommands.current = true;
+    send({ type: 'get_commands', sessionId: session.id });
+  };
 
   const completeCommand = (name: string) => {
     recalling.current = false;
@@ -140,7 +153,9 @@ export function Composer({ session }: Props) {
           }
           onChange={(e) => {
             recalling.current = false;
-            setDraft(e.target.value);
+            const next = e.target.value;
+            setDraft(next);
+            if (next.startsWith('/')) requestCommandsOnce();
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
@@ -150,7 +165,7 @@ export function Composer({ session }: Props) {
             }
             if (e.key === 'Tab' && commandMatches.length > 0) {
               e.preventDefault();
-              completeCommand(commandMatches[0]!);
+              completeCommand(commandMatches[0]!.name);
               return;
             }
             if (e.key === 'ArrowUp') {
@@ -174,6 +189,7 @@ export function Composer({ session }: Props) {
               marginBottom: 4,
               zIndex: 5,
               minWidth: 180,
+              maxWidth: 320,
               background: '#1d1f2c',
               border: '1px solid #33364a',
               borderRadius: 6,
@@ -181,16 +197,32 @@ export function Composer({ session }: Props) {
               overflow: 'hidden',
             }}
           >
-            {commandMatches.map((name) => (
+            {commandMatches.map((c) => (
               <div
-                key={name}
+                key={c.name}
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  completeCommand(name);
+                  completeCommand(c.name);
                 }}
                 style={{ padding: '4px 9px', fontSize: 11, cursor: 'pointer', color: '#cfd3e5' }}
               >
-                /{name}
+                <div>
+                  /{c.name}
+                  {c.argumentHint && <span style={{ color: '#75798c' }}> {c.argumentHint}</span>}
+                </div>
+                {c.description && (
+                  <div
+                    style={{
+                      fontSize: 9.5,
+                      color: '#75798c',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {c.description}
+                  </div>
+                )}
               </div>
             ))}
             <div

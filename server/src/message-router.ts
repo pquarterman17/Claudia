@@ -1,4 +1,12 @@
-import type { FeedStep, ModelUsage, NeedsAction, SessionState, SubAgentRun, TranscriptItem } from '@claudia/shared';
+import type {
+  FeedStep,
+  ModelUsage,
+  NeedsAction,
+  SessionState,
+  SlashCommandInfo,
+  SubAgentRun,
+  TranscriptItem,
+} from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import { errorStep, infoStep, resultStep, stepFromText, stepFromToolUse } from './feed.js';
 import { mergeCommands } from './parity-controls.js';
@@ -33,7 +41,7 @@ export interface RoutedMessage {
   /** A streamed text fragment of the reply currently being written. */
   draftDelta?: string;
   /** Slash commands the CLI knows for this session, from the init message. */
-  slashCommands?: string[];
+  slashCommands?: SlashCommandInfo[];
   /** Full-fidelity transcript entries this message produced, never truncated. */
   transcriptItems?: TranscriptItem[];
 }
@@ -131,8 +139,11 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
     const model = typeof message['model'] === 'string' ? message['model'] : undefined;
     const sessionId = typeof message['session_id'] === 'string' ? message['session_id'] : undefined;
     const rawCommands = message['slash_commands'];
+    // Bare names only — supportedCommands() is where descriptions and argument
+    // hints come from (see parity-controls.listCommands). This is the fallback
+    // the composer keeps showing until that richer fetch lands.
     const slashCommands = Array.isArray(rawCommands)
-      ? mergeCommands(rawCommands.filter((c): c is string => typeof c === 'string'))
+      ? mergeCommands(rawCommands.filter((c): c is string => typeof c === 'string')).map((name) => ({ name }))
       : undefined;
     return {
       steps: [infoStep('Session started', [model, message['cwd']].filter(Boolean).join(' · '))],

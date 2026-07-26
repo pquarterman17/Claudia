@@ -222,6 +222,12 @@ export class Gateway {
           ?.models()
           .then((models) => this.sendTo(socket, { type: 'models', sessionId: cmd.sessionId, models }));
         return;
+      case 'get_commands':
+        this.manager
+          .get(cmd.sessionId)
+          ?.commands()
+          .then((commands) => this.sendTo(socket, { type: 'session_commands', sessionId: cmd.sessionId, commands }));
+        return;
       case 'require_approvals_everywhere':
         for (const s of this.manager.summaries()) {
           if (s.permissionMode === 'bypassPermissions') {

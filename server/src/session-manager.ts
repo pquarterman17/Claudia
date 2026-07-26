@@ -1,4 +1,4 @@
-import type { FeedStep, FeedStepPatch, SessionSummary, TranscriptItem } from '@claudia/shared';
+import type { FeedStep, FeedStepPatch, SessionSummary, SlashCommandInfo, TranscriptItem } from '@claudia/shared';
 import { ClaudiaSession, type LaunchOptions } from './session.js';
 
 const FEED_CAP = 500;
@@ -9,7 +9,7 @@ export interface ManagerEvents {
   onFeed: (sessionId: string, step: FeedStep) => void;
   onFeedPatch: (sessionId: string, stepId: string, patch: FeedStepPatch) => void;
   onDraft: (sessionId: string, text: string | null) => void;
-  onCommands: (sessionId: string, commands: string[]) => void;
+  onCommands: (sessionId: string, commands: SlashCommandInfo[]) => void;
   onTranscript: (sessionId: string, item: TranscriptItem) => void;
   onRemoved: (sessionId: string) => void;
 }

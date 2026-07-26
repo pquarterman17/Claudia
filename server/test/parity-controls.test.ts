@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeCommands, modelMatches, UNADVERTISED_COMMANDS } from '../src/parity-controls.js';
+import { listCommands, mergeCommands, modelMatches, type ParityQuery, UNADVERTISED_COMMANDS } from '../src/parity-controls.js';
 
 describe('mergeCommands', () => {
   it('adds the built-ins the CLI does not advertise', () => {
@@ -57,5 +57,52 @@ describe('modelMatches', () => {
   it('is false when either side is missing', () => {
     expect(modelMatches(undefined, 'claude-fable-5')).toBe(false);
     expect(modelMatches('haiku', undefined)).toBe(false);
+  });
+});
+
+describe('listCommands', () => {
+  it('is the fallback path: [] when the query has no supportedCommands (older SDK, or not started)', async () => {
+    await expect(listCommands(null)).resolves.toEqual([]);
+    await expect(listCommands({})).resolves.toEqual([]);
+  });
+
+  it('is the fallback path: [] when supportedCommands throws, so the caller keeps the init-message list', async () => {
+    const q: ParityQuery = {
+      supportedCommands: async () => {
+        throw new Error('control channel not ready');
+      },
+    };
+    await expect(listCommands(q)).resolves.toEqual([]);
+  });
+
+  it('carries name, description and argumentHint through untouched', async () => {
+    const q: ParityQuery = {
+      supportedCommands: async () => [{ name: 'compact', description: 'Free up context', argumentHint: '<instructions>' }],
+    };
+    expect(await listCommands(q)).toEqual([
+      { name: 'compact', description: 'Free up context', argumentHint: '<instructions>' },
+    ]);
+  });
+
+  it('surfaces aliases as their own entries — how /cost shows up at all', async () => {
+    // Measured against a live session: supportedCommands() never returns a
+    // bare "cost" entry. /cost is an alias of /usage, exactly as the SDK's
+    // own SlashCommand.aliases doc comment says ("/cost and /stats both
+    // resolve to /usage"). Without flattening, the composer would still
+    // never offer /cost even with the live call wired up.
+    const q: ParityQuery = {
+      supportedCommands: async () => [
+        {
+          name: 'usage',
+          description: 'Show session cost, plan usage, and what is contributing to your limits',
+          argumentHint: '',
+          aliases: ['cost', 'stats'],
+        },
+      ],
+    };
+    const commands = await listCommands(q);
+    const names = commands.map((c) => c.name);
+    expect(names).toEqual(['cost', 'stats', 'usage']); // sorted
+    expect(commands.find((c) => c.name === 'cost')?.description).toContain('alias for /usage');
   });
 });

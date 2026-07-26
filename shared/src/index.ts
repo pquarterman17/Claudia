@@ -150,6 +150,16 @@ export interface ModelChoice {
   description: string;
 }
 
+/**
+ * One slash command the CLI knows, from the SDK's supportedCommands() or,
+ * when that call is unavailable, the bare names the init message advertises.
+ */
+export interface SlashCommandInfo {
+  name: string;
+  description?: string;
+  argumentHint?: string;
+}
+
 /** One entry in a session's full conversation transcript. */
 export interface TranscriptItem {
   ts: number;
@@ -302,7 +312,7 @@ export type ServerEvent =
   /** Models the CLI offers, fetched per session on demand. */
   | { type: 'models'; sessionId: string; models: ModelChoice[] }
   /** Slash commands this session's CLI knows (from init; includes user skills). */
-  | { type: 'session_commands'; sessionId: string; commands: string[] }
+  | { type: 'session_commands'; sessionId: string; commands: SlashCommandInfo[] }
   /** Full transcript backfill, answering get_transcript. */
   | { type: 'transcript'; sessionId: string; items: TranscriptItem[] }
   /** Incremental transcript growth, broadcast as the session runs. */
@@ -369,6 +379,8 @@ export type ClientCommand =
   | { type: 'rename_session'; sessionId: string; title: string }
   | { type: 'set_model'; sessionId: string; model: string }
   | { type: 'get_models'; sessionId: string }
+  /** Structured commands via supportedCommands(); replies with session_commands. */
+  | { type: 'get_commands'; sessionId: string }
   | { type: 'get_transcript'; sessionId: string }
   /** Seconds after the last browser closes before sessions stop; 0 disables. */
   | { type: 'set_stop_on_close'; seconds: number }

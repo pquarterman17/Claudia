@@ -9,6 +9,7 @@ import {
   type ServerEvent,
   type SessionSummary,
   type SessionTemplate,
+  type SlashCommandInfo,
   type TranscriptItem,
   type TriggerStatus,
   type UsageSnapshot,
@@ -37,8 +38,8 @@ export interface ClaudiaState {
   drafts: Record<string, string>;
   /** Models the CLI offers, fetched per session on demand via get_models. */
   models: Record<string, ModelChoice[]>;
-  /** Slash commands each session's CLI knows, from the init message. */
-  commands: Record<string, string[]>;
+  /** Slash commands each session's CLI knows — richer once get_commands resolves. */
+  commands: Record<string, SlashCommandInfo[]>;
   /** Full conversation transcript per session — the terminal-parity view. */
   transcripts: Record<string, TranscriptItem[]>;
   trigger?: TriggerStatus;
@@ -257,9 +258,15 @@ class Store {
       case 'models':
         this.set({ models: { ...this.state.models, [event.sessionId]: event.models } });
         return;
-      case 'session_commands':
+      case 'session_commands': {
+        // An empty reply means the live supportedCommands() fetch failed or
+        // isn't ready yet — keep whatever the init-message fallback already
+        // gave the composer rather than blanking its autocomplete.
+        const known = this.state.commands[event.sessionId];
+        if (event.commands.length === 0 && known && known.length > 0) return;
         this.set({ commands: { ...this.state.commands, [event.sessionId]: event.commands } });
         return;
+      }
     }
   }
 

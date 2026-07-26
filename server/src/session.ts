@@ -19,7 +19,7 @@ import { DraftBuffer } from './draft-buffer.js';
 import { approvalStep, errorStep, infoStep, summarizeToolInput } from './feed.js';
 import * as gateActions from './gate-actions.js';
 import { routeMessage } from './message-router.js';
-import { autoTitle, listModels, modelMatches, type ParityQuery } from './parity-controls.js';
+import { autoTitle, listCommands, listModels, modelMatches, type ParityQuery } from './parity-controls.js';
 import { TranscriptLog } from './transcript-log.js';
 import { abandonRunningSteps, patchSubAgent } from './step-patcher.js';
 import { createSessionQuery, userMessage } from './query-factory.js';
@@ -295,6 +295,10 @@ export class ClaudiaSession {
 
   models(): Promise<ModelChoice[]> {
     return listModels(this.q as ParityQuery | null);
+  }
+
+  commands() {
+    return listCommands(this.q as ParityQuery | null);
   }
 
   sendPrompt(text: string): void {

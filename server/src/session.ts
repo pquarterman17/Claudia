@@ -8,6 +8,7 @@ import type {
   SessionState,
   SessionSummary,
   SubAgentRun,
+  TranscriptItem,
 } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
@@ -164,6 +165,10 @@ export class ClaudiaSession {
     if (routed.steps.length > 0 && this.draft.clear()) this.cb.onDraft(this.id, null);
 
     for (const step of routed.steps) this.cb.onFeed(this.id, step);
+    for (const item of routed.transcriptItems ?? []) {
+      this.transcript.append(item);
+      this.cb.onTranscript(this.id, item);
+    }
 
     for (const start of routed.toolStarts ?? []) this.tools.begin(start.toolUseId, start.stepId);
     for (const end of routed.toolEnds ?? []) {
@@ -287,6 +292,9 @@ export class ClaudiaSession {
     if (!this.firstPrompt) this.firstPrompt = text;
     this.beginQuery();
     this.pushUserText(text);
+    const item: TranscriptItem = { ts: Date.now(), kind: 'user', text };
+    this.transcript.append(item);
+    this.cb.onTranscript(this.id, item);
     this.lastActivityAt = Date.now();
     this.cb.onFeed(this.id, infoStep('Prompt sent', text.length > 160 ? `${text.slice(0, 159)}…` : text));
     this.setState('working');

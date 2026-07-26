@@ -19,6 +19,7 @@ export function App() {
     sessions,
     feeds,
     drafts,
+    transcripts,
     connected,
     lastError,
     trigger,
@@ -195,6 +196,7 @@ export function App() {
                 key={session.id}
                 session={session}
                 steps={feeds[session.id] ?? []}
+                transcript={transcripts[session.id] ?? []}
                 draft={drafts[session.id]}
                 now={now}
                 index={i}

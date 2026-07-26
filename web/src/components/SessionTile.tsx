@@ -1,5 +1,5 @@
-import type { FeedStep, SessionSummary } from '@claudia/shared';
-import { useRef, useState } from 'react';
+import type { FeedStep, SessionSummary, TranscriptItem } from '@claudia/shared';
+import { useEffect, useRef, useState } from 'react';
 import { accentFor } from '../accent';
 import { elapsed, fmtModel } from '../format';
 import { send } from '../store';
@@ -8,10 +8,12 @@ import { ApprovalBanner } from './ApprovalBanner';
 import { Composer } from './Composer';
 import { QuestionPicker } from './QuestionPicker';
 import { SessionFeed } from './SessionFeed';
+import { TranscriptView } from './TranscriptView';
 
 interface Props {
   session: SessionSummary;
   steps: FeedStep[];
+  transcript: TranscriptItem[];
   /** The reply currently streaming in, shown live below the feed. */
   draft?: string;
   now: number;
@@ -23,8 +25,27 @@ interface Props {
 }
 
 /** One session: header chips, activity feed, approval banner, composer. */
-export function SessionTile({ session, steps, draft: streaming, now, index, focused, height, onResize }: Props) {
+export function SessionTile({
+  session,
+  steps,
+  transcript,
+  draft: streaming,
+  now,
+  index,
+  focused,
+  height,
+  onResize,
+}: Props) {
   const tileRef = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<'feed' | 'chat'>('feed');
+  const backfilledRef = useRef(false);
+
+  useEffect(() => {
+    if (view === 'chat' && !backfilledRef.current) {
+      backfilledRef.current = true;
+      send({ type: 'get_transcript', sessionId: session.id });
+    }
+  }, [view, session.id]);
 
   const onGripDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -188,7 +209,31 @@ export function SessionTile({ session, steps, draft: streaming, now, index, focu
       </div>
 
       <div className="tile-body">
-        <SessionFeed steps={steps} draft={streaming} />
+        <div style={{ display: 'flex', gap: 4, flex: 'none' }}>
+          {(['feed', 'chat'] as const).map((v) => (
+            <button
+              key={v}
+              className="btn btn-ghost"
+              title={v === 'feed' ? 'Abstracted activity feed' : 'Full conversation transcript'}
+              onClick={() => setView(v)}
+              style={{
+                fontSize: 9.5,
+                padding: '1px 7px',
+                letterSpacing: '.04em',
+                textTransform: 'uppercase',
+                border: `1px solid ${view === v ? '#423a6a' : 'transparent'}`,
+                color: view === v ? '#b5abfc' : '#595d6c',
+              }}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
+        {view === 'feed' ? (
+          <SessionFeed steps={steps} draft={streaming} />
+        ) : (
+          <TranscriptView items={transcript} draft={streaming} />
+        )}
       </div>
 
       {session.needsAction && !session.pendingApproval && (

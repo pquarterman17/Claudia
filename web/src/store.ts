@@ -9,6 +9,7 @@ import {
   type ServerEvent,
   type SessionSummary,
   type SessionTemplate,
+  type TranscriptItem,
   type TriggerStatus,
   type UsageSnapshot,
 } from '@claudia/shared';
@@ -38,6 +39,8 @@ export interface ClaudiaState {
   models: Record<string, ModelChoice[]>;
   /** Slash commands each session's CLI knows, from the init message. */
   commands: Record<string, string[]>;
+  /** Full conversation transcript per session — the terminal-parity view. */
+  transcripts: Record<string, TranscriptItem[]>;
   trigger?: TriggerStatus;
   platform?: HostPlatform;
   usage?: UsageSnapshot;
@@ -64,6 +67,7 @@ class Store {
     drafts: {},
     models: {},
     commands: {},
+    transcripts: {},
     recentDirectories: [],
     countdownSec: 30,
     stopSessionsWhenClosedSec: 30,
@@ -215,8 +219,19 @@ class Store {
           drafts: Object.fromEntries(Object.entries(this.state.drafts).filter(([k]) => k !== event.sessionId)),
           models: Object.fromEntries(Object.entries(this.state.models).filter(([k]) => k !== event.sessionId)),
           commands: Object.fromEntries(Object.entries(this.state.commands).filter(([k]) => k !== event.sessionId)),
+          transcripts: Object.fromEntries(
+            Object.entries(this.state.transcripts).filter(([k]) => k !== event.sessionId),
+          ),
         });
         return;
+      case 'transcript':
+        this.set({ transcripts: { ...this.state.transcripts, [event.sessionId]: event.items } });
+        return;
+      case 'transcript_append': {
+        const items = [...(this.state.transcripts[event.sessionId] ?? []), event.item].slice(-500);
+        this.set({ transcripts: { ...this.state.transcripts, [event.sessionId]: items } });
+        return;
+      }
       case 'feed_append': {
         const feed = [...(this.state.feeds[event.sessionId] ?? []), event.step].slice(-500);
         this.set({ feeds: { ...this.state.feeds, [event.sessionId]: feed } });

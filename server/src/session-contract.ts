@@ -1,4 +1,4 @@
-import type { FeedStep, FeedStepPatch, PermissionLaunchMode, SessionSummary } from '@claudia/shared';
+import type { FeedStep, FeedStepPatch, PermissionLaunchMode, SessionSummary, TranscriptItem } from '@claudia/shared';
 
 /** How a session reports back to whoever owns it (the manager → gateway → UI). */
 export interface SessionCallbacks {
@@ -9,6 +9,8 @@ export interface SessionCallbacks {
   onDraft: (sessionId: string, text: string | null) => void;
   /** Slash commands the CLI knows for this session, from the init message. */
   onCommands: (sessionId: string, commands: string[]) => void;
+  /** A new full-transcript entry — the terminal-parity view's growth event. */
+  onTranscript: (sessionId: string, item: TranscriptItem) => void;
 }
 
 export interface LaunchOptions {

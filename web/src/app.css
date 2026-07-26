@@ -155,7 +155,7 @@ body,
 }
 
 .usage-drawer {
-  width: min(760px, 94vw);
+  width: min(940px, 94vw);
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -192,9 +192,17 @@ body,
 .usage-drawer-content { flex: 1; min-height: 0; overflow: auto; }
 .usage-panel { flex-wrap: wrap; }
 
-@media (max-width: 640px) {
+@media (max-width: 900px) {
   .usage-drawer { width: 100vw; }
-  .usage-panel { flex-direction: column; gap: 24px !important; }
+  .usage-panel {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 24px !important;
+  }
+  .usage-panel > div {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
 }
 
 /* Full-height global control. Resizable, because how much of the board you

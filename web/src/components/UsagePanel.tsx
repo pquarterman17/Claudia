@@ -219,7 +219,14 @@ export function UsagePanel({ usage, customCeilings }: Props) {
             <div key={m.model} style={{ display: 'flex', gap: 8, fontSize: 11.5 }}>
               <span
                 className="mono"
-                style={{ flex: 1, minWidth: 0, color: '#9397ab', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  color: '#9397ab',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
               >
                 {m.model}
               </span>

@@ -18,6 +18,7 @@ export function App() {
   const {
     sessions,
     feeds,
+    drafts,
     connected,
     lastError,
     trigger,
@@ -194,6 +195,7 @@ export function App() {
                 key={session.id}
                 session={session}
                 steps={feeds[session.id] ?? []}
+                draft={drafts[session.id]}
                 now={now}
                 index={i}
                 focused={focused === session.id}

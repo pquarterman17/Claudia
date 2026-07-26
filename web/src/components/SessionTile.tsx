@@ -10,6 +10,8 @@ import { SessionFeed } from './SessionFeed';
 interface Props {
   session: SessionSummary;
   steps: FeedStep[];
+  /** The reply currently streaming in, shown live below the feed. */
+  draft?: string;
   now: number;
   index: number;
   focused: boolean;
@@ -19,7 +21,7 @@ interface Props {
 }
 
 /** One session: header chips, activity feed, approval banner, composer. */
-export function SessionTile({ session, steps, now, index, focused, height, onResize }: Props) {
+export function SessionTile({ session, steps, draft: streaming, now, index, focused, height, onResize }: Props) {
   const tileRef = useRef<HTMLDivElement>(null);
 
   const onGripDown = (e: React.MouseEvent) => {
@@ -136,7 +138,7 @@ export function SessionTile({ session, steps, now, index, focused, height, onRes
       </div>
 
       <div className="tile-body">
-        <SessionFeed steps={steps} />
+        <SessionFeed steps={steps} draft={streaming} />
       </div>
 
       {session.needsAction && !session.pendingApproval && (

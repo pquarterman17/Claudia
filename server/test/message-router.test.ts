@@ -185,8 +185,27 @@ describe('routeMessage', () => {
     expect(r.errorMessage).toBe('error_max_turns');
   });
 
+  it('extracts text deltas from stream events', () => {
+    const r = routeMessage(
+      { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'Hel' } } },
+      T0,
+    );
+    expect(r.draftDelta).toBe('Hel');
+    expect(r.steps).toHaveLength(0);
+  });
+
+  it('ignores non-text stream events', () => {
+    // Tool-input deltas also stream; only prose belongs in the draft row.
+    const r = routeMessage(
+      { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{' } } },
+      T0,
+    );
+    expect(r.draftDelta).toBeUndefined();
+    expect(routeMessage({ type: 'stream_event', event: { type: 'message_start' } }, T0).draftDelta).toBeUndefined();
+  });
+
   it('unknown message types are inert', () => {
-    const r = routeMessage({ type: 'stream_event', event: {} }, T0);
+    const r = routeMessage({ type: 'unheard_of' }, T0);
     expect(r.steps).toHaveLength(0);
     expect(r.state).toBeUndefined();
   });

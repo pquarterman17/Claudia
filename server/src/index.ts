@@ -66,6 +66,7 @@ const manager = new SessionManager({
   onFeed: (sessionId, step) => gateway.broadcast({ type: 'feed_append', sessionId, step }),
   onFeedPatch: (sessionId, stepId, patch) =>
     gateway.broadcast({ type: 'feed_update', sessionId, stepId, patch }),
+  onDraft: (sessionId, text) => gateway.broadcast({ type: 'draft', sessionId, text }),
   onRemoved: (sessionId) => gateway.broadcast({ type: 'session_removed', sessionId }),
 });
 

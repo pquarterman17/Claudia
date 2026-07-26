@@ -31,6 +31,8 @@ export interface ClaudiaState {
   connected: boolean;
   sessions: SessionSummary[];
   feeds: Record<string, FeedStep[]>;
+  /** In-progress streamed replies, keyed by session. */
+  drafts: Record<string, string>;
   trigger?: TriggerStatus;
   platform?: HostPlatform;
   usage?: UsageSnapshot;
@@ -54,6 +56,7 @@ class Store {
     connected: false,
     sessions: [],
     feeds: {},
+    drafts: {},
     recentDirectories: [],
     countdownSec: 30,
     stopSessionsWhenClosedSec: 30,
@@ -202,11 +205,19 @@ class Store {
         this.set({
           sessions: this.state.sessions.filter((s) => s.id !== event.sessionId),
           feeds: Object.fromEntries(Object.entries(this.state.feeds).filter(([k]) => k !== event.sessionId)),
+          drafts: Object.fromEntries(Object.entries(this.state.drafts).filter(([k]) => k !== event.sessionId)),
         });
         return;
       case 'feed_append': {
         const feed = [...(this.state.feeds[event.sessionId] ?? []), event.step].slice(-500);
         this.set({ feeds: { ...this.state.feeds, [event.sessionId]: feed } });
+        return;
+      }
+      case 'draft': {
+        const drafts = { ...this.state.drafts };
+        if (event.text === null) delete drafts[event.sessionId];
+        else drafts[event.sessionId] = event.text;
+        this.set({ drafts });
         return;
       }
       case 'feed_update': {

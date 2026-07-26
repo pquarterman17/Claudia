@@ -1,7 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   FeedStep,
-  FeedStepPatch,
   ModelUsage,
   NeedsAction,
   PendingQuestion,
@@ -13,7 +12,9 @@ import type {
 import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import { ApprovalGate, type PermissionResult } from './approval-gate.js';
+import type { LaunchOptions, SessionCallbacks } from './session-contract.js';
 import { AsyncQueue } from './async-queue.js';
+import { DraftBuffer } from './draft-buffer.js';
 import { approvalStep, errorStep, infoStep, summarizeToolInput } from './feed.js';
 import { routeMessage } from './message-router.js';
 import { describeMode } from './permission-labels.js';
@@ -22,25 +23,13 @@ import { PromptQueue } from './prompt-queue.js';
 import { SubAgentTracker } from './sub-agent-tracker.js';
 import { ToolTracker } from './tool-tracker.js';
 
-export interface SessionCallbacks {
-  onUpdate: (summary: SessionSummary) => void;
-  onFeed: (sessionId: string, step: FeedStep) => void;
-  onFeedPatch: (sessionId: string, stepId: string, patch: FeedStepPatch) => void;
-}
-
-export interface LaunchOptions {
-  cwd: string;
-  /** Absent means: open the session and wait for the user to type. */
-  prompt?: string;
-  model?: string;
-  permissionMode: PermissionLaunchMode;
-}
-
 /**
  * One Claude Code session owned by Claudia, wrapping an Agent SDK `query()`
  * in streaming-input mode. State transitions come from structured SDK events
  * (see message-router) — never from parsing output text.
  */
+export type { LaunchOptions, SessionCallbacks } from './session-contract.js';
+
 export class ClaudiaSession {
   readonly id = randomUUID();
   private readonly gate = new ApprovalGate();
@@ -61,6 +50,7 @@ export class ClaudiaSession {
   private pendingQuestion: PendingQuestion | undefined;
   private readonly subAgents = new SubAgentTracker();
   private readonly promptQueue = new PromptQueue();
+  private readonly draft = new DraftBuffer();
   /** True until the first prompt is sent, so an empty session reads as idle. */
   private awaitingFirstPrompt = true;
   /** True while swapping the query for a permission change. */
@@ -120,6 +110,7 @@ export class ClaudiaSession {
         cwd: this.opts.cwd,
         ...(this.opts.model ? { model: this.opts.model } : {}),
         permissionMode: this.opts.permissionMode,
+        includePartialMessages: true,
         canUseTool: (toolName, input) => this.onPermissionRequest(toolName, input),
       },
     });
@@ -143,6 +134,15 @@ export class ClaudiaSession {
   private applyMessage(message: Record<string, unknown>): void {
     this.lastActivityAt = Date.now();
     const routed = routeMessage(message, this.turnStartedAt);
+
+    // Streamed fragment of the in-progress reply; throttled by the buffer.
+    if (routed.draftDelta !== undefined) {
+      const emit = this.draft.append(routed.draftDelta);
+      if (emit !== null) this.cb.onDraft(this.id, emit);
+      return; // a delta carries nothing else
+    }
+    // A complete step supersedes the draft it was streamed from.
+    if (routed.steps.length > 0 && this.draft.clear()) this.cb.onDraft(this.id, null);
 
     for (const step of routed.steps) this.cb.onFeed(this.id, step);
 
@@ -312,6 +312,7 @@ export class ClaudiaSession {
         ...(this.opts.model ? { model: this.opts.model } : {}),
         ...(resumeId ? { resume: resumeId } : {}),
         permissionMode: mode,
+        includePartialMessages: true,
         canUseTool: (toolName, input) => this.onPermissionRequest(toolName, input),
       },
     });
@@ -329,6 +330,7 @@ export class ClaudiaSession {
   }
 
   stop(): void {
+    if (this.draft.clear()) this.cb.onDraft(this.id, null);
     this.gate.abandon('Session stopped');
     this.abandonRunningTools('session stopped');
     this.promptQueue.clear();

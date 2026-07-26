@@ -6,17 +6,19 @@ import { SubAgentRows } from './SubAgentRows';
 
 interface Props {
   steps: FeedStep[];
+  /** In-progress reply, streamed token by token. */
+  draft?: string;
 }
 
 /** The abstracted activity feed for one session — reads, edits, commands, results. */
-export function SessionFeed({ steps }: Props) {
+export function SessionFeed({ steps, draft }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' });
-  }, [steps.length]);
+  }, [steps.length, draft?.length]);
 
-  if (steps.length === 0) {
+  if (steps.length === 0 && !draft) {
     return <div style={{ color: '#4f5364', fontSize: 11.5 }}>waiting for first event…</div>;
   }
 
@@ -68,6 +70,28 @@ export function SessionFeed({ steps }: Props) {
           </div>
         );
       })}
+      {draft && (
+        <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start' }}>
+          <span
+            style={{
+              width: 16,
+              textAlign: 'center',
+              color: COLORS.accent,
+              fontSize: 11,
+              flex: 'none',
+              marginTop: 1,
+              animation: 'claudia-pulse 1.4s ease-in-out infinite',
+            }}
+          >
+            ✍
+          </span>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#b9bdd1', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {/* Only the tail: the point is "it is alive and writing", not a transcript. */}
+            {draft.length > 600 ? `…${draft.slice(-600)}` : draft}
+            <span style={{ animation: 'claudia-pulse 1s step-end infinite' }}>▌</span>
+          </span>
+        </div>
+      )}
       <div ref={endRef} />
     </>
   );

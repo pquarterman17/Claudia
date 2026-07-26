@@ -247,6 +247,8 @@ export type ServerEvent =
   | { type: 'session_removed'; sessionId: string }
   | { type: 'feed_append'; sessionId: string; step: FeedStep }
   | { type: 'feed_update'; sessionId: string; stepId: string; patch: FeedStepPatch }
+  /** The reply currently being streamed; null once the complete message lands. */
+  | { type: 'draft'; sessionId: string; text: string | null }
   | { type: 'trigger_status'; trigger: TriggerStatus }
   | { type: 'usage'; usage: UsageSnapshot }
   | {

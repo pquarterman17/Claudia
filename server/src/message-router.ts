@@ -29,6 +29,8 @@ export interface RoutedMessage {
   needsAction?: NeedsAction | null;
   /** Live sub-agent state, to be merged into the parent Task step. */
   subAgent?: { toolUseId: string; run: Partial<SubAgentRun> & { taskId: string } };
+  /** A streamed text fragment of the reply currently being written. */
+  draftDelta?: string;
 }
 
 const EMPTY: RoutedMessage = { steps: [] };
@@ -43,6 +45,19 @@ function num(v: unknown): number {
  */
 export function routeMessage(message: Record<string, unknown>, turnStartedAt: number): RoutedMessage {
   const type = message['type'];
+
+  // Streaming deltas: the reply as it is being written, so the tile does not
+  // sit frozen until the complete message lands.
+  if (type === 'stream_event') {
+    const event = message['event'] as Record<string, unknown> | undefined;
+    if (event?.['type'] === 'content_block_delta') {
+      const delta = event['delta'] as Record<string, unknown> | undefined;
+      if (delta?.['type'] === 'text_delta' && typeof delta['text'] === 'string') {
+        return { steps: [], draftDelta: delta['text'] };
+      }
+    }
+    return EMPTY;
+  }
 
   // Sub-agents report progress on their own channel, tagged with the Task
   // tool_use_id that spawned them — which is what lets them nest.

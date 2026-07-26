@@ -71,13 +71,15 @@ Wrap-up script location: `~/bin/wrapup.sh` (macOS/Linux) or `C:\bin\wrapup.ps1` 
 ## Using it
 
 - **Board** — every session is a tile: status, working dir, model chip
-  ("Opus 5", "Haiku 4.5", "Opus 5 1M"), live feed of reads/edits/commands with real durations
+  ("Opus 5", "Haiku 4.5", "Opus 5 1M"), the reply **streaming live** as it is written, and a
+  feed of reads/edits/commands with real durations
   and ✓/✕ outcomes, nested sub-agent rows with live token counts. Fill mode divides the window
   (2 sessions → halves, 4 → quadrants); Scroll mode gives fixed-height tiles you can drag-resize.
 - **Sidebar** — a "Right now" digest (one line per session, things needing you sorted first)
   plus global control: the finish chain, grace periods, bulk approve/interrupt.
 - **Approvals & questions** — permission prompts show Approve/Deny inline;
-  `AskUserQuestion` renders as a real picker with clickable options and a free-text fallback.
+  `AskUserQuestion` renders as a step-through wizard, one question at a time like the
+  terminal — picking an option advances, the last pick answers, free text works per question.
   A session that asked and is waiting counts as "needs you", not idle.
 - **Finish chain** — stack actions that run in order once every session settles:
   Notify → Save learnings (Claude updates its memory files) → wrap-up script → sleep → shutdown.

@@ -87,6 +87,18 @@ export function referenceFromTier(tier: FixedTier): Reference {
 }
 
 /**
+ * Ceilings the user has calibrated themselves. Used as given — validation
+ * (clamping, rounding) happens at the gateway before this is ever called.
+ */
+export function referenceFromCustom(c: { sessionTokens: number; weeklyTokens: number }): Reference {
+  return {
+    sessionTokens: c.sessionTokens,
+    weeklyTokens: c.weeklyTokens,
+    label: 'your ceilings',
+  };
+}
+
+/**
  * How much of the reference is still unused, clamped to 0–100. Against a
  * self-derived baseline, 0% means "already at a typical week", not "blocked".
  */

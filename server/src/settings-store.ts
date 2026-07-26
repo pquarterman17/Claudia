@@ -16,6 +16,8 @@ export interface Settings {
   /** Remembered so relaunching in the same repo doesn't mean retyping the path. */
   recentDirectories: string[];
   defaultPermissionMode: PermissionLaunchMode;
+  /** Ceilings the user has calibrated themselves, used when planTier === 'custom'. */
+  customCeilings?: { sessionTokens: number; weeklyTokens: number };
 }
 
 const DEFAULTS: Settings = {

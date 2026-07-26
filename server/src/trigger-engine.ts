@@ -111,6 +111,26 @@ export class TriggerEngine {
     this.resetRun();
   }
 
+  /**
+   * Swaps the action with its neighbor in the given direction. Unknown action
+   * or already at the edge is a silent no-op — no state change, no onChange —
+   * so a stray click on a disabled arrow cannot disarm a live countdown.
+   */
+  moveAction(action: FinishActionKey, direction: 'up' | 'down'): void {
+    const i = this.chain.findIndex((l) => l.key === action);
+    if (i < 0) return;
+    const j = direction === 'up' ? i - 1 : i + 1;
+    if (j < 0 || j >= this.chain.length) return;
+    const a = this.chain[i];
+    const b = this.chain[j];
+    if (!a || !b) return;
+    const chain = [...this.chain];
+    chain[i] = b;
+    chain[j] = a;
+    this.chain = chain;
+    this.resetRun();
+  }
+
   setChain(actions: FinishActionKey[]): void {
     this.chain = actions.map((key) => ({ key, state: 'pending' as StepState }));
     this.resetRun();

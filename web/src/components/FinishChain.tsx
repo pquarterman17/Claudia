@@ -102,10 +102,48 @@ export function FinishChain({ trigger }: Props) {
         <ol style={{ margin: '8px 0 0', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 5 }}>
           {trigger.chain.map((step, i) => {
             const mark = STEP_MARK[step.state];
+            const atTop = i === 0;
+            const atBottom = i === trigger.chain.length - 1;
             return (
               <li key={step.key} style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                 <span style={{ fontSize: 10, color: '#4f5364', width: 12, fontVariantNumeric: 'tabular-nums' }}>
                   {i + 1}
+                </span>
+                <span style={{ display: 'flex', flexDirection: 'column' }}>
+                  <button
+                    disabled={atTop}
+                    title={atTop ? undefined : 'Move up'}
+                    onClick={() => send({ type: 'move_finish_action', action: step.key, direction: 'up' })}
+                    className="btn btn-ghost"
+                    style={{
+                      fontSize: 9,
+                      lineHeight: 1,
+                      padding: '0 2px',
+                      background: 'transparent',
+                      border: 'none',
+                      color: atTop ? '#4f5364' : '#75798c',
+                      cursor: atTop ? 'default' : 'pointer',
+                    }}
+                  >
+                    ▲
+                  </button>
+                  <button
+                    disabled={atBottom}
+                    title={atBottom ? undefined : 'Move down'}
+                    onClick={() => send({ type: 'move_finish_action', action: step.key, direction: 'down' })}
+                    className="btn btn-ghost"
+                    style={{
+                      fontSize: 9,
+                      lineHeight: 1,
+                      padding: '0 2px',
+                      background: 'transparent',
+                      border: 'none',
+                      color: atBottom ? '#4f5364' : '#75798c',
+                      cursor: atBottom ? 'default' : 'pointer',
+                    }}
+                  >
+                    ▼
+                  </button>
                 </span>
                 <span
                   style={{

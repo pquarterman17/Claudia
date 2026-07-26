@@ -228,6 +228,7 @@ export type ServerEvent =
       countdownSec: number;
       stopSessionsWhenClosedSec: number;
       defaultPermissionMode: PermissionLaunchMode;
+      customCeilings?: { sessionTokens: number; weeklyTokens: number };
     }
   | { type: 'session_upsert'; session: SessionSummary }
   | { type: 'session_removed'; sessionId: string }
@@ -241,6 +242,7 @@ export type ServerEvent =
       countdownSec: number;
       stopSessionsWhenClosedSec: number;
       defaultPermissionMode: PermissionLaunchMode;
+      customCeilings?: { sessionTokens: number; weeklyTokens: number };
     }
   /** Result of a browse_folder request; empty when the user cancelled. */
   | { type: 'folders_picked'; paths: string[] }
@@ -273,12 +275,16 @@ export type ClientCommand =
   | { type: 'require_approvals_everywhere' }
   /** Adds the action to the end of the chain, or removes it if already present. */
   | { type: 'toggle_finish_action'; action: FinishActionKey }
+  /** Swaps the action with its neighbor; a no-op at either edge. */
+  | { type: 'move_finish_action'; action: FinishActionKey; direction: 'up' | 'down' }
   | { type: 'clear_finish_chain' }
   /** `confirmDestructive` must be true to arm shutdown — the server re-checks. */
   | { type: 'arm_trigger'; confirmDestructive?: boolean }
   | { type: 'disarm_trigger' }
   | { type: 'bulk'; op: 'approve_all' | 'interrupt_all' }
   | { type: 'set_plan_tier'; tier: PlanTier }
+  /** Ceilings the user has calibrated themselves, used when tier === 'custom'. */
+  | { type: 'set_custom_ceilings'; sessionTokens: number; weeklyTokens: number }
   | { type: 'set_countdown'; seconds: number }
   /** Seconds after the last browser closes before sessions stop; 0 disables. */
   | { type: 'set_stop_on_close'; seconds: number }

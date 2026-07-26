@@ -37,6 +37,7 @@ export interface ClaudiaState {
   countdownSec: number;
   stopSessionsWhenClosedSec: number;
   defaultPermissionMode: PermissionLaunchMode;
+  customCeilings?: { sessionTokens: number; weeklyTokens: number };
   lastError?: string;
 }
 
@@ -161,6 +162,7 @@ class Store {
           countdownSec: event.countdownSec,
           stopSessionsWhenClosedSec: event.stopSessionsWhenClosedSec,
           defaultPermissionMode: event.defaultPermissionMode,
+          customCeilings: event.customCeilings,
           lastError: undefined,
         });
         return;
@@ -170,6 +172,7 @@ class Store {
           countdownSec: event.countdownSec,
           stopSessionsWhenClosedSec: event.stopSessionsWhenClosedSec,
           defaultPermissionMode: event.defaultPermissionMode,
+          customCeilings: event.customCeilings,
         });
         return;
       case 'trigger_status':

@@ -1,6 +1,7 @@
 import type { PlanTier, UsageSnapshot, UsageWindow } from '@claudia/shared';
 import {
   billableTokens,
+  referenceFromCustom,
   referenceFromHistory,
   referenceFromTier,
   remainingLevel,
@@ -17,6 +18,7 @@ const HOUR_MS = 60 * 60 * 1000;
 export class UsageService {
   private reader = new UsageReader();
   private tier: PlanTier = 'auto';
+  private customCeilings: { sessionTokens: number; weeklyTokens: number } | undefined;
   private timer: NodeJS.Timeout | undefined;
 
   constructor(private readonly onChange: () => void) {}
@@ -33,6 +35,11 @@ export class UsageService {
 
   setTier(tier: PlanTier): void {
     this.tier = tier;
+    this.onChange();
+  }
+
+  setCustomCeilings(c: { sessionTokens: number; weeklyTokens: number }): void {
+    this.customCeilings = c;
     this.onChange();
   }
 
@@ -77,7 +84,10 @@ export class UsageService {
   }
 
   private reference(now: number): Reference | null {
+    if (this.tier === 'custom' && this.customCeilings) return referenceFromCustom(this.customCeilings);
     if (this.tier !== 'auto' && this.tier !== 'custom') return referenceFromTier(this.tier);
+    // 'auto', or 'custom' with nothing set yet — fall back to the same
+    // history-derived baseline as the default tier.
     const daily = this.reader.store.dailyTotals(now).map(billableTokens);
     return referenceFromHistory(daily);
   }

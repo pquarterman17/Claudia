@@ -293,3 +293,62 @@ describe('TriggerEngine chains', () => {
     expect(e.status().destructive).toBe(true);
   });
 });
+
+describe('TriggerEngine.moveAction', () => {
+  it('move down swaps the action with its next neighbor', () => {
+    const { e } = engine(3, ['memory', 'notify', 'sleep']);
+    e.moveAction('memory', 'down');
+    expect(e.actions).toEqual(['notify', 'memory', 'sleep']);
+  });
+
+  it('move up swaps the action with its previous neighbor', () => {
+    const { e } = engine(3, ['memory', 'notify', 'sleep']);
+    e.moveAction('sleep', 'up');
+    expect(e.actions).toEqual(['memory', 'sleep', 'notify']);
+  });
+
+  it('moving up at index 0 is a no-op and does not disarm', () => {
+    const { e } = engine(3, ['memory', 'notify']);
+    e.arm();
+    e.tick([session('idle')]);
+    expect(e.status()).toMatchObject({ state: 'counting', countdownSec: 3 });
+
+    e.moveAction('memory', 'up');
+    expect(e.actions).toEqual(['memory', 'notify']);
+    expect(e.status()).toMatchObject({ state: 'counting', countdownSec: 3 });
+  });
+
+  it('moving down at the last index is a no-op and does not disarm', () => {
+    const { e } = engine(3, ['memory', 'notify']);
+    e.arm();
+    e.tick([session('idle')]);
+    expect(e.status()).toMatchObject({ state: 'counting', countdownSec: 3 });
+
+    e.moveAction('notify', 'down');
+    expect(e.actions).toEqual(['memory', 'notify']);
+    expect(e.status()).toMatchObject({ state: 'counting', countdownSec: 3 });
+  });
+
+  it('an action not in the chain is a no-op', () => {
+    const { e } = engine(3, ['memory', 'notify']);
+    e.arm();
+    e.tick([session('idle')]);
+    expect(e.status()).toMatchObject({ state: 'counting', countdownSec: 3 });
+
+    e.moveAction('shutdown', 'up');
+    expect(e.actions).toEqual(['memory', 'notify']);
+    expect(e.status()).toMatchObject({ state: 'counting', countdownSec: 3 });
+  });
+
+  it('a real move mid-countdown disarms, so a countdown never carries onto a different order', () => {
+    const { e } = engine(5, ['memory', 'notify', 'sleep']);
+    e.arm();
+    e.tick([session('idle')]);
+    expect(e.status()).toMatchObject({ state: 'counting', countdownSec: 5 });
+
+    e.moveAction('memory', 'down');
+    expect(e.actions).toEqual(['notify', 'memory', 'sleep']);
+    expect(e.status().state).toBe('disarmed');
+    expect(e.status().countdownSec).toBeUndefined();
+  });
+});

@@ -83,28 +83,18 @@ live session rather than trusting docs alone. Two probe results overturned assum
 plan was built on, so they lead the list. Items marked **probe first** have an unverified SDK
 path — measure before building.
 
-30. **Real plan limits from `/cost`** — `/cost` sent as a prompt returns *actual* allowance:
-    "Current session: 20% used · resets Jul 26, 8:30pm", current week, and per-model, plus a
-    contributing-factors breakdown. This contradicts the "no API exists" finding below, which
-    the usage panel's whole estimate-from-history design rests on.
-    - [ ] Parse `/cost` output into the existing `UsageWindow` shape
-    - [ ] Run it per session on a slow interval; fall back to the history estimate when absent
-    - [ ] Retire the invented tier ceilings, keep Custom for people without a subscription
 31. **Context-window awareness via `/context`** — supersedes the `modelUsage.contextWindow`
     approach in #26: `/context` returns a real usage breakdown. Per-tile fill %, warning
     before auto-compact territory.
-32. **Plan mode** — the launch bar offers auto/default/acceptEdits/bypassPermissions but not
-    `plan`, which the terminal reaches by Shift+Tab. `permissionMode: 'plan'` plus
-    `planModeInstructions` are supported; the approve-plan transition is ours to render.
 33. **Effort and thinking control** — `effort` at startup and `applyFlagSettings({ effortLevel })`
     mid-session; `thinking` takes `adaptive|enabled|disabled`. Previously deferred for want of
     a known API; the API exists. (`setMaxThinkingTokens` is deprecated in favour of `thinking`.)
-34. **Command discovery via `supportedCommands()`** — the init message under-reports: it listed
-    65 commands omitting `/cost` and `/context`, both of which run. `supportedCommands()`
-    returns structured entries, which also gives the composer descriptions and argument hints
-    instead of bare names. Would replace the hard-coded merge shipped 2026-07-26.
 
 ## Tier 2 — Medium Impact
+
+44. **Extract from `session.ts`** — at 399 of 400 lines it has one line of headroom, so the
+    next change touching it must extract first. Candidates: the `summary()` builder and the
+    parity delegations. Not urgent, but it blocks any session-level work.
 
 35. **Resume picker** — `listSessions()`, `getSessionInfo()`, `getSessionMessages()`,
     `renameSession()`, `tagSession()` exist, so the picker is ours to render rather than
@@ -180,6 +170,18 @@ Recording these so they are not rediscovered as bugs:
   construction; Claudia is not the Claude Code product.
 
 ## Completed
+
+- ~~**#30 Real plan limits from `/cost`**~~ (2026-07-26) — pure `cost-parser.ts` + user-triggered
+  refresh; verified live capturing 26% session / 28% weekly / 26% weekly-Fable with reset times.
+  History estimate kept as the fallback. Capture waits for a reply that parses, so asking a busy
+  session no longer fails silently.
+- ~~**#32 Plan mode**~~ (2026-07-26) — `plan` added to the mode union, launch bar and a new
+  per-session mode menu; `permission-switch.ts` needed no change (it is mode-agnostic) and new
+  lifecycle vectors V21–V23 prove it rather than assuming it.
+- ~~**#34 Command discovery**~~ (2026-07-26) — `supportedCommands()` returns
+  `{name, description, argumentHint, aliases}`. Key finding: `/cost` is NOT a top-level command,
+  it is an alias of `/usage`, so aliases are flattened into selectable entries. Composer now
+  shows descriptions and argument hints. The hard-coded merge stays as the fallback path.
 
 - ~~**Terminal parity Tier 1 (#22-24 + most of #18/#23)**~~ (2026-07-26) — three sonnet lanes
   (identity / controls / transcript) around a pre-carved protocol + session core; all three

@@ -6,12 +6,10 @@ import type {
   PendingQuestion,
   PermissionLaunchMode,
   SessionState,
-  SessionSummary,
   SubAgentRun,
   TranscriptItem,
 } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
-import { basename } from 'node:path';
 import { ApprovalGate, type PermissionResult } from './approval-gate.js';
 import type { LaunchOptions, SessionCallbacks } from './session-contract.js';
 import { AsyncQueue } from './async-queue.js';
@@ -28,6 +26,7 @@ import { switchPermissionMode } from './permission-switch.js';
 import { parseQuestions } from './question-parser.js';
 import { PromptQueue } from './prompt-queue.js';
 import { SubAgentTracker } from './sub-agent-tracker.js';
+import { buildSessionSummary } from './session-summary.js';
 import { ToolTracker } from './tool-tracker.js';
 
 /**
@@ -85,29 +84,23 @@ export class ClaudiaSession {
     this.model = opts.model;
   }
 
-  summary(): SessionSummary {
-    return {
+  summary() {
+    return buildSessionSummary(this.opts, this.gate, this.promptQueue, {
       id: this.id,
-      name: basename(this.opts.cwd) || this.opts.cwd,
-      title: this.customTitle ?? this.generatedTitle,
-      cwd: this.opts.cwd,
-      model: this.model,
-      selectedModel: this.selectedModel,
-      permissionMode: this.opts.permissionMode,
       state: this.state,
       startedAt: this.startedAt,
       lastActivityAt: this.lastActivityAt,
       costUsd: this.costUsd,
-      inputTokens: this.modelUsage.reduce((a, m) => a + m.inputTokens + m.cacheReadTokens, 0),
-      outputTokens: this.modelUsage.reduce((a, m) => a + m.outputTokens, 0),
       modelUsage: this.modelUsage,
+      model: this.model,
+      selectedModel: this.selectedModel,
       claudeSessionId: this.claudeSessionId,
-      pendingApproval: this.gate.current,
+      errorMessage: this.errorMessage,
       needsAction: this.needsAction,
       pendingQuestion: this.pendingQuestion,
-      errorMessage: this.errorMessage,
-      queuedPrompts: this.promptQueue.list(),
-    };
+      customTitle: this.customTitle,
+      generatedTitle: this.generatedTitle,
+    });
   }
 
   start(): void {

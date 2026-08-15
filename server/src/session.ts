@@ -31,6 +31,7 @@ import { SubAgentTracker } from './sub-agent-tracker.js';
 import { buildSessionSummary } from './session-summary.js';
 import { ToolTracker } from './tool-tracker.js';
 import { SessionRuntimeControls, type RuntimeControlQuery } from './session-runtime-controls.js';
+import { rewindFiles, type RewindResult } from './file-checkpoints.js';
 
 /**
  * One Claude Code session owned by Claudia, wrapping an Agent SDK `query()`
@@ -126,6 +127,8 @@ export class ClaudiaSession {
       permissionMode: this.opts.permissionMode,
       effortLevel: this.controls.effortLevel,
       thinkingMode: this.controls.thinkingMode,
+      resume: this.opts.resume,
+      forkSession: this.opts.forkSession,
       input: this.input,
       onPermission: (toolName, input) => this.onPermissionRequest(toolName, input),
     });
@@ -216,8 +219,6 @@ export class ClaudiaSession {
     const summary = summarizeToolInput(toolName, input);
     const promise = this.gate.request(toolName, summary, input);
 
-    // AskUserQuestion is not really a permission: it is a question whose answer
-    // rides back on the same callback. Render it as a picker instead.
     const questions = toolName === 'AskUserQuestion' ? parseQuestions(input) : null;
     if (questions) {
       this.pendingQuestion = {
@@ -255,7 +256,6 @@ export class ClaudiaSession {
     return gateActions.deny(this.gateCtx(), requestId, message);
   }
 
-  /** Empty title reverts to the auto-generated one. */
   rename(title: string): void {
     this.customTitle = title.trim() || undefined;
     this.cb.onUpdate(this.summary());
@@ -264,10 +264,6 @@ export class ClaudiaSession {
   async switchModel(model: string): Promise<void> {
     const q = this.q as ParityQuery | null;
     await q?.setModel?.(model).catch(() => undefined);
-    // Record the choice rather than overwriting `model`: the SDK applies a
-    // switch from the next turn, and `model` is what a turn actually ran on. A
-    // turn already in flight would otherwise report its own model and look like
-    // the switch had been ignored.
     this.selectedModel = model;
     this.cb.onFeed(this.id, infoStep('Model switched', `${model} — from the next turn`));
     this.cb.onUpdate(this.summary());
@@ -300,8 +296,6 @@ export class ClaudiaSession {
   }
 
   sendPrompt(text: string): void {
-    // A prompt sent while a turn is already in flight joins the SDK's input
-    // queue rather than starting immediately — track it so the UI can show it.
     if (this.state === 'working' || this.state === 'awaiting_approval' || this.state === 'starting') {
       this.promptQueue.push(text);
     }
@@ -361,6 +355,10 @@ export class ClaudiaSession {
     await q.interrupt().catch(() => undefined);
     this.cb.onFeed(this.id, infoStep('Interrupted'));
     this.setState('idle');
+  }
+
+  rewindFiles(checkpointId: string): Promise<RewindResult> {
+    return rewindFiles(this.q, checkpointId);
   }
 
   stop(): void {

@@ -30,4 +30,6 @@ export interface LaunchOptions {
   permissionMode: PermissionLaunchMode;
   effortLevel?: EffortLevel;
   thinkingMode?: ThinkingMode;
+  resume?: string;
+  forkSession?: boolean;
 }

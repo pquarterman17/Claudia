@@ -1,4 +1,4 @@
-import type { PermissionLaunchMode, SessionTemplate } from '@claudia/shared';
+import type { FileCheckpoint, PermissionLaunchMode, SavedSession, SessionTemplate } from '@claudia/shared';
 import { useEffect, useRef, useState } from 'react';
 import { PERMISSION_MODES, permissionModeLabel } from '../permission-modes';
 import { onFoldersPicked, send } from '../store';
@@ -8,10 +8,12 @@ interface Props {
   /** Last mode used, remembered server-side so a chosen posture sticks. */
   defaultMode: PermissionLaunchMode;
   templates: SessionTemplate[];
+  savedSessions: SavedSession[];
+  checkpoints: Record<string, FileCheckpoint[]>;
 }
 
 /** Launch a new Claudia-owned session: cwd + first prompt + permission mode. */
-export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) {
+export function LaunchBar({ recentDirectories, defaultMode, templates, savedSessions, checkpoints }: Props) {
   const [cwd, setCwd] = useState('');
   const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<PermissionLaunchMode>(defaultMode);
@@ -207,6 +209,36 @@ export function LaunchBar({ recentDirectories, defaultMode, templates }: Props) 
           >
             Save current setup…
           </button>
+        </div>
+      </details>
+      <details className="launch-more" onToggle={(e) => {
+        if ((e.currentTarget as HTMLDetailsElement).open) send({ type: 'list_saved_sessions', ...(cwd.trim() ? { cwd: cwd.trim() } : {}) });
+      }}>
+        <summary>Resume history{savedSessions.length ? ` (${savedSessions.length})` : ''}</summary>
+        <div className="launch-more-panel" aria-label="Saved Claude sessions">
+          {savedSessions.length === 0 && <small>Open to load saved Claude Code sessions.</small>}
+          {savedSessions.map((session) => {
+            const sessionCwd = session.cwd ?? cwd.trim();
+            const history = checkpoints[session.sessionId];
+            return <div className="launch-template-row" key={session.sessionId} style={{ display: 'block' }}>
+              <strong title={session.summary}>{(session.customTitle ?? session.summary) || 'Untitled session'}</strong>
+              <small>{session.tag ? `${session.tag} · ` : ''}{sessionCwd || 'Choose a directory to resume'}</small>
+              <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                <button disabled={!sessionCwd} title="Continue this Claude conversation" onClick={() => send({ type: 'resume_saved_session', sessionId: session.sessionId, cwd: sessionCwd, permissionMode: mode })}>Resume</button>
+                <button disabled={!sessionCwd} title="Create a new conversation branch; file checkpoints are not copied" onClick={() => send({ type: 'fork_saved_session', sessionId: session.sessionId, cwd: sessionCwd, permissionMode: mode })}>Fork conversation…</button>
+                <button title="Show user-message file checkpoints" onClick={() => send({ type: 'get_saved_session_detail', sessionId: session.sessionId, ...(session.cwd ? { cwd: session.cwd } : {}) })}>Checkpoints</button>
+                <button title="Rename this saved Claude session" onClick={() => {
+                  const title = window.prompt('Session title', session.customTitle ?? session.summary);
+                  if (title?.trim()) send({ type: 'rename_saved_session', sessionId: session.sessionId, ...(session.cwd ? { cwd: session.cwd } : {}), title: title.trim() });
+                }}>Rename…</button>
+                <button title="Set or clear the saved session tag" onClick={() => {
+                  const tag = window.prompt('Session tag (leave empty to clear)', session.tag ?? '');
+                  if (tag !== null) send({ type: 'tag_saved_session', sessionId: session.sessionId, ...(session.cwd ? { cwd: session.cwd } : {}), tag: tag.trim() || null });
+                }}>Tag…</button>
+              </div>
+              {history && <small>File checkpoints are available only in the original live tile; historical messages are shown for identification ({history.length}).</small>}
+            </div>;
+          })}
         </div>
       </details>
       <button

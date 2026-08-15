@@ -159,6 +159,18 @@ export interface SessionSummary {
   queuedPrompts: string[];
 }
 
+export interface SavedSession {
+  sessionId: string;
+  summary: string;
+  lastModified: number;
+  cwd?: string;
+  tag?: string;
+  customTitle?: string;
+}
+
+/** A user-message file checkpoint; rewind restores files, not conversation history. */
+export interface FileCheckpoint { messageId: string; label: string; }
+
 // ---------- terminal parity ----------
 
 /** One model the CLI offers, from the SDK's supportedModels(). */
@@ -280,6 +292,8 @@ export type ServerEvent =
   | { type: 'transcript'; sessionId: string; items: TranscriptItem[] }
   /** Incremental transcript growth, broadcast as the session runs. */
   | { type: 'transcript_append'; sessionId: string; item: TranscriptItem }
+  | { type: 'saved_sessions'; sessions: SavedSession[] }
+  | { type: 'saved_session_detail'; sessionId: string; checkpoints: FileCheckpoint[] }
   | { type: 'usage'; usage: UsageSnapshot }
   | {
       type: 'settings';
@@ -307,6 +321,14 @@ export type ClientCommand =
       effortLevel?: EffortLevel;
       thinkingMode?: ThinkingMode;
     }
+  | { type: 'list_saved_sessions'; cwd?: string }
+  | { type: 'get_saved_session_detail'; sessionId: string; cwd?: string }
+  | { type: 'resume_saved_session'; sessionId: string; cwd: string; permissionMode?: PermissionLaunchMode }
+  /** Resumes into a new Claude conversation branch (file checkpoints are not copied). */
+  | { type: 'fork_saved_session'; sessionId: string; cwd: string; permissionMode?: PermissionLaunchMode }
+  | { type: 'rename_saved_session'; sessionId: string; cwd?: string; title: string }
+  | { type: 'tag_saved_session'; sessionId: string; cwd?: string; tag: string | null }
+  | { type: 'rewind_files'; sessionId: string; checkpointId: string }
   | { type: 'send_prompt'; sessionId: string; text: string }
   | { type: 'approve'; sessionId: string; requestId: string }
   | { type: 'deny'; sessionId: string; requestId: string; message?: string }

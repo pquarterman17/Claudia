@@ -9,6 +9,7 @@ export interface QuerySpec {
   thinkingMode: ThinkingMode;
   /** Claude session to resume, for relaunches that must keep the conversation. */
   resume?: string;
+  forkSession?: boolean;
   input: AsyncIterable<unknown>;
   onPermission: (toolName: string, input: Record<string, unknown>) => Promise<unknown>;
 }
@@ -25,6 +26,8 @@ export function createSessionQuery(spec: QuerySpec): ReturnType<typeof query> {
       cwd: spec.cwd,
       ...(spec.model ? { model: spec.model } : {}),
       ...(spec.resume ? { resume: spec.resume } : {}),
+      ...(spec.forkSession ? { forkSession: true } : {}),
+      enableFileCheckpointing: true,
       permissionMode: spec.permissionMode,
       effort: spec.effortLevel,
       thinking: spec.thinkingMode === 'disabled' ? { type: 'disabled' } : { type: 'adaptive' },

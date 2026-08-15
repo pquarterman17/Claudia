@@ -8,6 +8,8 @@ import {
   type PermissionLaunchMode,
   type ServerEvent,
   type SessionSummary,
+  type SavedSession,
+  type FileCheckpoint,
   type SessionTemplate,
   type SlashCommandInfo,
   type TranscriptItem,
@@ -42,6 +44,8 @@ export interface ClaudiaState {
   commands: Record<string, SlashCommandInfo[]>;
   /** Full conversation transcript per session — the terminal-parity view. */
   transcripts: Record<string, TranscriptItem[]>;
+  savedSessions: SavedSession[];
+  checkpoints: Record<string, FileCheckpoint[]>;
   trigger?: TriggerStatus;
   platform?: HostPlatform;
   usage?: UsageSnapshot;
@@ -69,6 +73,8 @@ class Store {
     models: {},
     commands: {},
     transcripts: {},
+    savedSessions: [],
+    checkpoints: {},
     recentDirectories: [],
     countdownSec: 30,
     stopSessionsWhenClosedSec: 30,
@@ -233,6 +239,12 @@ class Store {
         this.set({ transcripts: { ...this.state.transcripts, [event.sessionId]: items } });
         return;
       }
+      case 'saved_sessions':
+        this.set({ savedSessions: event.sessions });
+        return;
+      case 'saved_session_detail':
+        this.set({ checkpoints: { ...this.state.checkpoints, [event.sessionId]: event.checkpoints } });
+        return;
       case 'feed_append': {
         const feed = [...(this.state.feeds[event.sessionId] ?? []), event.step].slice(-500);
         this.set({ feeds: { ...this.state.feeds, [event.sessionId]: feed } });

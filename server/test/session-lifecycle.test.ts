@@ -36,10 +36,10 @@ interface Recorded {
   transcriptItems: TranscriptItem[];
 }
 
-function launch(opts: { prompt?: string; permissionMode?: SessionSummary['permissionMode'] } = {}): Recorded {
+function launch(opts: { prompt?: string; permissionMode?: SessionSummary['permissionMode']; resume?: string; forkSession?: boolean } = {}): Recorded {
   const rec: Recorded = { session: null as never, updates: [], feeds: [], patches: [], drafts: [], transcriptItems: [] };
   rec.session = new ClaudiaSession(
-    { cwd: 'C:/x', permissionMode: opts.permissionMode ?? 'auto', ...(opts.prompt ? { prompt: opts.prompt } : {}) },
+    { cwd: 'C:/x', permissionMode: opts.permissionMode ?? 'auto', ...opts },
     {
       onUpdate: (s) => rec.updates.push(s),
       onFeed: (_id, step) => rec.feeds.push(step),
@@ -93,6 +93,13 @@ describe('launch vectors', () => {
     await tick();
     expect(fakes).toHaveLength(1);
     expect(current().received).toEqual(['wake up', 'and another']);
+  });
+
+  it('V24: a resumed fork is passed to the SDK query without pretending it keeps file history', async () => {
+    const rec = launch({ prompt: 'continue', resume: 'saved-session', forkSession: true });
+    await tick();
+    expect(current().spec).toMatchObject({ resume: 'saved-session', forkSession: true });
+    rec.session.stop();
   });
 });
 

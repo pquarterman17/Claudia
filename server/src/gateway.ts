@@ -2,6 +2,7 @@ import type { ClientCommand, HostPlatform, ServerEvent } from '@claudia/shared';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isClientLive } from './client-liveness.js';
 import { assertUsableDirectory, normalizePath, pickFolders } from './folder-picker.js';
+import { retagSavedSession, retitleSavedSession, savedSessionDetail, savedSessions } from './saved-sessions.js';
 import type { SessionManager } from './session-manager.js';
 import type { SettingsStore } from './settings-store.js';
 import type { TriggerEngine } from './trigger-engine.js';
@@ -168,6 +169,41 @@ export class Gateway {
         // The launch mode is sticky: most people keep one posture.
         this.settings.update({ defaultPermissionMode: cmd.permissionMode ?? 'auto' });
         this.broadcastSettings();
+        return;
+      }
+      case 'list_saved_sessions':
+        void savedSessions(cmd.cwd).then((sessions) => this.sendTo(socket, { type: 'saved_sessions', sessions }));
+        return;
+      case 'get_saved_session_detail':
+        void savedSessionDetail(cmd.sessionId, cmd.cwd).then((checkpoints) =>
+          this.sendTo(socket, { type: 'saved_session_detail', sessionId: cmd.sessionId, checkpoints }),
+        );
+        return;
+      case 'resume_saved_session':
+      case 'fork_saved_session': {
+        const cwd = normalizePath(cmd.cwd);
+        assertUsableDirectory(cwd);
+        this.manager.launch({
+          cwd,
+          permissionMode: cmd.permissionMode ?? this.settings.get().defaultPermissionMode,
+          resume: cmd.sessionId,
+          ...(cmd.type === 'fork_saved_session' ? { forkSession: true } : {}),
+        });
+        this.settings.rememberDirectory(cwd);
+        return;
+      }
+      case 'rename_saved_session':
+        void retitleSavedSession(cmd.sessionId, cmd.title, cmd.cwd).then(() => this.dispatch({ type: 'list_saved_sessions', cwd: cmd.cwd }, socket));
+        return;
+      case 'tag_saved_session':
+        void retagSavedSession(cmd.sessionId, cmd.tag, cmd.cwd).then(() => this.dispatch({ type: 'list_saved_sessions', cwd: cmd.cwd }, socket));
+        return;
+      case 'rewind_files': {
+        const session = this.manager.get(cmd.sessionId);
+        if (!session) throw new Error('Live session not found. File rewind requires the original live session.');
+        void session.rewindFiles(cmd.checkpointId).then((result) => {
+          if (!result.canRewind) this.sendTo(socket, { type: 'server_error', message: result.error ?? 'Files cannot be rewound to that checkpoint.' });
+        });
         return;
       }
       case 'browse_folder':

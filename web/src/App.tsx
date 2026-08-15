@@ -32,6 +32,8 @@ export function App() {
     defaultPermissionMode,
     templates,
     customCeilings,
+    savedSessions,
+    checkpoints,
   } = useClaudia();
   const [now, setNow] = useState(() => Date.now());
   const [usageOpen, setUsageOpen] = useState(false);
@@ -137,6 +139,8 @@ export function App() {
         recentDirectories={recentDirectories}
         defaultMode={defaultPermissionMode}
         templates={templates}
+        savedSessions={savedSessions}
+        checkpoints={checkpoints}
       />
       {lastError && (
         <div
@@ -221,6 +225,7 @@ export function App() {
                 focused={focused === session.id}
                 height={fitting ? undefined : (layout.heights[session.id] ?? DEFAULT_TILE_HEIGHT)}
                 onResize={(px) => setHeight(session.id, px)}
+                checkpoints={session.claudeSessionId ? (checkpoints[session.claudeSessionId] ?? []) : []}
               />
             ))}
             {ordered.length === 0 && (

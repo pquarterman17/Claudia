@@ -1,4 +1,4 @@
-import type { FeedStep, SessionSummary, TranscriptItem } from '@claudia/shared';
+import type { FeedStep, FileCheckpoint, SessionSummary, TranscriptItem } from '@claudia/shared';
 import { useEffect, useRef, useState } from 'react';
 import { accentFor } from '../accent';
 import { elapsed, fmtModel } from '../format';
@@ -24,6 +24,7 @@ interface Props {
   /** Fixed height in scroll mode; undefined lets the grid size the tile. */
   height: number | undefined;
   onResize: (px: number) => void;
+  checkpoints: FileCheckpoint[];
 }
 
 /** One session: header chips, activity feed, approval banner, composer. */
@@ -37,6 +38,7 @@ export function SessionTile({
   focused,
   height,
   onResize,
+  checkpoints,
 }: Props) {
   const tileRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<'feed' | 'chat'>('feed');
@@ -251,6 +253,13 @@ export function SessionTile({
             ))}
             <div style={{ borderTop: '1px solid #2c2f3d', margin: '4px 0' }} />
             <MenuAction onClick={() => { setRenaming(true); setMenuOpen(false); }}>Rename</MenuAction>
+            {session.claudeSessionId && <MenuAction onClick={() => send({ type: 'get_saved_session_detail', sessionId: session.claudeSessionId!, cwd: session.cwd })}>Load file checkpoints</MenuAction>}
+            {checkpoints.map((checkpoint) => (
+              <MenuAction key={checkpoint.messageId} title="Restores tracked files only; conversation is unchanged" color="#e0c58c" onClick={() => {
+                if (window.confirm(`Restore tracked files to “${checkpoint.label}”? Conversation history will not change.`)) send({ type: 'rewind_files', sessionId: session.id, checkpointId: checkpoint.messageId });
+                setMenuOpen(false);
+              }}>{`Restore files: ${checkpoint.label}`}</MenuAction>
+            ))}
             {(session.state === 'working' || session.state === 'starting') && <MenuAction color={COLORS.warn} onClick={() => { send({ type: 'interrupt', sessionId: session.id }); setMenuOpen(false); }}>Interrupt</MenuAction>}
             <MenuAction color="#e0a0a0" onClick={removeSession}>Stop and remove…</MenuAction>
           </div>

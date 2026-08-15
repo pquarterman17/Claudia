@@ -9,7 +9,6 @@ export type SessionState =
   | 'idle'
   | 'error'
   | 'stopped';
-
 /**
  * Mirrors the SDK's PermissionMode. 'auto' lets Claude decide what genuinely
  * needs asking and is the sensible default; 'default' asks about everything not
@@ -17,11 +16,8 @@ export type SessionState =
  * Claude reads and proposes but cannot edit or run commands.
  */
 export type PermissionLaunchMode = 'auto' | 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
-
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ThinkingMode = 'adaptive' | 'disabled';
-
-/** Last measured context-window occupancy, captured from Claude Code's `/context`. */
 export interface ContextUsage {
   model?: string;
   usedTokens: number;
@@ -72,8 +68,9 @@ export interface FeedStep {
 /** Fields of an existing feed step that a later event can revise. */
 export type FeedStepPatch = Pick<FeedStep, 'durMs' | 'status' | 'meta' | 'subAgents'>;
 
-/**
- * Claude finished its turn but is waiting on the user — it asked a question, or
+export type { ApprovalChange, SessionTodo } from './session-review.js';
+import type { ApprovalChange, SessionTodo } from './session-review.js';
+/** Claude finished its turn but is waiting on the user — it asked a question, or
  * hit a decision it cannot make alone. Comes from the SDK's `post_turn_summary`,
  * so it is structured rather than guessed from the text of the reply.
  */
@@ -106,8 +103,9 @@ export interface PendingApproval {
   /** Human-readable one-liner, e.g. the bash command or file being edited. */
   summary: string;
   requestedAt: number;
+  /** A bounded, typed preview for file mutations. Never contains raw tool input. */
+  change?: ApprovalChange;
 }
-
 /**
  * Per-model cumulative usage, taken from the SDK result message's `modelUsage`.
  * Keyed by model because plan windows are per-model (the weekly Opus allowance is
@@ -150,6 +148,8 @@ export interface SessionSummary {
   /** Claude Code session id (for resume), once known from the init message. */
   claudeSessionId?: string;
   pendingApproval?: PendingApproval;
+  /** Latest structured TodoWrite list, when the active session uses that tool. */
+  todos: SessionTodo[];
   /** Set when the turn ended with a question rather than a conclusion. */
   needsAction?: NeedsAction;
   /** Set while Claude is waiting on a multiple-choice answer. */

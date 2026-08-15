@@ -28,6 +28,7 @@ export interface SessionSummaryState {
   thinkingMode: SessionSummary['thinkingMode'];
   contextUsage: SessionSummary['contextUsage'];
   contextPending: boolean;
+  todos: SessionSummary['todos'];
 }
 
 /** Builds the wire-format session snapshot without exposing mutable session state. */
@@ -58,6 +59,7 @@ export function buildSessionSummary(
     modelUsage: state.modelUsage,
     claudeSessionId: state.claudeSessionId,
     pendingApproval: gate.current,
+    todos: state.todos,
     needsAction: state.needsAction,
     pendingQuestion: state.pendingQuestion,
     errorMessage: state.errorMessage,

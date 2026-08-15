@@ -12,6 +12,7 @@ import { QuestionPicker } from './QuestionPicker';
 import { SessionFeed } from './SessionFeed';
 import { TranscriptView } from './TranscriptView';
 import { OperationsPanel } from './OperationsPanel';
+import { TodoPanel } from './TodoPanel';
 
 interface Props {
   session: SessionSummary;
@@ -296,7 +297,10 @@ export function SessionTile({
           <ContextMeter session={session} />
         </div>
         {view === 'feed' ? (
-          <SessionFeed steps={steps} sessionId={session.id} draft={streaming} />
+          <>
+            <TodoPanel todos={session.todos} />
+            <SessionFeed steps={steps} sessionId={session.id} draft={streaming} />
+          </>
         ) : (
           <TranscriptView items={transcript} draft={streaming} />
         )}

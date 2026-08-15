@@ -23,6 +23,12 @@ describe('ApprovalGate', () => {
     await expect(promise).resolves.toEqual({ behavior: 'deny', message: 'absolutely not' });
   });
 
+  it('includes a bounded typed preview for file edits', () => {
+    const gate = new ApprovalGate();
+    void gate.request('Edit', 'a.ts', { file_path: '/repo/a.ts', old_string: 'old', new_string: 'new', command: 'not exposed' });
+    expect(gate.current?.change).toEqual({ kind: 'edit', path: '/repo/a.ts', before: 'old', after: 'new', truncated: false });
+  });
+
   it('supplies a default deny message', async () => {
     const gate = new ApprovalGate();
     const promise = gate.request('Bash', 'x', {});

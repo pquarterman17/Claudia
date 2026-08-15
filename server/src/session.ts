@@ -31,6 +31,7 @@ import { PromptQueue } from './prompt-queue.js';
 import { SubAgentTracker } from './sub-agent-tracker.js';
 import { buildSessionSummary } from './session-summary.js';
 import { ToolTracker } from './tool-tracker.js';
+import { TodoTracker } from './todo-tracker.js';
 import { SessionRuntimeControls, type RuntimeControlQuery } from './session-runtime-controls.js';
 import { rewindFiles, type RewindResult } from './file-checkpoints.js';
 import * as operations from './session-operations.js';
@@ -41,9 +42,9 @@ export class ClaudiaSession {
   readonly id = randomUUID();
   private readonly gate = new ApprovalGate();
   private readonly tools = new ToolTracker();
+  private readonly todos = new TodoTracker();
   private input = new AsyncQueue<unknown>();
-  /** Bumped on relaunch so outdated consume loops cannot mutate current state. */
-  private queryGen = 0;
+  private queryGen = 0; // Bumped on relaunch so outdated consume loops cannot mutate current state.
   private q: ReturnType<typeof createSessionQuery> | null = null;
   private state: SessionState = 'starting';
   private readonly startedAt = Date.now();
@@ -96,9 +97,9 @@ export class ClaudiaSession {
       thinkingMode: this.controls.thinkingMode,
       contextUsage: this.controls.contextUsage,
       contextPending: this.controls.contextPending,
+      todos: this.todos.todos,
     });
   }
-
   mcpStatus() { return operations.mcpStatus(this.q as operations.OperationalQuery | null); }
   reconnectMcp(name: string) { return this.q && (this.q as operations.OperationalQuery).reconnectMcpServer?.(name); }
   toggleMcp(name: string, enabled: boolean) { return this.q && (this.q as operations.OperationalQuery).toggleMcpServer?.(name, enabled); }
@@ -120,7 +121,6 @@ export class ClaudiaSession {
     this.setState('idle');
   }
 
-  /** Creates the SDK query on first use. Safe to call repeatedly. */
   private beginQuery(): void {
     if (this.q) return;
     this.q = createSessionQuery({
@@ -167,6 +167,7 @@ export class ClaudiaSession {
       this.transcript.append(item);
       this.cb.onTranscript(this.id, item);
       this.controls.capture(item);
+      this.todos.capture(item);
     }
 
     for (const start of routed.toolStarts ?? []) this.tools.begin(start.toolUseId, start.stepId);

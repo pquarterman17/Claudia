@@ -1,5 +1,6 @@
 import type { PendingApproval } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
+import { approvalChange } from './approval-change.js';
 
 /**
  * The SDK's PermissionResult union: `allow` must carry updatedInput,
@@ -35,7 +36,8 @@ export class ApprovalGate {
       // happen. Fail the old one rather than leaking a dangling promise.
       this.resolver({ behavior: 'deny', message: 'Superseded by a newer permission request' });
     }
-    this.pending = { requestId: randomUUID(), toolName, summary, requestedAt: Date.now() };
+    const change = approvalChange(toolName, input);
+    this.pending = { requestId: randomUUID(), toolName, summary, requestedAt: Date.now(), ...(change ? { change } : {}) };
     this.input = input;
     return new Promise<PermissionResult>((resolve) => {
       this.resolver = resolve;

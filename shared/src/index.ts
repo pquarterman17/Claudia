@@ -2,7 +2,6 @@
  * Claudia WS protocol — the single contract between server and web UI.
  * Server → client: ServerEvent. Client → server: ClientCommand.
  */
-
 export type SessionState =
   | 'starting'
   | 'working'
@@ -19,7 +18,6 @@ export type SessionState =
  */
 export type PermissionLaunchMode = 'auto' | 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
 
-/** Runtime reasoning controls supported by the Claude Agent SDK. */
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type ThinkingMode = 'adaptive' | 'disabled';
 
@@ -32,6 +30,9 @@ export interface ContextUsage {
   freeTokens?: number;
   fetchedAt: number;
 }
+
+/** A local image attached to one prompt. The browser sends bytes, never a file path. */
+export type { PromptImage } from './prompt-image.js';
 
 /**
  * A sub-agent spawned by a Task step, nested under it in the feed.
@@ -329,7 +330,7 @@ export type ClientCommand =
   | { type: 'rename_saved_session'; sessionId: string; cwd?: string; title: string }
   | { type: 'tag_saved_session'; sessionId: string; cwd?: string; tag: string | null }
   | { type: 'rewind_files'; sessionId: string; checkpointId: string }
-  | { type: 'send_prompt'; sessionId: string; text: string }
+  | { type: 'send_prompt'; sessionId: string; text: string; images?: import('./prompt-image.js').PromptImage[] }
   | { type: 'approve'; sessionId: string; requestId: string }
   | { type: 'deny'; sessionId: string; requestId: string; message?: string }
   /** Answers keyed by question text, as the AskUserQuestion tool expects. */

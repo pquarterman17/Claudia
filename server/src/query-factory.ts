@@ -1,5 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { EffortLevel, PermissionLaunchMode, ThinkingMode } from '@claudia/shared';
+import type { EffortLevel, PermissionLaunchMode, PromptImage, ThinkingMode } from '@claudia/shared';
 
 export interface QuerySpec {
   cwd: string;
@@ -38,10 +38,24 @@ export function createSessionQuery(spec: QuerySpec): ReturnType<typeof query> {
 }
 
 /** The SDK's streaming-input envelope for one user prompt. */
-export function userMessage(text: string, sessionId: string | undefined): unknown {
+const IMAGE_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_TOTAL_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** Builds the SDK's multimodal user envelope, with server-side input limits. */
+export function userMessage(text: string, sessionId: string | undefined, images: PromptImage[] = []): unknown {
+  let remaining = MAX_TOTAL_IMAGE_BYTES;
+  const accepted = images.slice(0, 4).flatMap((image) => {
+    if (!IMAGE_MEDIA_TYPES.has(image.mediaType) || !/^[A-Za-z0-9+/]*={0,2}$/.test(image.data)) return [];
+    const bytes = Math.floor((image.data.length * 3) / 4) - (image.data.endsWith('==') ? 2 : image.data.endsWith('=') ? 1 : 0);
+    if (bytes <= 0 || bytes > MAX_IMAGE_BYTES || bytes > remaining) return [];
+    remaining -= bytes;
+    return [{ type: 'image' as const, source: { type: 'base64' as const, media_type: image.mediaType, data: image.data } }];
+  });
+  const content = accepted.length ? [{ type: 'text' as const, text }, ...accepted] : text;
   return {
     type: 'user',
-    message: { role: 'user', content: text },
+    message: { role: 'user', content },
     parent_tool_use_id: null,
     session_id: sessionId ?? '',
   };

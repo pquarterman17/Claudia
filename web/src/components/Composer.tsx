@@ -1,4 +1,4 @@
-import type { SessionSummary, SlashCommandInfo } from '@claudia/shared';
+import type { PromptImage, SessionSummary, SlashCommandInfo } from '@claudia/shared';
 import { useRef, useState } from 'react';
 import { fmtCost, fmtTokens } from '../format';
 import { PromptHistory } from '../prompt-history';
@@ -44,6 +44,8 @@ export function Composer({ session }: Props) {
   const { models, commands } = useClaudia();
   const [draft, setDraft] = useState('');
   const [modelOpen, setModelOpen] = useState(false);
+  const [images, setImages] = useState<Array<PromptImage & { id: string; preview: string }>>([]);
+  const fileInput = useRef<HTMLInputElement>(null);
   /** Whether Up/Down is currently walking history, and what to restore past the newest entry. */
   const recalling = useRef(false);
   const preRecallDraft = useRef('');
@@ -57,11 +59,28 @@ export function Composer({ session }: Props) {
 
   const submit = () => {
     const text = draft.trim();
-    if (!text) return;
-    send({ type: 'send_prompt', sessionId: session.id, text });
-    historyFor(session.id).push(text);
+    if (!text && images.length === 0) return;
+    send({ type: 'send_prompt', sessionId: session.id, text, images: images.map(({ preview: _preview, id: _id, ...image }) => image) });
+    if (text) historyFor(session.id).push(text);
     recalling.current = false;
     setDraft('');
+    setImages([]);
+  };
+
+  const addFiles = async (files: FileList | File[]) => {
+    const remaining = 4 - images.length;
+    if (remaining <= 0) return;
+    const eligible = Array.from(files).filter((file) => /^image\/(jpeg|png|gif|webp)$/.test(file.type) && file.size > 0 && file.size <= 5 * 1024 * 1024).slice(0, remaining);
+    const loaded = await Promise.all(eligible.map(async (file) => {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      return { id: crypto.randomUUID(), name: file.name, mediaType: file.type, data: dataUrl.slice(dataUrl.indexOf(',') + 1), preview: dataUrl };
+    }));
+    setImages((current) => [...current, ...loaded].slice(0, 4));
   };
 
   const recallPrev = () => {
@@ -145,7 +164,26 @@ export function Composer({ session }: Props) {
       <span className="mono" style={{ color: status.color, fontSize: 12 }}>
         ›
       </span>
-      <div style={{ position: 'relative', flex: '1 1 auto', minWidth: 0, display: 'flex' }}>
+      <div
+        style={{ position: 'relative', flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column' }}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          void addFiles(e.dataTransfer.files);
+        }}
+      >
+        {images.length > 0 && (
+          <div aria-label={`${images.length} image attachment${images.length === 1 ? '' : 's'}`} style={{ display: 'flex', gap: 5, paddingBottom: 4, overflowX: 'auto' }}>
+            {images.map((image) => (
+              <span key={image.id} style={{ position: 'relative', flex: 'none' }}>
+                <img src={image.preview} alt={image.name} style={{ display: 'block', width: 38, height: 38, objectFit: 'cover', borderRadius: 4, border: '1px solid #4a4e65' }} />
+                <button type="button" aria-label={`Remove ${image.name}`} title={`Remove ${image.name}`} onClick={() => setImages((current) => current.filter((candidate) => candidate.id !== image.id))} style={{ position: 'absolute', top: -5, right: -5, border: '1px solid #5c3b3b', borderRadius: 9, width: 18, height: 18, padding: 0, cursor: 'pointer', background: '#2e2226', color: '#f1b3b3', lineHeight: 1 }}>
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <input
           aria-label="Session prompt"
           value={draft}
@@ -157,6 +195,13 @@ export function Composer({ session }: Props) {
             const next = e.target.value;
             setDraft(next);
             if (next.startsWith('/')) requestCommandsOnce();
+          }}
+          onPaste={(e) => {
+            const files = e.clipboardData.files;
+            if (Array.from(files).some((file) => file.type.startsWith('image/'))) {
+              e.preventDefault();
+              void addFiles(files);
+            }
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
@@ -240,6 +285,10 @@ export function Composer({ session }: Props) {
           </div>
         )}
       </div>
+      <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple hidden onChange={(e) => { if (e.target.files) void addFiles(e.target.files); e.target.value = ''; }} />
+      <button type="button" className="btn btn-ghost" title="Attach up to four PNG, JPEG, GIF, or WebP images (5 MB each); you can also paste or drop images" aria-label="Attach images" onClick={() => fileInput.current?.click()} style={{ flex: 'none', fontSize: 14, padding: '1px 5px', color: '#8d91a8' }}>
+        +
+      </button>
       {session.queuedPrompts.length > 0 && (
         <span
           title={session.queuedPrompts.join('\n')}

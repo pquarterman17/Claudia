@@ -6,6 +6,7 @@ import type {
   NeedsAction,
   PendingQuestion,
   PermissionLaunchMode,
+  PromptImage,
   SessionState,
   SubAgentRun,
   TranscriptItem,
@@ -296,7 +297,7 @@ export class ClaudiaSession {
     return listCommands(this.q as ParityQuery | null);
   }
 
-  sendPrompt(text: string): void {
+  sendPrompt(text: string, images: PromptImage[] = []): void {
     if (this.state === 'working' || this.state === 'awaiting_approval' || this.state === 'starting') {
       this.promptQueue.push(text);
     }
@@ -304,8 +305,9 @@ export class ClaudiaSession {
     this.needsAction = undefined;
     if (!this.firstPrompt) this.firstPrompt = text;
     this.beginQuery();
-    this.pushUserText(text);
-    const item: TranscriptItem = { ts: Date.now(), kind: 'user', text };
+    this.pushUserText(text, images);
+    const attachment = images.length ? `\n[${images.length} image${images.length === 1 ? '' : 's'} attached]` : '';
+    const item: TranscriptItem = { ts: Date.now(), kind: 'user', text: `${text}${attachment}` };
     this.transcript.append(item);
     this.cb.onTranscript(this.id, item);
     this.lastActivityAt = Date.now();
@@ -385,10 +387,7 @@ export class ClaudiaSession {
     this.setState('error');
   }
 
-  private pushUserText(text: string): void {
-    this.turnStartedAt = Date.now();
-    this.input.push(userMessage(text, this.claudeSessionId));
-  }
+  private pushUserText(text: string, images: PromptImage[] = []): void { this.turnStartedAt = Date.now(); this.input.push(userMessage(text, this.claudeSessionId, images)); }
 
   private setState(state: SessionState): void {
     if (this.state === 'stopped' && state !== 'stopped') return;

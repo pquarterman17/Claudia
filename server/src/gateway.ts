@@ -219,7 +219,7 @@ export class Gateway {
           );
         return;
       case 'send_prompt':
-        this.manager.get(cmd.sessionId)?.sendPrompt(cmd.text);
+        this.manager.get(cmd.sessionId)?.sendPrompt(cmd.text, cmd.images);
         return;
       case 'approve':
         this.manager.get(cmd.sessionId)?.approve(cmd.requestId);

@@ -6,12 +6,13 @@ import { SubAgentRows } from './SubAgentRows';
 
 interface Props {
   steps: FeedStep[];
+  sessionId: string;
   /** In-progress reply, streamed token by token. */
   draft?: string;
 }
 
 /** The abstracted activity feed for one session — reads, edits, commands, results. */
-export function SessionFeed({ steps, draft }: Props) {
+export function SessionFeed({ steps, sessionId, draft }: Props) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -66,7 +67,7 @@ export function SessionFeed({ steps, draft }: Props) {
               </span>
             )}
           </div>
-          {step.subAgents && step.subAgents.length > 0 && <SubAgentRows runs={step.subAgents} />}
+          {step.subAgents && step.subAgents.length > 0 && <SubAgentRows runs={step.subAgents} sessionId={sessionId} />}
           </div>
         );
       })}

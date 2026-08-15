@@ -171,8 +171,6 @@ export interface SavedSession {
 /** A user-message file checkpoint; rewind restores files, not conversation history. */
 export interface FileCheckpoint { messageId: string; label: string; }
 
-// ---------- terminal parity ----------
-
 /** One model the CLI offers, from the SDK's supportedModels(). */
 export interface ModelChoice {
   value: string;
@@ -198,8 +196,6 @@ export interface TranscriptItem {
   text: string;
   toolName?: string;
 }
-
-// ---------- finish trigger ----------
 
 export type FinishActionKey = 'notify' | 'memory' | 'commit' | 'sleep' | 'shutdown' | 'script';
 
@@ -246,7 +242,8 @@ export interface SessionTemplate {
   permissionMode: PermissionLaunchMode;
 }
 
-// ---------- usage ----------
+export * from './operations.js';
+import type { EffectiveSettings, McpServerInfo } from './operations.js';
 
 export interface TokenCounts {
   inputTokens: number;
@@ -276,6 +273,7 @@ export type ServerEvent =
       defaultPermissionMode: PermissionLaunchMode;
       templates: SessionTemplate[];
       customCeilings?: { sessionTokens: number; weeklyTokens: number };
+      mcp: Record<string, McpServerInfo[]>;
     }
   | { type: 'session_upsert'; session: SessionSummary }
   | { type: 'session_removed'; sessionId: string }
@@ -288,6 +286,8 @@ export type ServerEvent =
   | { type: 'models'; sessionId: string; models: ModelChoice[] }
   /** Slash commands this session's CLI knows (from init; includes user skills). */
   | { type: 'session_commands'; sessionId: string; commands: SlashCommandInfo[] }
+  | { type: 'mcp_status'; sessionId: string; servers: McpServerInfo[] }
+  | { type: 'effective_settings'; sessionId: string; settings: EffectiveSettings }
   /** Full transcript backfill, answering get_transcript. */
   | { type: 'transcript'; sessionId: string; items: TranscriptItem[] }
   /** Incremental transcript growth, broadcast as the session runs. */
@@ -372,6 +372,11 @@ export type ClientCommand =
   | { type: 'get_models'; sessionId: string }
   /** Structured commands via supportedCommands(); replies with session_commands. */
   | { type: 'get_commands'; sessionId: string }
+  | { type: 'get_mcp_status'; sessionId: string }
+  | { type: 'reconnect_mcp'; sessionId: string; serverName: string }
+  | { type: 'toggle_mcp'; sessionId: string; serverName: string; enabled: boolean }
+  | { type: 'get_effective_settings'; sessionId: string }
+  | { type: 'stop_task'; sessionId: string; taskId: string }
   | { type: 'get_transcript'; sessionId: string }
   /** Seconds after the last browser closes before sessions stop; 0 disables. */
   | { type: 'set_stop_on_close'; seconds: number }

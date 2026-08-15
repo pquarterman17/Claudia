@@ -4,6 +4,8 @@ import {
   type ClientCommand,
   type FeedStep,
   type HostPlatform,
+  type EffectiveSettings,
+  type McpServerInfo,
   type ModelChoice,
   type PermissionLaunchMode,
   type ServerEvent,
@@ -46,6 +48,8 @@ export interface ClaudiaState {
   transcripts: Record<string, TranscriptItem[]>;
   savedSessions: SavedSession[];
   checkpoints: Record<string, FileCheckpoint[]>;
+  mcp: Record<string, McpServerInfo[]>;
+  effectiveSettings: Record<string, EffectiveSettings>;
   trigger?: TriggerStatus;
   platform?: HostPlatform;
   usage?: UsageSnapshot;
@@ -75,6 +79,8 @@ class Store {
     transcripts: {},
     savedSessions: [],
     checkpoints: {},
+    mcp: {},
+    effectiveSettings: {},
     recentDirectories: [],
     countdownSec: 30,
     stopSessionsWhenClosedSec: 30,
@@ -188,6 +194,7 @@ class Store {
           defaultPermissionMode: event.defaultPermissionMode,
           templates: event.templates,
           customCeilings: event.customCeilings,
+          mcp: event.mcp,
           lastError: undefined,
         });
         return;
@@ -269,6 +276,12 @@ class Store {
         return;
       case 'models':
         this.set({ models: { ...this.state.models, [event.sessionId]: event.models } });
+        return;
+      case 'mcp_status':
+        this.set({ mcp: { ...this.state.mcp, [event.sessionId]: event.servers } });
+        return;
+      case 'effective_settings':
+        this.set({ effectiveSettings: { ...this.state.effectiveSettings, [event.sessionId]: event.settings } });
         return;
       case 'session_commands': {
         // An empty reply means the live supportedCommands() fetch failed or

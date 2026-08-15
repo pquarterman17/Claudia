@@ -34,6 +34,8 @@ export function App() {
     customCeilings,
     savedSessions,
     checkpoints,
+    mcp,
+    effectiveSettings,
   } = useClaudia();
   const [now, setNow] = useState(() => Date.now());
   const [usageOpen, setUsageOpen] = useState(false);
@@ -226,6 +228,8 @@ export function App() {
                 height={fitting ? undefined : (layout.heights[session.id] ?? DEFAULT_TILE_HEIGHT)}
                 onResize={(px) => setHeight(session.id, px)}
                 checkpoints={session.claudeSessionId ? (checkpoints[session.claudeSessionId] ?? []) : []}
+                mcp={mcp[session.id]}
+                effectiveSettings={effectiveSettings[session.id]}
               />
             ))}
             {ordered.length === 0 && (

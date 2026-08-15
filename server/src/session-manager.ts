@@ -1,4 +1,4 @@
-import type { FeedStep, FeedStepPatch, SessionSummary, SlashCommandInfo, TranscriptItem } from '@claudia/shared';
+import type { FeedStep, FeedStepPatch, McpServerInfo, SessionSummary, SlashCommandInfo, TranscriptItem } from '@claudia/shared';
 import { ClaudiaSession, type LaunchOptions } from './session.js';
 
 const FEED_CAP = 500;
@@ -73,6 +73,10 @@ export class SessionManager {
 
   feedSnapshot(): Record<string, FeedStep[]> {
     return Object.fromEntries(this.feeds);
+  }
+
+  async mcpSnapshot(): Promise<Record<string, McpServerInfo[]>> {
+    return Object.fromEntries(await Promise.all([...this.sessions].map(async ([id, session]) => [id, await session.mcpStatus()])));
   }
 
   stopAll(): void {

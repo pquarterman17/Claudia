@@ -1,6 +1,7 @@
 import type { SubAgentRun } from '@claudia/shared';
 import { fmtDur, fmtTokens } from '../format';
 import { COLORS } from '../status';
+import { send } from '../store';
 
 const MARK: Record<SubAgentRun['status'], { icon: string; color: string }> = {
   running: { icon: '◇', color: COLORS.accent },
@@ -10,6 +11,7 @@ const MARK: Record<SubAgentRun['status'], { icon: string; color: string }> = {
 
 interface Props {
   runs: SubAgentRun[];
+  sessionId: string;
 }
 
 /**
@@ -20,7 +22,7 @@ interface Props {
  * because the SDK reports them per sub-agent; cost is not, and is deliberately
  * not guessed at.
  */
-export function SubAgentRows({ runs }: Props) {
+export function SubAgentRows({ runs, sessionId }: Props) {
   if (runs.length === 0) return null;
 
   return (
@@ -48,6 +50,7 @@ export function SubAgentRows({ runs }: Props) {
             >
               {mark.icon}
             </span>
+            {run.status === 'running' && <button className="btn-ghost" title="Stop this observed background task" onClick={() => send({ type: 'stop_task', sessionId, taskId: run.taskId })}>Stop</button>}
             <span style={{ flex: 1, minWidth: 0 }}>
               <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                 <span style={{ fontSize: 10, color: '#b5abfc' }}>{run.agentType}</span>

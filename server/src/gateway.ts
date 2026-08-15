@@ -41,7 +41,7 @@ export class Gateway {
     this.sweepTimer = setInterval(() => this.onClientCountChanged(), 5_000);
     this.sweepTimer.unref?.();
     this.wss.on('connection', (socket) => {
-      this.sendTo(socket, {
+      void manager.mcpSnapshot().then((mcp) => this.sendTo(socket, {
         type: 'hello',
         sessions: manager.summaries(),
         feeds: manager.feedSnapshot(),
@@ -54,7 +54,8 @@ export class Gateway {
         defaultPermissionMode: settings.get().defaultPermissionMode,
         templates: settings.get().templates,
         customCeilings: settings.get().customCeilings,
-      });
+        mcp,
+      }));
       this.lastSeen.set(socket, Date.now());
       this.onClientCountChanged();
       socket.on('close', () => this.onClientCountChanged());
@@ -274,6 +275,21 @@ export class Gateway {
           .get(cmd.sessionId)
           ?.commands()
           .then((commands) => this.sendTo(socket, { type: 'session_commands', sessionId: cmd.sessionId, commands }));
+        return;
+      case 'get_mcp_status':
+        this.manager.get(cmd.sessionId)?.mcpStatus().then((servers) => this.sendTo(socket, { type: 'mcp_status', sessionId: cmd.sessionId, servers }));
+        return;
+      case 'reconnect_mcp':
+        this.manager.get(cmd.sessionId)?.reconnectMcp(cmd.serverName)?.then(() => this.dispatch({ type: 'get_mcp_status', sessionId: cmd.sessionId }, socket));
+        return;
+      case 'toggle_mcp':
+        this.manager.get(cmd.sessionId)?.toggleMcp(cmd.serverName, cmd.enabled)?.then(() => this.dispatch({ type: 'get_mcp_status', sessionId: cmd.sessionId }, socket));
+        return;
+      case 'get_effective_settings':
+        this.manager.get(cmd.sessionId)?.effectiveSettings().then((settings) => this.sendTo(socket, { type: 'effective_settings', sessionId: cmd.sessionId, settings }));
+        return;
+      case 'stop_task':
+        void this.manager.get(cmd.sessionId)?.stopTask(cmd.taskId);
         return;
       case 'require_approvals_everywhere':
         for (const s of this.manager.summaries()) {

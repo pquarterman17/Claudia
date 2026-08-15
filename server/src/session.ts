@@ -32,12 +32,8 @@ import { buildSessionSummary } from './session-summary.js';
 import { ToolTracker } from './tool-tracker.js';
 import { SessionRuntimeControls, type RuntimeControlQuery } from './session-runtime-controls.js';
 import { rewindFiles, type RewindResult } from './file-checkpoints.js';
+import * as operations from './session-operations.js';
 
-/**
- * One Claude Code session owned by Claudia, wrapping an Agent SDK `query()`
- * in streaming-input mode. State transitions come from structured SDK events
- * (see message-router) — never from parsing output text.
- */
 export type { LaunchOptions, SessionCallbacks } from './session-contract.js';
 
 export class ClaudiaSession {
@@ -48,7 +44,6 @@ export class ClaudiaSession {
   /** Bumped on relaunch so outdated consume loops cannot mutate current state. */
   private queryGen = 0;
   private q: ReturnType<typeof createSessionQuery> | null = null;
-
   private state: SessionState = 'starting';
   private readonly startedAt = Date.now();
   private lastActivityAt = Date.now();
@@ -102,6 +97,12 @@ export class ClaudiaSession {
       contextPending: this.controls.contextPending,
     });
   }
+
+  mcpStatus() { return operations.mcpStatus(this.q as operations.OperationalQuery | null); }
+  reconnectMcp(name: string) { return this.q && (this.q as operations.OperationalQuery).reconnectMcpServer?.(name); }
+  toggleMcp(name: string, enabled: boolean) { return this.q && (this.q as operations.OperationalQuery).toggleMcpServer?.(name, enabled); }
+  stopTask(taskId: string) { return this.q && (this.q as operations.OperationalQuery).stopTask?.(taskId); }
+  effectiveSettings() { return operations.resolvedSettings(this.opts.cwd); }
 
   start(): void {
     if (this.opts.prompt?.trim()) {

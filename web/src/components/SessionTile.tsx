@@ -1,4 +1,4 @@
-import type { FeedStep, FileCheckpoint, SessionSummary, TranscriptItem } from '@claudia/shared';
+import type { EffectiveSettings, FeedStep, FileCheckpoint, McpServerInfo, SessionSummary, TranscriptItem } from '@claudia/shared';
 import { useEffect, useRef, useState } from 'react';
 import { accentFor } from '../accent';
 import { elapsed, fmtModel } from '../format';
@@ -11,6 +11,7 @@ import { ContextMeter } from './ContextMeter';
 import { QuestionPicker } from './QuestionPicker';
 import { SessionFeed } from './SessionFeed';
 import { TranscriptView } from './TranscriptView';
+import { OperationsPanel } from './OperationsPanel';
 
 interface Props {
   session: SessionSummary;
@@ -25,6 +26,8 @@ interface Props {
   height: number | undefined;
   onResize: (px: number) => void;
   checkpoints: FileCheckpoint[];
+  mcp?: McpServerInfo[];
+  effectiveSettings?: EffectiveSettings;
 }
 
 /** One session: header chips, activity feed, approval banner, composer. */
@@ -39,6 +42,8 @@ export function SessionTile({
   height,
   onResize,
   checkpoints,
+  mcp,
+  effectiveSettings,
 }: Props) {
   const tileRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<'feed' | 'chat'>('feed');
@@ -291,7 +296,7 @@ export function SessionTile({
           <ContextMeter session={session} />
         </div>
         {view === 'feed' ? (
-          <SessionFeed steps={steps} draft={streaming} />
+          <SessionFeed steps={steps} sessionId={session.id} draft={streaming} />
         ) : (
           <TranscriptView items={transcript} draft={streaming} />
         )}
@@ -338,6 +343,7 @@ export function SessionTile({
       )}
 
       <Composer session={session} />
+      <OperationsPanel session={session} servers={mcp} settings={effectiveSettings} />
 
       {height !== undefined && (
         <div className="tile-grip" onMouseDown={onGripDown} title="Drag to resize this tile" />

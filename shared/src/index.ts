@@ -19,6 +19,20 @@ export type SessionState =
  */
 export type PermissionLaunchMode = 'auto' | 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
 
+/** Runtime reasoning controls supported by the Claude Agent SDK. */
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ThinkingMode = 'adaptive' | 'disabled';
+
+/** Last measured context-window occupancy, captured from Claude Code's `/context`. */
+export interface ContextUsage {
+  model?: string;
+  usedTokens: number;
+  maxTokens: number;
+  usedPct: number;
+  freeTokens?: number;
+  fetchedAt: number;
+}
+
 /**
  * A sub-agent spawned by a Task step, nested under it in the feed.
  *
@@ -119,6 +133,10 @@ export interface SessionSummary {
   /** A model the user picked that has not run yet — the SDK applies it next turn. */
   selectedModel?: string;
   permissionMode: PermissionLaunchMode;
+  effortLevel: EffortLevel;
+  thinkingMode: ThinkingMode;
+  contextUsage?: ContextUsage;
+  contextPending: boolean;
   state: SessionState;
   startedAt: number;
   lastActivityAt: number;
@@ -286,6 +304,8 @@ export type ClientCommand =
       prompt?: string;
       model?: string;
       permissionMode?: PermissionLaunchMode;
+      effortLevel?: EffortLevel;
+      thinkingMode?: ThinkingMode;
     }
   | { type: 'send_prompt'; sessionId: string; text: string }
   | { type: 'approve'; sessionId: string; requestId: string }
@@ -323,6 +343,10 @@ export type ClientCommand =
   /** Empty title reverts to the auto-generated one. */
   | { type: 'rename_session'; sessionId: string; title: string }
   | { type: 'set_model'; sessionId: string; model: string }
+  | { type: 'set_effort'; sessionId: string; effortLevel: EffortLevel }
+  | { type: 'set_thinking'; sessionId: string; thinkingMode: ThinkingMode }
+  /** Sends `/context` and captures its real token-window report. */
+  | { type: 'refresh_context'; sessionId: string }
   | { type: 'get_models'; sessionId: string }
   /** Structured commands via supportedCommands(); replies with session_commands. */
   | { type: 'get_commands'; sessionId: string }

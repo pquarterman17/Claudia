@@ -161,6 +161,8 @@ export class Gateway {
           prompt: cmd.prompt,
           model: cmd.model,
           permissionMode: cmd.permissionMode ?? 'auto',
+          effortLevel: cmd.effortLevel ?? 'high',
+          thinkingMode: cmd.thinkingMode ?? 'adaptive',
         });
         this.settings.rememberDirectory(cwd);
         // The launch mode is sticky: most people keep one posture.
@@ -215,6 +217,15 @@ export class Gateway {
         return;
       case 'set_model':
         void this.manager.get(cmd.sessionId)?.switchModel(cmd.model);
+        return;
+      case 'set_effort':
+        void this.manager.get(cmd.sessionId)?.setEffort(cmd.effortLevel);
+        return;
+      case 'set_thinking':
+        void this.manager.get(cmd.sessionId)?.setThinking(cmd.thinkingMode);
+        return;
+      case 'refresh_context':
+        this.manager.get(cmd.sessionId)?.refreshContext();
         return;
       case 'get_models':
         this.manager

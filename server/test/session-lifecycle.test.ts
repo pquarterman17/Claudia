@@ -338,3 +338,38 @@ describe('turn-queue vectors', () => {
     expect(rec.session.summary().queuedPrompts).toEqual([]);
   });
 });
+
+describe('context and reasoning controls', () => {
+  it('starts queries with the selected effort and thinking mode', async () => {
+    const rec = launch({ prompt: 'x' });
+    await tick();
+    expect(current().spec).toMatchObject({ effortLevel: 'high', thinkingMode: 'adaptive' });
+    expect(rec.session.summary()).toMatchObject({ effortLevel: 'high', thinkingMode: 'adaptive' });
+  });
+
+  it('applies live effort and thinking changes', async () => {
+    const rec = launch({ prompt: 'x' });
+    await tick();
+    await rec.session.setEffort('xhigh');
+    await rec.session.setThinking('disabled');
+    expect(current().flagSettings).toEqual([
+      { effortLevel: 'xhigh' },
+      { alwaysThinkingEnabled: false },
+    ]);
+    expect(rec.session.summary()).toMatchObject({ effortLevel: 'xhigh', thinkingMode: 'disabled' });
+  });
+
+  it('captures a real /context response only after refresh is requested', async () => {
+    const rec = launch({ prompt: 'x' });
+    await tick();
+    rec.session.refreshContext();
+    await tick();
+    expect(current().received).toContain('/context');
+    expect(rec.session.summary().contextPending).toBe(true);
+
+    current().emit(assistantText('## Context Usage\n**Model:** claude-opus-5\n**Tokens:** 80k / 200k (40%)'));
+    await tick();
+    expect(rec.session.summary().contextPending).toBe(false);
+    expect(rec.session.summary().contextUsage).toMatchObject({ usedTokens: 80_000, maxTokens: 200_000, usedPct: 40 });
+  });
+});

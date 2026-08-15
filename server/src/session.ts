@@ -1,5 +1,6 @@
 import type {
   FeedStep,
+  EffortLevel,
   ModelChoice,
   ModelUsage,
   NeedsAction,
@@ -8,6 +9,7 @@ import type {
   SessionState,
   SubAgentRun,
   TranscriptItem,
+  ThinkingMode,
 } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import { ApprovalGate, type PermissionResult } from './approval-gate.js';
@@ -28,6 +30,7 @@ import { PromptQueue } from './prompt-queue.js';
 import { SubAgentTracker } from './sub-agent-tracker.js';
 import { buildSessionSummary } from './session-summary.js';
 import { ToolTracker } from './tool-tracker.js';
+import { SessionRuntimeControls, type RuntimeControlQuery } from './session-runtime-controls.js';
 
 /**
  * One Claude Code session owned by Claudia, wrapping an Agent SDK `query()`
@@ -40,16 +43,8 @@ export class ClaudiaSession {
   readonly id = randomUUID();
   private readonly gate = new ApprovalGate();
   private readonly tools = new ToolTracker();
-  /** Recreated per query: two queries must never share one input iterator. */
   private input = new AsyncQueue<unknown>();
-  /**
-   * Bumped on every relaunch. A consume loop belongs to one generation; when
-   * an outdated loop finally terminates it must change nothing. A boolean flag
-   * cannot express this — the relaunch sets and clears it within one
-   * synchronous block, while the old loop only observes termination on a later
-   * microtask, by which point the flag was already false again. That exact
-   * race marked live sessions 'stopped' and swallowed the next prompt.
-   */
+  /** Bumped on relaunch so outdated consume loops cannot mutate current state. */
   private queryGen = 0;
   private q: ReturnType<typeof createSessionQuery> | null = null;
 
@@ -60,7 +55,6 @@ export class ClaudiaSession {
   private costUsd = 0;
   private modelUsage: ModelUsage[] = [];
   private model: string | undefined;
-  /** The user's explicit pick, held until a turn confirms it took effect. */
   private selectedModel: string | undefined;
   private claudeSessionId: string | undefined;
   private errorMessage: string | undefined;
@@ -69,11 +63,11 @@ export class ClaudiaSession {
   private readonly subAgents = new SubAgentTracker();
   private readonly promptQueue = new PromptQueue();
   private readonly draft = new DraftBuffer();
+  private readonly controls: SessionRuntimeControls;
   readonly transcript = new TranscriptLog();
   private customTitle: string | undefined;
   private generatedTitle: string | undefined;
   private firstPrompt: string | undefined;
-  /** True until the first prompt is sent, so an empty session reads as idle. */
   private awaitingFirstPrompt = true;
 
   constructor(
@@ -82,6 +76,7 @@ export class ClaudiaSession {
   ) {
     // opts.permissionMode is mutable — setPermissionMode updates it in place.
     this.model = opts.model;
+    this.controls = new SessionRuntimeControls(opts.effortLevel, opts.thinkingMode);
   }
 
   summary() {
@@ -100,6 +95,10 @@ export class ClaudiaSession {
       pendingQuestion: this.pendingQuestion,
       customTitle: this.customTitle,
       generatedTitle: this.generatedTitle,
+      effortLevel: this.controls.effortLevel,
+      thinkingMode: this.controls.thinkingMode,
+      contextUsage: this.controls.contextUsage,
+      contextPending: this.controls.contextPending,
     });
   }
 
@@ -108,17 +107,12 @@ export class ClaudiaSession {
       this.firstPrompt = this.opts.prompt;
       this.beginQuery();
       this.pushUserText(this.opts.prompt);
-      // The launch prompt is part of the conversation too — without this the
-      // transcript opens mid-dialogue, missing its own first line.
       const item: TranscriptItem = { ts: Date.now(), kind: 'user', text: this.opts.prompt };
       this.transcript.append(item);
       this.cb.onTranscript(this.id, item);
       this.awaitingFirstPrompt = false;
       return;
     }
-    // No prompt: don't spawn anything yet. The SDK emits its init message only
-    // once it has input, so starting a query here would leave the session stuck
-    // in 'starting' forever — and it would hold a process doing nothing.
     this.cb.onFeed(this.id, infoStep('Session ready', 'waiting for your first prompt'));
     this.setState('idle');
   }
@@ -130,6 +124,8 @@ export class ClaudiaSession {
       cwd: this.opts.cwd,
       model: this.opts.model,
       permissionMode: this.opts.permissionMode,
+      effortLevel: this.controls.effortLevel,
+      thinkingMode: this.controls.thinkingMode,
       input: this.input,
       onPermission: (toolName, input) => this.onPermissionRequest(toolName, input),
     });
@@ -142,8 +138,6 @@ export class ClaudiaSession {
         if (gen !== this.queryGen) return; // superseded mid-iteration
         this.applyMessage(message);
       }
-      // Only the current generation may declare the session over — an old
-      // loop ending is just its query having been replaced.
       if (gen !== this.queryGen) return;
       if (this.state !== 'error') this.setState('stopped');
     } catch (err) {
@@ -156,19 +150,18 @@ export class ClaudiaSession {
     this.lastActivityAt = Date.now();
     const routed = routeMessage(message, this.turnStartedAt);
 
-    // Streamed fragment of the in-progress reply; throttled by the buffer.
     if (routed.draftDelta !== undefined) {
       const emit = this.draft.append(routed.draftDelta);
       if (emit !== null) this.cb.onDraft(this.id, emit);
       return; // a delta carries nothing else
     }
-    // A complete step supersedes the draft it was streamed from.
     if (routed.steps.length > 0 && this.draft.clear()) this.cb.onDraft(this.id, null);
 
     for (const step of routed.steps) this.cb.onFeed(this.id, step);
     for (const item of routed.transcriptItems ?? []) {
       this.transcript.append(item);
       this.cb.onTranscript(this.id, item);
+      this.controls.capture(item);
     }
 
     for (const start of routed.toolStarts ?? []) this.tools.begin(start.toolUseId, start.stepId);
@@ -185,13 +178,9 @@ export class ClaudiaSession {
     if (routed.claudeSessionId) this.claudeSessionId = routed.claudeSessionId;
     if (routed.model) {
       this.model = routed.model;
-      // The pending choice has landed; stop advertising it as pending.
       if (modelMatches(this.selectedModel, routed.model)) this.selectedModel = undefined;
     }
     if (routed.slashCommands) this.cb.onCommands(this.id, routed.slashCommands);
-    // Cost and usage are cumulative in the SDK's result message — assign, never add.
-    // A result also ends the current turn, so the next queued prompt (if any)
-    // becomes the active one.
     if (routed.costUsd !== undefined) {
       this.costUsd = routed.costUsd;
       this.promptQueue.shift();
@@ -211,8 +200,6 @@ export class ClaudiaSession {
       patchSubAgent(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), routed.subAgent.toolUseId, routed.subAgent.run);
     }
 
-    // An empty session is idle, not working: the SDK has started but there is
-    // nothing for it to do until someone types.
     if (this.awaitingFirstPrompt && routed.state === 'working') {
       this.setState('idle');
       return;
@@ -286,6 +273,24 @@ export class ClaudiaSession {
     this.cb.onUpdate(this.summary());
   }
 
+  async setEffort(effortLevel: EffortLevel): Promise<void> {
+    await this.controls.setEffort(this.q as RuntimeControlQuery | null, effortLevel).catch(() => undefined);
+    this.cb.onFeed(this.id, infoStep('Effort changed', effortLevel));
+    this.cb.onUpdate(this.summary());
+  }
+
+  async setThinking(thinkingMode: ThinkingMode): Promise<void> {
+    await this.controls.setThinking(this.q as RuntimeControlQuery | null, thinkingMode).catch(() => undefined);
+    this.cb.onFeed(this.id, infoStep('Thinking changed', thinkingMode));
+    this.cb.onUpdate(this.summary());
+  }
+
+  refreshContext(): void {
+    if (this.controls.contextPending) return;
+    this.controls.requestContext(() => this.sendPrompt('/context'));
+    this.cb.onUpdate(this.summary());
+  }
+
   models(): Promise<ModelChoice[]> {
     return listModels(this.q as ParityQuery | null);
   }
@@ -337,6 +342,8 @@ export class ClaudiaSession {
             cwd: this.opts.cwd,
             model: this.opts.model,
             permissionMode: m,
+            effortLevel: this.controls.effortLevel,
+            thinkingMode: this.controls.thinkingMode,
             resume,
             input,
             onPermission: (toolName, toolInput) => this.onPermissionRequest(toolName, toolInput),

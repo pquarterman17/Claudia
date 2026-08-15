@@ -7,6 +7,7 @@ import { send } from '../store';
 import { COLORS, statusOf } from '../status';
 import { ApprovalBanner } from './ApprovalBanner';
 import { Composer } from './Composer';
+import { ContextMeter } from './ContextMeter';
 import { QuestionPicker } from './QuestionPicker';
 import { SessionFeed } from './SessionFeed';
 import { TranscriptView } from './TranscriptView';
@@ -278,6 +279,7 @@ export function SessionTile({
               {v === 'feed' ? 'Activity' : 'Chat'}
             </button>
           ))}
+          <ContextMeter session={session} />
         </div>
         {view === 'feed' ? (
           <SessionFeed steps={steps} draft={streaming} />

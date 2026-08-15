@@ -4,6 +4,7 @@ import { fmtCost, fmtTokens } from '../format';
 import { PromptHistory } from '../prompt-history';
 import { send, useClaudia } from '../store';
 import { COLORS, statusOf } from '../status';
+import { ReasoningControls } from './ReasoningControls';
 
 interface Props {
   session: SessionSummary;
@@ -332,6 +333,7 @@ export function Composer({ session }: Props) {
           </div>
         )}
       </span>
+      <ReasoningControls session={session} />
     </div>
   );
 }

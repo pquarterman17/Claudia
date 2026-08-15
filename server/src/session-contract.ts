@@ -1,10 +1,12 @@
 import type {
   FeedStep,
   FeedStepPatch,
+  EffortLevel,
   PermissionLaunchMode,
   SessionSummary,
   SlashCommandInfo,
   TranscriptItem,
+  ThinkingMode,
 } from '@claudia/shared';
 
 /** How a session reports back to whoever owns it (the manager → gateway → UI). */
@@ -26,4 +28,6 @@ export interface LaunchOptions {
   prompt?: string;
   model?: string;
   permissionMode: PermissionLaunchMode;
+  effortLevel?: EffortLevel;
+  thinkingMode?: ThinkingMode;
 }

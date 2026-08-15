@@ -24,6 +24,10 @@ export interface SessionSummaryState {
   pendingQuestion: PendingQuestion | undefined;
   customTitle: string | undefined;
   generatedTitle: string | undefined;
+  effortLevel: SessionSummary['effortLevel'];
+  thinkingMode: SessionSummary['thinkingMode'];
+  contextUsage: SessionSummary['contextUsage'];
+  contextPending: boolean;
 }
 
 /** Builds the wire-format session snapshot without exposing mutable session state. */
@@ -41,6 +45,10 @@ export function buildSessionSummary(
     model: state.model,
     selectedModel: state.selectedModel,
     permissionMode: opts.permissionMode,
+    effortLevel: state.effortLevel,
+    thinkingMode: state.thinkingMode,
+    contextUsage: state.contextUsage,
+    contextPending: state.contextPending,
     state: state.state,
     startedAt: state.startedAt,
     lastActivityAt: state.lastActivityAt,

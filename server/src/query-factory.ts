@@ -1,10 +1,12 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { PermissionLaunchMode } from '@claudia/shared';
+import type { EffortLevel, PermissionLaunchMode, ThinkingMode } from '@claudia/shared';
 
 export interface QuerySpec {
   cwd: string;
   model?: string;
   permissionMode: PermissionLaunchMode;
+  effortLevel: EffortLevel;
+  thinkingMode: ThinkingMode;
   /** Claude session to resume, for relaunches that must keep the conversation. */
   resume?: string;
   input: AsyncIterable<unknown>;
@@ -24,6 +26,8 @@ export function createSessionQuery(spec: QuerySpec): ReturnType<typeof query> {
       ...(spec.model ? { model: spec.model } : {}),
       ...(spec.resume ? { resume: spec.resume } : {}),
       permissionMode: spec.permissionMode,
+      effort: spec.effortLevel,
+      thinking: spec.thinkingMode === 'disabled' ? { type: 'disabled' } : { type: 'adaptive' },
       includePartialMessages: true,
       canUseTool: spec.onPermission as never,
     },

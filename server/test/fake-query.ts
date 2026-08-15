@@ -20,6 +20,7 @@ export class FakeQuery implements AsyncIterable<Record<string, unknown>> {
   interrupted = false;
   /** When true, setPermissionMode resolves (tightening); else it rejects. */
   allowInPlaceSwitch = false;
+  readonly flagSettings: Array<{ effortLevel?: string; alwaysThinkingEnabled?: boolean }> = [];
 
   private readonly out = new AsyncQueue<Record<string, unknown>>();
   private reading = true;
@@ -58,6 +59,11 @@ export class FakeQuery implements AsyncIterable<Record<string, unknown>> {
         `Cannot set permission mode to ${mode} because the session was not launched with --dangerously-skip-permissions`,
       ),
     );
+  }
+
+  applyFlagSettings(settings: { effortLevel?: string; alwaysThinkingEnabled?: boolean }): Promise<void> {
+    this.flagSettings.push(settings);
+    return Promise.resolve();
   }
 
   /** Simulates the CLI being busy: stops draining the session's input queue. */

@@ -87,15 +87,6 @@ path — measure before building.
 ## Tier 2 — Medium Impact
 
 
-
-7. **"Commit + push" finish action** — deliberately disabled in the UI rather than shipped
-
-25. **Resume + rewind** — `/resume` parity: picker over `~/.claude` session history for a cwd,
-    reattach via `resume` (subsumes the resume half of #2); `/rewind` parity via the SDK's
-    `rewindFiles` with a checkpoint list in the tile.
-26. **Context-window awareness** — per-tile context-fill %, from `modelUsage.contextWindow`,
-    with a visible warning before auto-compact territory. Terminal-statusline parity.
-
 7. **"Commit + push" finish action** — deliberately disabled in the UI rather than shipped
    as a silent no-op. Needs per-repo rules before it pushes unreviewed work: which repos are
    eligible, what to do with a dirty tree, whether to open a PR instead of pushing. Now more
@@ -147,7 +138,7 @@ Recording these so they are not rediscovered as bugs:
 
 ## Completed
 
-- ~~**#31 /context, #33 effort+thinking, #35 resume, #36 checkpoints, #37 fork, #38 MCP panel,
+- ~~**#25 resume+rewind, #26 context awareness, #31 /context, #33 effort+thinking, #35 resume, #36 checkpoints, #37 fork, #38 MCP panel,
   #39 settings inspector, #40 background tasks, #44 session.ts extraction**~~ (2026-07-26) —
   landed as an external seven-PR stack (#18–24) built directly on this plan, reviewed
   adversarially and merged with fixes. Verified live: /context parses real CLI output, fork

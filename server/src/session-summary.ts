@@ -24,10 +24,13 @@ export interface SessionSummaryState {
   pendingQuestion: PendingQuestion | undefined;
   customTitle: string | undefined;
   generatedTitle: string | undefined;
-  effortLevel: SessionSummary['effortLevel'];
-  thinkingMode: SessionSummary['thinkingMode'];
-  contextUsage: SessionSummary['contextUsage'];
-  contextPending: boolean;
+  /** Read straight off the runtime controls, which already own this state. */
+  controls: {
+    effortLevel: SessionSummary['effortLevel'];
+    thinkingMode: SessionSummary['thinkingMode'];
+    contextUsage: SessionSummary['contextUsage'];
+    contextPending: boolean;
+  };
   todos: SessionSummary['todos'];
 }
 
@@ -46,10 +49,10 @@ export function buildSessionSummary(
     model: state.model,
     selectedModel: state.selectedModel,
     permissionMode: opts.permissionMode,
-    effortLevel: state.effortLevel,
-    thinkingMode: state.thinkingMode,
-    contextUsage: state.contextUsage,
-    contextPending: state.contextPending,
+    effortLevel: state.controls.effortLevel,
+    thinkingMode: state.controls.thinkingMode,
+    contextUsage: state.controls.contextUsage,
+    contextPending: state.controls.contextPending,
     state: state.state,
     startedAt: state.startedAt,
     lastActivityAt: state.lastActivityAt,

@@ -2,6 +2,7 @@ import type { ClientCommand, HostPlatform, ServerEvent } from '@claudia/shared';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isClientLive } from './client-liveness.js';
 import { assertUsableDirectory, normalizePath, pickFolders } from './folder-picker.js';
+import { decideRewind, describeRewind } from './rewind-flow.js';
 import { retagSavedSession, retitleSavedSession, savedSessionDetail, savedSessions } from './saved-sessions.js';
 import type { SessionManager } from './session-manager.js';
 import type { SettingsStore } from './settings-store.js';
@@ -204,8 +205,15 @@ export class Gateway {
       case 'rewind_files': {
         const session = this.manager.get(cmd.sessionId);
         if (!session) throw new Error('Live session not found. File rewind requires the original live session.');
+        const decision = decideRewind(session.isBusy());
+        if (!decision.ok) {
+          this.sendTo(socket, { type: 'server_error', message: decision.message });
+          return;
+        }
         void session.rewindFiles(cmd.checkpointId).then((result) => {
-          if (!result.canRewind) this.sendTo(socket, { type: 'server_error', message: result.error ?? 'Files cannot be rewound to that checkpoint.' });
+          const outcome = describeRewind(result);
+          if (outcome.failed) this.sendTo(socket, { type: 'server_error', message: outcome.message });
+          else session.noteRewind(outcome.message);
         });
         return;
       }
@@ -334,7 +342,10 @@ export class Gateway {
         const session = this.manager.get(cmd.sessionId);
         if (!session) return;
         // requestReal arms capture first so the reply cannot race ahead of it.
-        this.usage.requestReal(cmd.sessionId, () => session.sendPrompt('/cost'));
+        // An unstarted session has no query: asking it for /cost would spawn
+        // one and spend a turn, which a usage refresh must never do.
+        if (!session.canSendControlPrompt()) return;
+        this.usage.requestReal(cmd.sessionId, () => session.sendControlPrompt('/cost'));
         return;
       }
       case 'set_custom_ceilings': {

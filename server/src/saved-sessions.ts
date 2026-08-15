@@ -16,7 +16,7 @@ export async function savedSessionDetail(sessionId: string, cwd?: string): Promi
   try {
     if (!(await getSessionInfo(sessionId, cwd ? { dir: cwd } : undefined))) return [];
     return (await getSessionMessages(sessionId, cwd ? { dir: cwd } : undefined))
-      .filter((message) => message.type === 'user')
+      .filter((message) => message.type === 'user' && isTypedPrompt(message.message))
       .map((message) => ({ messageId: message.uuid, label: messageLabel(message.message) }));
   } catch {
     return [];
@@ -29,7 +29,41 @@ export const retitleSavedSession = (id: string, title: string, cwd?: string): Pr
 export const retagSavedSession = (id: string, tag: string | null, cwd?: string): Promise<boolean> =>
   tagSession(id, tag, cwd ? { dir: cwd } : undefined).then(() => true, () => false);
 
+/**
+ * Whether a transcript entry is something the user actually typed.
+ *
+ * `type: 'user'` covers far more than typed prompts — every tool result is fed
+ * back to the model as a user turn, and they dominate any agentic session.
+ * Measured on real transcripts here: 1310 of 1370 user-type entries were tool
+ * results. Without this filter the checkpoint picker is a wall of near-identical
+ * rows, and the handful of real prompts are impossible to find in it.
+ * `message-router.ts` already draws the same distinction for the live feed.
+ */
+function isTypedPrompt(message: unknown): boolean {
+  const content = (message as { content?: unknown } | null)?.content;
+  if (typeof content === 'string') return true;
+  if (!Array.isArray(content)) return false;
+  return !content.some((block) => (block as { type?: string } | null)?.type === 'tool_result');
+}
+
+/**
+ * The prompt text for a checkpoint row.
+ *
+ * `content` is a bare string only sometimes; a prompt carrying images — or
+ * simply written by a newer CLI — arrives as an array of blocks. Reading only
+ * the string form collapsed most real prompts to the generic fallback, which
+ * defeats the point of labelling checkpoints at all.
+ */
 function messageLabel(message: unknown): string {
   const content = (message as { content?: unknown } | null)?.content;
-  return (typeof content === 'string' ? content : '').replace(/\s+/g, ' ').trim().slice(0, 100) || 'User message';
+  const text =
+    typeof content === 'string'
+      ? content
+      : Array.isArray(content)
+        ? content
+            .filter((block) => (block as { type?: string } | null)?.type === 'text')
+            .map((block) => (block as { text?: string }).text ?? '')
+            .join(' ')
+        : '';
+  return text.replace(/\s+/g, ' ').trim().slice(0, 100) || 'User message';
 }

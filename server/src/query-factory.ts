@@ -63,6 +63,18 @@ export function acceptedImages(images: PromptImage[]): PromptImage[] {
   });
 }
 
+/**
+ * The transcript's attachment note. Derived from the same accept rule as the
+ * payload so the record can never claim more images than the model received.
+ */
+export function describeAttachments(images: PromptImage[]): string {
+  if (images.length === 0) return '';
+  const sent = acceptedImages(images).length;
+  const dropped = images.length - sent;
+  return `
+[${sent} image${sent === 1 ? '' : 's'} attached${dropped > 0 ? `, ${dropped} too large to send` : ''}]`;
+}
+
 /** Builds the SDK's multimodal user envelope, with server-side input limits. */
 export function userMessage(text: string, sessionId: string | undefined, images: PromptImage[] = []): unknown {
   const accepted = acceptedImages(images).map((image) => ({

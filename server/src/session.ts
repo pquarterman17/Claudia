@@ -1,5 +1,4 @@
 import type {
-  FeedStep,
   EffortLevel,
   ModelChoice,
   ModelUsage,
@@ -8,7 +7,6 @@ import type {
   PermissionLaunchMode,
   PromptImage,
   SessionState,
-  SubAgentRun,
   TranscriptItem,
   ThinkingMode,
 } from '@claudia/shared';
@@ -20,10 +18,10 @@ import { DraftBuffer } from './draft-buffer.js';
 import { errorStep, infoStep } from './feed.js';
 import * as gateActions from './gate-actions.js';
 import { routeMessage } from './message-router.js';
-import { autoTitle, listCommands, listModels, modelMatches, type ParityQuery } from './parity-controls.js';
+import { listCommands, listModels, maybeGenerateTitle, modelMatches, type ParityQuery } from './parity-controls.js';
 import { TranscriptLog } from './transcript-log.js';
-import { abandonRunningSteps, patchSubAgent } from './step-patcher.js';
-import { acceptedImages, createSessionQuery, userMessage } from './query-factory.js';
+import { abandonRunningSteps, applyToolEvents, patchSubAgent } from './step-patcher.js';
+import { createSessionQuery, describeAttachments, userMessage } from './query-factory.js';
 import { describeMode } from './permission-labels.js';
 import { switchPermissionMode } from './permission-switch.js';
 import { PromptQueue } from './prompt-queue.js';
@@ -92,10 +90,7 @@ export class ClaudiaSession {
       pendingQuestion: this.pendingQuestion,
       customTitle: this.customTitle,
       generatedTitle: this.generatedTitle,
-      effortLevel: this.controls.effortLevel,
-      thinkingMode: this.controls.thinkingMode,
-      contextUsage: this.controls.contextUsage,
-      contextPending: this.controls.contextPending,
+      controls: this.controls,
       todos: this.todos.todos,
     });
   }
@@ -120,19 +115,28 @@ export class ClaudiaSession {
     this.setState('idle');
   }
 
-  private beginQuery(): void {
-    if (this.q) return;
-    this.q = createSessionQuery({
+  /**
+   * The single place that knows how to construct this session's query. Both
+   * first start and a permission relaunch go through it, so the two cannot
+   * drift apart on the settings they pass.
+   */
+  private makeQuery(mode: PermissionLaunchMode, resume: string | undefined, input: AsyncQueue<unknown>, fork?: boolean) {
+    return createSessionQuery({
       cwd: this.opts.cwd,
       model: this.opts.model,
-      permissionMode: this.opts.permissionMode,
+      permissionMode: mode,
       effortLevel: this.controls.effortLevel,
       thinkingMode: this.controls.thinkingMode,
-      resume: this.opts.resume,
-      forkSession: this.opts.forkSession,
-      input: this.input,
-      onPermission: (toolName, input) => gateActions.openPermissionRequest(this.gateCtx(), toolName, input),
+      resume,
+      forkSession: fork,
+      input,
+      onPermission: (toolName, toolInput) => gateActions.openPermissionRequest(this.gateCtx(), toolName, toolInput),
     });
+  }
+
+  private beginQuery(): void {
+    if (this.q) return;
+    this.q = this.makeQuery(this.opts.permissionMode, this.opts.resume, this.input, this.opts.forkSession);
     void this.consume(this.queryGen);
   }
 
@@ -169,16 +173,7 @@ export class ClaudiaSession {
       this.todos.capture(item);
     }
 
-    for (const start of routed.toolStarts ?? []) this.tools.begin(start.toolUseId, start.stepId);
-    for (const end of routed.toolEnds ?? []) {
-      const done = this.tools.complete(end.toolUseId, end.isError);
-      if (done) {
-        this.cb.onFeedPatch(this.id, done.stepId, {
-          durMs: done.durMs,
-          status: done.isError ? 'error' : 'ok',
-        });
-      }
-    }
+    applyToolEvents(this.tools, routed, (stepId, patch) => this.cb.onFeedPatch(this.id, stepId, patch));
 
     if (routed.claudeSessionId) this.claudeSessionId = routed.claudeSessionId;
     if (routed.model) {
@@ -189,14 +184,15 @@ export class ClaudiaSession {
     if (routed.costUsd !== undefined) {
       this.costUsd = routed.costUsd;
       this.promptQueue.shift();
-      if (!this.generatedTitle && !this.customTitle && this.firstPrompt) {
-        void autoTitle(this.q as ParityQuery | null, this.firstPrompt).then((title) => {
-          if (title && !this.customTitle) {
-            this.generatedTitle = title;
-            this.cb.onUpdate(this.summary());
-          }
-        });
-      }
+      maybeGenerateTitle(
+        this.q as ParityQuery | null,
+        { generated: this.generatedTitle, custom: this.customTitle, firstPrompt: this.firstPrompt },
+        (title) => {
+          if (this.customTitle) return;
+          this.generatedTitle = title;
+          this.cb.onUpdate(this.summary());
+        },
+      );
     }
     if (routed.modelUsage) this.modelUsage = routed.modelUsage;
     if (routed.errorMessage) this.errorMessage = routed.errorMessage;
@@ -267,8 +263,41 @@ export class ClaudiaSession {
 
   refreshContext(): void {
     if (this.controls.contextPending) return;
-    this.controls.requestContext(() => this.sendPrompt('/context'));
+    if (!this.sendControlPrompt('/context')) return;
+    this.controls.requestContext(() => undefined);
     this.cb.onUpdate(this.summary());
+  }
+
+  /**
+   * Sends a CLI control command (`/context`, `/cost`) rather than a user task.
+   * Returns false when there is nothing to send it to.
+   *
+   * The guard is the point: a session launched with no prompt has no query yet,
+   * and these are inspector buttons. Routing them through sendPrompt would
+   * SPAWN the session, spend a real turn, and — because the first prompt seeds
+   * the auto-title — leave it permanently named after the button rather than
+   * the work. Requiring an existing query also means `firstPrompt` is already
+   * set, so a control command can never become the title basis.
+   */
+  /** True while a turn is in flight, so destructive actions can refuse. */
+  isBusy(): boolean {
+    return this.state === 'working' || this.state === 'starting' || this.state === 'awaiting_approval';
+  }
+
+  /** Records what a completed file restore actually changed. */
+  noteRewind(detail: string): void {
+    this.cb.onFeed(this.id, infoStep('Files restored', detail));
+  }
+
+  /** Whether a control command has a live query to go to. */
+  canSendControlPrompt(): boolean {
+    return this.q !== null;
+  }
+
+  sendControlPrompt(text: string): boolean {
+    if (!this.q) return false;
+    this.sendPrompt(text);
+    return true;
   }
 
   models(): Promise<ModelChoice[]> {
@@ -288,15 +317,7 @@ export class ClaudiaSession {
     if (!this.firstPrompt) this.firstPrompt = text;
     this.beginQuery();
     this.pushUserText(text, images);
-    // Label what was actually sent, not what was offered. The server drops
-    // images that bust the per-image or total-payload limit, and a transcript
-    // claiming more than the model received is worse than no label at all.
-    const sent = acceptedImages(images).length;
-    const dropped = images.length - sent;
-    const attachment = images.length
-      ? `\n[${sent} image${sent === 1 ? '' : 's'} attached${dropped > 0 ? `, ${dropped} too large to send` : ''}]`
-      : '';
-    const item: TranscriptItem = { ts: Date.now(), kind: 'user', text: `${text}${attachment}` };
+    const item: TranscriptItem = { ts: Date.now(), kind: 'user', text: `${text}${describeAttachments(images)}` };
     this.transcript.append(item);
     this.cb.onTranscript(this.id, item);
     this.lastActivityAt = Date.now();
@@ -324,16 +345,7 @@ export class ClaudiaSession {
         feedInfo: (title, meta) => this.cb.onFeed(this.id, infoStep(title, meta)),
         updated: () => this.cb.onUpdate(this.summary()),
         replaceQuery: (m, resume, input) => {
-          this.q = createSessionQuery({
-            cwd: this.opts.cwd,
-            model: this.opts.model,
-            permissionMode: m,
-            effortLevel: this.controls.effortLevel,
-            thinkingMode: this.controls.thinkingMode,
-            resume,
-            input,
-            onPermission: (toolName, toolInput) => gateActions.openPermissionRequest(this.gateCtx(), toolName, toolInput),
-          });
+          this.q = this.makeQuery(m, resume, input);
           void this.consume(this.queryGen);
         },
       },

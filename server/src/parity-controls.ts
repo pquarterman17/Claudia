@@ -127,3 +127,20 @@ export async function autoTitle(q: ParityQuery | null, description: string): Pro
     return null;
   }
 }
+
+/**
+ * Names a session from its first task, once, when its first turn completes.
+ *
+ * Guarded on there being no title yet at BOTH ends: the request is async, and a
+ * rename typed while it was in flight must win over the generated name.
+ */
+export function maybeGenerateTitle(
+  q: ParityQuery | null,
+  state: { generated?: string; custom?: string; firstPrompt?: string },
+  apply: (title: string) => void,
+): void {
+  if (state.generated || state.custom || !state.firstPrompt) return;
+  void autoTitle(q, state.firstPrompt).then((title) => {
+    if (title) apply(title);
+  });
+}

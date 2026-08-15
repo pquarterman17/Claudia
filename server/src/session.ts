@@ -13,20 +13,19 @@ import type {
   ThinkingMode,
 } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
-import { ApprovalGate, type PermissionResult } from './approval-gate.js';
+import { ApprovalGate } from './approval-gate.js';
 import type { LaunchOptions, SessionCallbacks } from './session-contract.js';
 import { AsyncQueue } from './async-queue.js';
 import { DraftBuffer } from './draft-buffer.js';
-import { approvalStep, errorStep, infoStep, summarizeToolInput } from './feed.js';
+import { errorStep, infoStep } from './feed.js';
 import * as gateActions from './gate-actions.js';
 import { routeMessage } from './message-router.js';
 import { autoTitle, listCommands, listModels, modelMatches, type ParityQuery } from './parity-controls.js';
 import { TranscriptLog } from './transcript-log.js';
 import { abandonRunningSteps, patchSubAgent } from './step-patcher.js';
-import { createSessionQuery, userMessage } from './query-factory.js';
+import { acceptedImages, createSessionQuery, userMessage } from './query-factory.js';
 import { describeMode } from './permission-labels.js';
 import { switchPermissionMode } from './permission-switch.js';
-import { parseQuestions } from './question-parser.js';
 import { PromptQueue } from './prompt-queue.js';
 import { SubAgentTracker } from './sub-agent-tracker.js';
 import { buildSessionSummary } from './session-summary.js';
@@ -132,7 +131,7 @@ export class ClaudiaSession {
       resume: this.opts.resume,
       forkSession: this.opts.forkSession,
       input: this.input,
-      onPermission: (toolName, input) => this.onPermissionRequest(toolName, input),
+      onPermission: (toolName, input) => gateActions.openPermissionRequest(this.gateCtx(), toolName, input),
     });
     void this.consume(this.queryGen);
   }
@@ -218,31 +217,13 @@ export class ClaudiaSession {
     }
   }
 
-  private onPermissionRequest(toolName: string, input: Record<string, unknown>): Promise<PermissionResult> {
-    const summary = summarizeToolInput(toolName, input);
-    const promise = this.gate.request(toolName, summary, input);
-
-    const questions = toolName === 'AskUserQuestion' ? parseQuestions(input) : null;
-    if (questions) {
-      this.pendingQuestion = {
-        requestId: this.gate.current?.requestId ?? '',
-        questions,
-        requestedAt: Date.now(),
-      };
-      this.cb.onFeed(this.id, infoStep('Asked you a question', questions[0]?.question));
-    } else {
-      this.cb.onFeed(this.id, approvalStep(toolName, summary));
-    }
-    this.setState('awaiting_approval');
-    return promise;
-  }
-
   private gateCtx(): gateActions.GateCtx {
     return {
       gate: this.gate,
       feed: (step) => this.cb.onFeed(this.id, step),
       setState: (state) => this.setState(state),
       getQuestion: () => this.pendingQuestion,
+      setQuestion: (question) => (this.pendingQuestion = question),
       clearQuestion: () => (this.pendingQuestion = undefined),
     };
   }
@@ -307,7 +288,14 @@ export class ClaudiaSession {
     if (!this.firstPrompt) this.firstPrompt = text;
     this.beginQuery();
     this.pushUserText(text, images);
-    const attachment = images.length ? `\n[${images.length} image${images.length === 1 ? '' : 's'} attached]` : '';
+    // Label what was actually sent, not what was offered. The server drops
+    // images that bust the per-image or total-payload limit, and a transcript
+    // claiming more than the model received is worse than no label at all.
+    const sent = acceptedImages(images).length;
+    const dropped = images.length - sent;
+    const attachment = images.length
+      ? `\n[${sent} image${sent === 1 ? '' : 's'} attached${dropped > 0 ? `, ${dropped} too large to send` : ''}]`
+      : '';
     const item: TranscriptItem = { ts: Date.now(), kind: 'user', text: `${text}${attachment}` };
     this.transcript.append(item);
     this.cb.onTranscript(this.id, item);
@@ -344,7 +332,7 @@ export class ClaudiaSession {
             thinkingMode: this.controls.thinkingMode,
             resume,
             input,
-            onPermission: (toolName, toolInput) => this.onPermissionRequest(toolName, toolInput),
+            onPermission: (toolName, toolInput) => gateActions.openPermissionRequest(this.gateCtx(), toolName, toolInput),
           });
           void this.consume(this.queryGen);
         },

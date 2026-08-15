@@ -42,16 +42,33 @@ const IMAGE_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'imag
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_BYTES = 10 * 1024 * 1024;
 
+/**
+ * The images that will actually reach the model, after type, per-image size,
+ * and total-payload limits.
+ *
+ * Exported because the caller has to label the transcript with what was really
+ * sent. Deriving the label from the raw client list instead made the record
+ * lie: three 4 MB photos each pass the 5 MB per-image rule, but the third
+ * exceeds the 10 MB total, so the transcript claimed three images while the
+ * model received two.
+ */
+export function acceptedImages(images: PromptImage[]): PromptImage[] {
+  let remaining = MAX_TOTAL_IMAGE_BYTES;
+  return images.slice(0, 4).filter((image) => {
+    if (!IMAGE_MEDIA_TYPES.has(image.mediaType) || !/^[A-Za-z0-9+/]*={0,2}$/.test(image.data)) return false;
+    const bytes = Math.floor((image.data.length * 3) / 4) - (image.data.endsWith('==') ? 2 : image.data.endsWith('=') ? 1 : 0);
+    if (bytes <= 0 || bytes > MAX_IMAGE_BYTES || bytes > remaining) return false;
+    remaining -= bytes;
+    return true;
+  });
+}
+
 /** Builds the SDK's multimodal user envelope, with server-side input limits. */
 export function userMessage(text: string, sessionId: string | undefined, images: PromptImage[] = []): unknown {
-  let remaining = MAX_TOTAL_IMAGE_BYTES;
-  const accepted = images.slice(0, 4).flatMap((image) => {
-    if (!IMAGE_MEDIA_TYPES.has(image.mediaType) || !/^[A-Za-z0-9+/]*={0,2}$/.test(image.data)) return [];
-    const bytes = Math.floor((image.data.length * 3) / 4) - (image.data.endsWith('==') ? 2 : image.data.endsWith('=') ? 1 : 0);
-    if (bytes <= 0 || bytes > MAX_IMAGE_BYTES || bytes > remaining) return [];
-    remaining -= bytes;
-    return [{ type: 'image' as const, source: { type: 'base64' as const, media_type: image.mediaType, data: image.data } }];
-  });
+  const accepted = acceptedImages(images).map((image) => ({
+    type: 'image' as const,
+    source: { type: 'base64' as const, media_type: image.mediaType, data: image.data },
+  }));
   const content = accepted.length ? [{ type: 'text' as const, text }, ...accepted] : text;
   return {
     type: 'user',

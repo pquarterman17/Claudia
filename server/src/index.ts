@@ -111,6 +111,14 @@ httpServer.listen(CLAUDIA_PORT, '127.0.0.1', () => {
   console.log(`[claudia] listening on http://127.0.0.1:${CLAUDIA_PORT} · ${platform}`);
 });
 
+// Backstop, not a substitute for handling rejections where they happen: this
+// process supervises other people's long-running work, so dying over one stray
+// rejection loses far more than it protects. Every known path is guarded at its
+// source; this catches the unknown ones and says so loudly.
+process.on('unhandledRejection', (reason) => {
+  console.error('[claudia] unhandled rejection — surviving, but this is a bug:', reason);
+});
+
 // Wire teardown to real lifecycle signals, not atexit-style hooks.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {

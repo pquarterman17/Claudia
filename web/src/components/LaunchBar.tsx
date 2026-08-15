@@ -137,7 +137,7 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
           <option key={d} value={d} />
         ))}
       </datalist>
-      <button
+      <button type="button"
         className="btn btn-secondary"
         disabled={browsing}
         title={folderPickerHint(platform)}
@@ -203,7 +203,7 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
               </button>
             </div>
           ))}
-          <button
+          <button type="button"
             className="btn btn-secondary"
             disabled={!cwd.trim()}
             title="Save current cwd, prompt, and mode as a template"
@@ -226,14 +226,14 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
               <strong title={session.summary}>{(session.customTitle ?? session.summary) || 'Untitled session'}</strong>
               <small>{session.tag ? `${session.tag} · ` : ''}{sessionCwd || 'Choose a directory to resume'}</small>
               <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                <button disabled={!sessionCwd} title="Continue this Claude conversation" onClick={() => send({ type: 'resume_saved_session', sessionId: session.sessionId, cwd: sessionCwd, permissionMode: mode })}>Resume</button>
-                <button disabled={!sessionCwd} title="Create a new conversation branch; file checkpoints are not copied" onClick={() => send({ type: 'fork_saved_session', sessionId: session.sessionId, cwd: sessionCwd, permissionMode: mode })}>Fork conversation…</button>
-                <button title="Show user-message file checkpoints" onClick={() => send({ type: 'get_saved_session_detail', sessionId: session.sessionId, ...(session.cwd ? { cwd: session.cwd } : {}) })}>Checkpoints</button>
-                <button title="Rename this saved Claude session" onClick={() => {
+                <button type="button" disabled={!sessionCwd} title="Continue this Claude conversation" onClick={() => send({ type: 'resume_saved_session', sessionId: session.sessionId, cwd: sessionCwd, permissionMode: mode })}>Resume</button>
+                <button type="button" disabled={!sessionCwd} title="Create a new conversation branch; file checkpoints are not copied" onClick={() => send({ type: 'fork_saved_session', sessionId: session.sessionId, cwd: sessionCwd, permissionMode: mode })}>Fork conversation…</button>
+                <button type="button" title="Show user-message file checkpoints" onClick={() => send({ type: 'get_saved_session_detail', sessionId: session.sessionId, ...(session.cwd ? { cwd: session.cwd } : {}) })}>Checkpoints</button>
+                <button type="button" title="Rename this saved Claude session" onClick={() => {
                   const title = window.prompt('Session title', session.customTitle ?? session.summary);
                   if (title?.trim()) send({ type: 'rename_saved_session', sessionId: session.sessionId, ...(session.cwd ? { cwd: session.cwd } : {}), title: title.trim() });
                 }}>Rename…</button>
-                <button title="Set or clear the saved session tag" onClick={() => {
+                <button type="button" title="Set or clear the saved session tag" onClick={() => {
                   const tag = window.prompt('Session tag (leave empty to clear)', session.tag ?? '');
                   if (tag !== null) send({ type: 'tag_saved_session', sessionId: session.sessionId, ...(session.cwd ? { cwd: session.cwd } : {}), tag: tag.trim() || null });
                 }}>Tag…</button>
@@ -243,7 +243,7 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
           })}
         </div>
       </details>
-      <button
+      <button type="button"
         className="btn btn-primary"
         onClick={launch}
         style={{ flex: 'none', fontSize: 11.5, padding: '4px 12px', borderColor: danger ? '#d98484' : '#9184d9' }}

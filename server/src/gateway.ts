@@ -41,7 +41,9 @@ export class Gateway {
     this.sweepTimer = setInterval(() => this.onClientCountChanged(), 5_000);
     this.sweepTimer.unref?.();
     this.wss.on('connection', (socket) => {
-      void manager.mcpSnapshot().then((mcp) => this.sendTo(socket, {
+      // .catch is not optional here: an unhandled rejection ends the process
+      // on modern Node, and this fires on every browser connect.
+      void manager.mcpSnapshot().catch(() => ({})).then((mcp) => this.sendTo(socket, {
         type: 'hello',
         sessions: manager.summaries(),
         feeds: manager.feedSnapshot(),
@@ -280,16 +282,21 @@ export class Gateway {
         this.manager.get(cmd.sessionId)?.mcpStatus().then((servers) => this.sendTo(socket, { type: 'mcp_status', sessionId: cmd.sessionId, servers }));
         return;
       case 'reconnect_mcp':
-        this.manager.get(cmd.sessionId)?.reconnectMcp(cmd.serverName)?.then(() => this.dispatch({ type: 'get_mcp_status', sessionId: cmd.sessionId }, socket));
+        this.manager.get(cmd.sessionId)?.reconnectMcp(cmd.serverName)?.catch(() => undefined).then(() => this.dispatch({ type: 'get_mcp_status', sessionId: cmd.sessionId }, socket));
         return;
       case 'toggle_mcp':
-        this.manager.get(cmd.sessionId)?.toggleMcp(cmd.serverName, cmd.enabled)?.then(() => this.dispatch({ type: 'get_mcp_status', sessionId: cmd.sessionId }, socket));
+        this.manager.get(cmd.sessionId)?.toggleMcp(cmd.serverName, cmd.enabled)?.catch(() => undefined).then(() => this.dispatch({ type: 'get_mcp_status', sessionId: cmd.sessionId }, socket));
         return;
       case 'get_effective_settings':
-        this.manager.get(cmd.sessionId)?.effectiveSettings().then((settings) => this.sendTo(socket, { type: 'effective_settings', sessionId: cmd.sessionId, settings }));
+        void this.manager
+          .get(cmd.sessionId)
+          ?.effectiveSettings()
+          .then((settings) => {
+            if (settings) this.sendTo(socket, { type: 'effective_settings', sessionId: cmd.sessionId, settings });
+          });
         return;
       case 'stop_task':
-        void this.manager.get(cmd.sessionId)?.stopTask(cmd.taskId);
+        void this.manager.get(cmd.sessionId)?.stopTask(cmd.taskId)?.catch(() => undefined);
         return;
       case 'require_approvals_everywhere':
         for (const s of this.manager.summaries()) {

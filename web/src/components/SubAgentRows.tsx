@@ -50,7 +50,7 @@ export function SubAgentRows({ runs, sessionId }: Props) {
             >
               {mark.icon}
             </span>
-            {run.status === 'running' && <button className="btn-ghost" title="Stop this observed background task" onClick={() => send({ type: 'stop_task', sessionId, taskId: run.taskId })}>Stop</button>}
+            {run.status === 'running' && <button type="button" className="btn btn-ghost" title="Stop this observed background task" onClick={() => send({ type: 'stop_task', sessionId, taskId: run.taskId })}>Stop</button>}
             <span style={{ flex: 1, minWidth: 0 }}>
               <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
                 <span style={{ fontSize: 10, color: '#b5abfc' }}>{run.agentType}</span>

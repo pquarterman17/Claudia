@@ -83,34 +83,10 @@ live session rather than trusting docs alone. Two probe results overturned assum
 plan was built on, so they lead the list. Items marked **probe first** have an unverified SDK
 path — measure before building.
 
-31. **Context-window awareness via `/context`** — supersedes the `modelUsage.contextWindow`
-    approach in #26: `/context` returns a real usage breakdown. Per-tile fill %, warning
-    before auto-compact territory.
-33. **Effort and thinking control** — `effort` at startup and `applyFlagSettings({ effortLevel })`
-    mid-session; `thinking` takes `adaptive|enabled|disabled`. Previously deferred for want of
-    a known API; the API exists. (`setMaxThinkingTokens` is deprecated in favour of `thinking`.)
 
 ## Tier 2 — Medium Impact
 
-44. **Extract from `session.ts`** — at 399 of 400 lines it has one line of headroom, so the
-    next change touching it must extract first. Candidates: the `summary()` builder and the
-    parity delegations. Not urgent, but it blocks any session-level work.
 
-35. **Resume picker** — `listSessions()`, `getSessionInfo()`, `getSessionMessages()`,
-    `renameSession()`, `tagSession()` exist, so the picker is ours to render rather than
-    reverse-engineering `~/.claude`. Refines #25's first half.
-36. **File checkpointing** — `enableFileCheckpointing: true` at launch, then `rewindFiles()`
-    against a per-tile checkpoint list. Refines #25's second half.
-37. **Fork a session** — `forkSession: true` + `resume`. Note this is NOT the terminal's
-    `/branch`: that forks in-process and carries session permission grants, a fork is a fresh
-    process. Label it honestly in the UI.
-38. **MCP panel** — `mcpServerStatus()`, `reconnectMcpServer()`, `toggleMcpServer()`,
-    `setMcpServers()`. Currently invisible in Claudia; a dead MCP server is silent.
-39. **Effective-settings inspector** — `resolveSettings()` resolves the same merge the CLI
-    uses, so "why did this session auto-approve that?" becomes answerable in the UI.
-40. **Background task visibility** — subagent/background-shell lifecycle is already in the
-    stream; `stopTask(taskId)` can stop one. No enumeration API, so build the list from
-    observed events.
 
 7. **"Commit + push" finish action** — deliberately disabled in the UI rather than shipped
 
@@ -170,6 +146,17 @@ Recording these so they are not rediscovered as bugs:
   construction; Claudia is not the Claude Code product.
 
 ## Completed
+
+- ~~**#31 /context, #33 effort+thinking, #35 resume, #36 checkpoints, #37 fork, #38 MCP panel,
+  #39 settings inspector, #40 background tasks, #44 session.ts extraction**~~ (2026-07-26) —
+  landed as an external seven-PR stack (#18–24) built directly on this plan, reviewed
+  adversarially and merged with fixes. Verified live: /context parses real CLI output, fork
+  carries the conversation. Review found and fixed a server-killing bug (unhandled rejections
+  in every new websocket handler — one failing MCP server killed the supervisor on page load,
+  reproduced then re-tested), a transcript that overstated image attachments, inspector buttons
+  that spawned sessions and spent a turn, and checkpoint labels that were 96% "User message".
+  Also #13 macOS: a real osascript start-directory fix plus docs/macos-qa-checklist.md — still
+  no hands-on Mac validation.
 
 - ~~**#30 Real plan limits from `/cost`**~~ (2026-07-26) — pure `cost-parser.ts` + user-triggered
   refresh; verified live capturing 26% session / 28% weekly / 26% weekly-Fable with reset times.

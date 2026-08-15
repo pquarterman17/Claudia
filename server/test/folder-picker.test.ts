@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { assertUsableDirectory, normalizePath } from '../src/folder-picker.js';
+import { assertUsableDirectory, folderPickerCommand, normalizePath } from '../src/folder-picker.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'claudia-test-'));
 const file = join(dir, 'a.txt');
@@ -62,5 +62,27 @@ describe('assertUsableDirectory', () => {
 
   it('rejects a file — launching into one would fail obscurely later', () => {
     expect(() => assertUsableDirectory(file)).toThrow(/Not a directory/);
+  });
+});
+
+describe('macOS folder picker command', () => {
+  it('uses osascript with multi-select and one POSIX path per line', () => {
+    const command = folderPickerCommand('darwin');
+    expect(command.file).toBe('osascript');
+    expect(command.args.join('\n')).toContain('with multiple selections allowed');
+    expect(command.args.join('\n')).toContain('POSIX path of d & linefeed');
+  });
+
+  it('embeds an initial folder into the AppleScript rather than treating it as a script file', () => {
+    const command = folderPickerCommand('darwin', '/Users/pat/Projects/Claudia');
+    expect(command.args).toContain(
+      'set dirs to choose folder with prompt "Select working directories for Claudia" default location (POSIX file "/Users/pat/Projects/Claudia") with multiple selections allowed',
+    );
+    expect(command.args.at(-1)).not.toBe('/Users/pat/Projects/Claudia');
+  });
+
+  it('keeps POSIX paths and a bare root stable for macOS', () => {
+    expect(normalizePath('/Users/pat/Project/', 'darwin')).toBe('/Users/pat/Project');
+    expect(normalizePath('/', 'darwin')).toBe('/');
   });
 });

@@ -143,6 +143,7 @@ export function App() {
         templates={templates}
         savedSessions={savedSessions}
         checkpoints={checkpoints}
+        platform={platform}
       />
       {lastError && (
         <div

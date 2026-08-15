@@ -51,6 +51,24 @@ const PICKERS: Record<HostPlatform, { file: string; args: string[] }> = {
   },
 };
 
+/**
+ * The native picker program and its argv. Kept as a small pure seam so the
+ * platform contracts can be tested without opening a real desktop dialog.
+ */
+export function folderPickerCommand(platform: HostPlatform, startIn?: string): { file: string; args: string[] } {
+  const picker = PICKERS[platform];
+  if (!startIn || platform !== 'darwin') {
+    return { file: picker.file, args: startIn ? [...picker.args, startIn] : picker.args };
+  }
+
+  // osascript does not treat a trailing argv element as an initial directory;
+  // it treats it as another script file. Put the directory in the `choose`
+  // expression instead. JSON string escaping is valid for an AppleScript text
+  // literal and prevents a quote in a path from changing the script.
+  const choose = `set dirs to choose folder with prompt "Select working directories for Claudia" default location (POSIX file ${JSON.stringify(startIn)}) with multiple selections allowed`;
+  return { file: picker.file, args: [picker.args[0]!, choose, ...picker.args.slice(2)] };
+}
+
 /** A cancel looks like a failure on some platforms; these say otherwise. */
 const CANCEL_HINTS = [/user canceled/i, /user cancelled/i];
 
@@ -63,8 +81,8 @@ const CANCEL_HINTS = [/user canceled/i, /user cancelled/i];
  * changing their mind — the button just went quiet and the real error was lost.
  */
 export function pickFolders(platform: HostPlatform, startIn?: string): Promise<string[]> {
-  const picker = PICKERS[platform];
-  const args = startIn ? [...picker.args, startIn] : picker.args;
+  const picker = folderPickerCommand(platform, startIn);
+  const { args } = picker;
   return new Promise((resolve, reject) => {
     execFile(picker.file, args, { timeout: 180_000 }, (err, stdout, stderr) => {
       const chosen = stdout.trim();

@@ -1,7 +1,8 @@
-import type { FileCheckpoint, PermissionLaunchMode, SavedSession, SessionTemplate } from '@claudia/shared';
+import type { FileCheckpoint, HostPlatform, PermissionLaunchMode, SavedSession, SessionTemplate } from '@claudia/shared';
 import { useEffect, useRef, useState } from 'react';
 import { PERMISSION_MODES, permissionModeLabel } from '../permission-modes';
 import { onFoldersPicked, send } from '../store';
+import { folderPickerHint } from '../platform-copy';
 
 interface Props {
   recentDirectories: string[];
@@ -10,10 +11,11 @@ interface Props {
   templates: SessionTemplate[];
   savedSessions: SavedSession[];
   checkpoints: Record<string, FileCheckpoint[]>;
+  platform?: HostPlatform;
 }
 
 /** Launch a new Claudia-owned session: cwd + first prompt + permission mode. */
-export function LaunchBar({ recentDirectories, defaultMode, templates, savedSessions, checkpoints }: Props) {
+export function LaunchBar({ recentDirectories, defaultMode, templates, savedSessions, checkpoints, platform }: Props) {
   const [cwd, setCwd] = useState('');
   const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<PermissionLaunchMode>(defaultMode);
@@ -138,7 +140,7 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
       <button
         className="btn btn-secondary"
         disabled={browsing}
-        title="Pick a folder — ctrl-click several to start a session in each"
+        title={folderPickerHint(platform)}
         onClick={() => {
           setBrowsing(true);
           send({ type: 'browse_folder' });

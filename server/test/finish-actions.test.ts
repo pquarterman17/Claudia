@@ -22,6 +22,13 @@ describe('per-OS command table', () => {
     expect(describeCommand('script', 'linux')).toContain('wrapup.sh');
   });
 
+  it('uses only macOS-native commands in its macOS finish chain', () => {
+    expect(specFor('notify').command('darwin')).toMatchObject({ file: 'osascript' });
+    expect(specFor('sleep').command('darwin')).toEqual({ file: 'pmset', args: ['displaysleepnow'] });
+    expect(specFor('shutdown').command('darwin')).toEqual({ file: 'shutdown', args: ['-h', 'now'] });
+    expect(describeCommand('script', 'darwin')).toMatch(/\/bin\/wrapup\.sh$/);
+  });
+
   it('marks only shutdown destructive', () => {
     expect(FINISH_ACTIONS.filter((a) => a.destructive).map((a) => a.key)).toEqual(['shutdown']);
   });

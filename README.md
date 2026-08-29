@@ -1,5 +1,8 @@
 # Claudia
 
+[![ci](https://github.com/pquarterman17/Claudia/actions/workflows/ci.yml/badge.svg)](https://github.com/pquarterman17/Claudia/actions/workflows/ci.yml)
+[![licence: AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](LICENSE)
+
 One window over every Claude Code session running in parallel.
 
 Sessions are **owned** by a local Node server via the

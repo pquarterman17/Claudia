@@ -154,7 +154,13 @@ describe('CodexDriver message flow', () => {
     driver.sendPrompt('do the thing');
     await vi.waitFor(() => expect(fp.sent.some((f) => f['method'] === 'thread/start')).toBe(true));
     const startReq = fp.sent.find((f) => f['method'] === 'thread/start')!;
-    expect(startReq['params']).toMatchObject({ workingDirectory: '/repo' });
+    expect(startReq['params']).toMatchObject({
+      // `cwd`, not `workingDirectory`: verified against the real app-server,
+      // which ignores unknown keys silently rather than complaining.
+      cwd: '/repo',
+      approvalPolicy: 'on-request',
+      sandbox: 'workspace-write',
+    });
     fp.emit({ id: startReq['id'], result: { threadId: 'th_9' } });
 
     await vi.waitFor(() => expect(fp.sent.some((f) => f['method'] === 'turn/start')).toBe(true));

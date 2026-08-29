@@ -12,6 +12,8 @@
 // A dollar cost of 0 is CORRECT — Codex reports tokens but no cost.
 
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 
 const cwd = process.argv[2];
 if (!cwd) {
@@ -19,11 +21,30 @@ if (!cwd) {
   process.exit(1);
 }
 
-try {
-  const version = execFileSync('codex', ['--version'], { encoding: 'utf8' }).trim();
-  console.log(`codex found: ${version}`);
-} catch {
+// Resolve the same way the server does. On Windows npm installs codex as a
+// .cmd shim plus a POSIX script and puts no .exe on PATH, so a plain
+// execFileSync('codex') fails with ENOENT even though the shell finds it.
+const windows = process.platform === 'win32';
+const candidates = windows ? ['codex.exe', 'codex.cmd'] : ['codex'];
+let resolved = null;
+for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+  for (const candidate of candidates) {
+    const full = dir && join(dir, candidate);
+    if (full && existsSync(full)) { resolved = full; break; }
+  }
+  if (resolved) break;
+}
+if (!resolved) {
   console.error('codex is not installed. Install it with:  npm install -g @openai/codex');
+  process.exit(1);
+}
+try {
+  const version = resolved.toLowerCase().endsWith('.cmd')
+    ? execFileSync(`"${resolved}" --version`, { encoding: 'utf8', shell: true }).trim()
+    : execFileSync(resolved, ['--version'], { encoding: 'utf8' }).trim();
+  console.log(`codex found: ${version}`);
+} catch (err) {
+  console.error(`codex was found at ${resolved} but would not run: ${err.message}`);
   process.exit(1);
 }
 

@@ -93,9 +93,15 @@ path — measure before building.
     - [x] Driver seam in `session.ts` so both agents share the state machine, feed and gate
     - [x] Agent picker at launch + per-tile badge, with Claude-only controls disabled and the
       reason attached
-    - [ ] **Needs the owner:** `npm install -g @openai/codex` and an OpenAI login. Nothing here
-      is verified against a live Codex — this machine has none — so the first real run is the
-      test that matters.
+    - [x] **Verified against a live codex-cli 0.151.0** (2026-07-26): full loop, including an
+      approval parked in Claudia's gate and released from the client —
+      `starting -> working -> awaiting_approval -> working -> idle`, thread id and token
+      counts reported. Four defects only the real binary exposed: Node cannot spawn either of
+      the Windows PATH entries (`.cmd` shim + POSIX script, no `.exe`); `thread/started`
+      carries `{ thread: { id } }` not a top-level `threadId`; token usage is nested under
+      `tokenUsage.total` in camelCase; and this CLI sends
+      `item/commandExecution/requestApproval` rather than the documented
+      `execCommandApproval`, with `accept`/`decline` instead of `approved`/`denied`.
     - Known asymmetries, by measurement not guesswork: Codex reports token counts but **no
       dollar cost**; usage arrives on its own `thread/tokenUsage/updated` notification; its
       sub-agents are separate threads rather than nested calls; `/cost`, `/context`, the model

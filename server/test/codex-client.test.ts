@@ -169,6 +169,57 @@ describe('approvals — the reason this uses app-server at all', () => {
   });
 });
 
+describe('approvals — the modern methods a live CLI actually sends', () => {
+  // codex-cli 0.151.0 does not send execCommandApproval at all. It sends
+  // item/commandExecution/requestApproval, with a DIFFERENT decision
+  // vocabulary. Supporting only the documented legacy names made every
+  // approval fail: the agent reported "shell approval failed" and gave up.
+  it('answers item/commandExecution/requestApproval with "accept", not "approved"', async () => {
+    const h = harness();
+    h.emit({
+      id: 21,
+      method: 'item/commandExecution/requestApproval',
+      params: {
+        threadId: 'th_1',
+        turnId: 'turn_1',
+        itemId: 'item_1',
+        approvalId: null,
+        command: ['powershell.exe', '-Command', 'echo hi'],
+        cwd: 'C:/repo',
+      },
+    });
+    await vi.waitFor(() => expect(h.approvals).toHaveLength(1));
+    expect(h.approvals[0]?.summary).toContain('echo hi');
+    await vi.waitFor(() => expect(h.sent.some((f) => f['id'] === 21)).toBe(true));
+    expect(h.sent.find((f) => f['id'] === 21)).toMatchObject({ result: { decision: 'accept' } });
+  });
+
+  it('answers a modern deny with "decline", not the legacy denied object', async () => {
+    const h = harness(async () => ({ kind: 'denied', rejection: 'no' }));
+    h.emit({ id: 22, method: 'item/fileChange/requestApproval', params: { itemId: 'item_2', reason: 'needs write access' } });
+    await vi.waitFor(() => expect(h.sent.some((f) => f['id'] === 22)).toBe(true));
+    expect(h.sent.find((f) => f['id'] === 22)).toMatchObject({ result: { decision: 'decline' } });
+  });
+
+  it('falls back to the reason for a file change, whose params carry no paths', async () => {
+    const h = harness();
+    h.emit({ id: 23, method: 'item/fileChange/requestApproval', params: { itemId: 'i', reason: 'needs write access' } });
+    await vi.waitFor(() => expect(h.approvals).toHaveLength(1));
+    expect(h.approvals[0]?.summary).toBe('needs write access');
+  });
+
+  it('declines a sandbox-widening request by granting nothing, without stalling', async () => {
+    // This one answers with a permission profile, not a decision. An empty
+    // grant lets the turn continue inside the sandbox it already had.
+    const h = harness();
+    h.emit({ id: 24, method: 'item/permissions/requestApproval', params: { itemId: 'i', permissions: {}, cwd: '/repo' } });
+    await vi.waitFor(() => expect(h.sent.some((f) => f['id'] === 24)).toBe(true));
+    expect(h.sent.find((f) => f['id'] === 24)).toMatchObject({ result: { permissions: {}, scope: 'turn' } });
+    // It is surfaced rather than swallowed, so the user can see it was asked.
+    expect(h.notifications.some((n) => n.method === 'claudia/permissionsDeclined')).toBe(true);
+  });
+});
+
 describe('describeApproval', () => {
   it('summarises a single-file patch by its path', () => {
     const a = describeApproval('applyPatchApproval', { fileChanges: { '/repo/only.ts': {} } });

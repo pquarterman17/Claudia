@@ -1,5 +1,7 @@
 import { APPROVAL_METHOD, METHOD, encodeDecision, type CodexDecision, type CodexFrame } from './codex-protocol.js';
 
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v : undefined);
+
 /**
  * A JSON-RPC client for `codex app-server`.
  *
@@ -168,18 +170,31 @@ export class CodexClient {
   }
 
   private async answerRequest(frame: CodexFrame): Promise<void> {
+    // A sandbox-widening request answers with a permission grant, not a
+    // decision. Granting nothing declines it without stalling the turn, and the
+    // agent simply proceeds within the sandbox it already has.
+    if (frame.method === APPROVAL_METHOD.permissionsRequest) {
+      this.handlers.onNotify('claudia/permissionsDeclined', frame.params ?? {});
+      this.write({ id: frame.id, result: { permissions: {}, scope: 'turn' } });
+      return;
+    }
+
     const approval = describeApproval(frame.method ?? '', frame.params ?? {});
     if (!approval) {
       // An unknown server request still needs an answer, or Codex waits on us.
       this.write({ id: frame.id, error: { code: -32601, message: `Unsupported request: ${frame.method}` } });
       return;
     }
+    const method = frame.method ?? '';
     try {
       const decision = await this.handlers.onApproval(approval);
-      this.write({ id: frame.id, result: { decision: encodeDecision(decision) } });
+      this.write({ id: frame.id, result: { decision: encodeDecision(decision, method) } });
     } catch {
       // Never leave the turn parked because our own handler failed.
-      this.write({ id: frame.id, result: { decision: encodeDecision({ kind: 'denied', rejection: 'Claudia could not ask' }) } });
+      this.write({
+        id: frame.id,
+        result: { decision: encodeDecision({ kind: 'denied', rejection: 'Claudia could not ask' }, method) },
+      });
     }
   }
 }
@@ -195,21 +210,24 @@ function readThreadId(result: Record<string, unknown> | undefined): string | und
 
 /** Turns an approval request into something a human can decide on. */
 export function describeApproval(method: string, params: Record<string, unknown>): CodexApproval | null {
-  if (method === APPROVAL_METHOD.exec) {
+  if (method === APPROVAL_METHOD.exec || method === APPROVAL_METHOD.execRequest) {
     const command = Array.isArray(params['command'])
       ? (params['command'] as unknown[]).filter((c): c is string => typeof c === 'string').join(' ')
       : String(params['command'] ?? '');
     return { kind: 'exec', summary: command || 'a command', params };
   }
-  if (method === APPROVAL_METHOD.patch) {
+  if (method === APPROVAL_METHOD.patch || method === APPROVAL_METHOD.patchRequest) {
+    // The legacy request carries the paths; the modern one carries only an
+    // itemId, because the change was already described by its item/started
+    // notification. Fall back to the reason so the banner is never blank.
     const changes = (params['fileChanges'] ?? {}) as Record<string, unknown>;
     const paths = Object.keys(changes);
     const summary =
-      paths.length === 0
-        ? 'file changes'
-        : paths.length === 1
-          ? (paths[0] as string)
-          : `${paths.length} files: ${paths.slice(0, 2).join(', ')}`;
+      paths.length === 1
+        ? (paths[0] as string)
+        : paths.length > 1
+          ? `${paths.length} files: ${paths.slice(0, 2).join(', ')}`
+          : (str(params['reason']) ?? 'the edits above');
     return { kind: 'patch', summary, params };
   }
   return null;

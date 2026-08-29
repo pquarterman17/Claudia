@@ -3,17 +3,26 @@ import { routeCodexMessage } from '../src/codex-router.js';
 import { encodeDecision } from '../src/codex-protocol.js';
 
 /**
- * Fixtures follow the shapes documented in codex-rs/app-server/README.md and
- * codex-rs/protocol/src/protocol.rs, not invented ones. Where a field name was
- * ambiguous across sources the Rust definition wins, because that is what the
- * running binary serialises.
+ * Fixtures are CAPTURED FROM A LIVE codex-cli 0.151.0, not transcribed from
+ * documentation. Two of them were wrong when written from the docs alone and
+ * only the real wire showed it: `thread/started` carries { thread: { id } }
+ * rather than a top-level threadId, and token usage arrives nested under
+ * { tokenUsage: { total: {...} } } in camelCase. Both failed silently — a
+ * session with no resumable id, and a permanently zero token count.
  */
 
 describe('thread and turn lifecycle', () => {
-  it('adopts the thread id so the session can be resumed later', () => {
-    const r = routeCodexMessage('thread/started', { threadId: 'th_abcdef123456' });
-    expect(r.claudeSessionId).toBe('th_abcdef123456');
+  it('adopts the thread id from the nested thread object', () => {
+    // Captured payload shape; a top-level threadId does not exist here.
+    const r = routeCodexMessage('thread/started', {
+      thread: { id: '01a04e56-0e66-7090-b5a0-cd4c80ff5396', sessionId: '01a04e56-0e66-7090-b5a0-cd4c80ff5396', preview: '' },
+    });
+    expect(r.claudeSessionId).toBe('01a04e56-0e66-7090-b5a0-cd4c80ff5396');
     expect(r.state).toBe('working');
+  });
+
+  it('reports no id rather than a wrong one when the thread object is absent', () => {
+    expect(routeCodexMessage('thread/started', {}).claudeSessionId).toBeUndefined();
   });
 
   it('treats a completed turn as the session going idle', () => {
@@ -39,10 +48,17 @@ describe('thread and turn lifecycle', () => {
 });
 
 describe('token usage', () => {
-  it('reads the separate tokenUsage notification, which is where Codex reports it', () => {
-    // Unlike the Claude SDK, usage does not ride turn completion.
+  it('reads the captured tokenUsage shape: nested under total, camelCase', () => {
+    // Real payload from a live turn. Unlike the Claude SDK, usage does not ride
+    // turn completion, and `last` covers only the most recent request -- summing
+    // that across notifications would over-count, so `total` is the one to read.
     const r = routeCodexMessage('thread/tokenUsage/updated', {
-      usage: { input_tokens: 1200, cached_input_tokens: 800, output_tokens: 300, cache_write_input_tokens: 50 },
+      threadId: 'th_1',
+      turnId: 'turn_1',
+      tokenUsage: {
+        total: { totalTokens: 16875, inputTokens: 1200, cachedInputTokens: 800, cacheWriteInputTokens: 50, outputTokens: 300, reasoningOutputTokens: 0 },
+        last: { totalTokens: 9, inputTokens: 4, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 5, reasoningOutputTokens: 0 },
+      },
     });
     expect(r.modelUsage?.[0]).toMatchObject({
       inputTokens: 1200,
@@ -53,12 +69,12 @@ describe('token usage', () => {
   });
 
   it('reports zero cost rather than inventing one, since Codex reports none', () => {
-    const r = routeCodexMessage('thread/tokenUsage/updated', { usage: { input_tokens: 10, output_tokens: 5 } });
+    const r = routeCodexMessage('thread/tokenUsage/updated', { tokenUsage: { total: { inputTokens: 10, outputTokens: 5 } } });
     expect(r.modelUsage?.[0]?.costUsd).toBe(0);
   });
 
   it('ignores an all-zero usage payload instead of emitting an empty row', () => {
-    const r = routeCodexMessage('thread/tokenUsage/updated', { usage: { input_tokens: 0, output_tokens: 0 } });
+    const r = routeCodexMessage('thread/tokenUsage/updated', { tokenUsage: { total: { inputTokens: 0, outputTokens: 0 } } });
     expect(r.modelUsage).toBeUndefined();
   });
 });

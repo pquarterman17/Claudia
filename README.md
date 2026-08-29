@@ -182,8 +182,17 @@ To use it:
 npm install -g @openai/codex
 ```
 
-then sign in to Codex once. Verify the wiring end to end with `node scripts/codex-smoke.mjs
-"C:/path/to/a/repo"`.
+then sign in to Codex once. Verify end to end with `node scripts/codex-smoke.mjs
+"C:/path/to/a/repo"` — a passing run shows the full supervision loop, including an approval
+parked in Claudia and released from the browser:
+`starting -> working -> awaiting_approval -> working -> idle`.
+
+Verified against codex-cli 0.151.0 on Windows. Two things worth knowing if you read the
+protocol docs yourself: this CLI sends `item/commandExecution/requestApproval`, not the
+documented `execCommandApproval`, and the two generations answer with different vocabularies
+(`accept`/`decline` versus `approved`/`denied`) — Claudia handles both. On Windows npm installs
+`codex` as a `.cmd` shim with no `.exe` on PATH, so the binary is resolved on the filesystem
+rather than left to `spawn`, which cannot execute either PATH entry.
 
 **What a Codex tile does not have**, measured rather than assumed: no dollar cost (it reports
 token counts only), no `/cost` or `/context`, no model picker, MCP panel, effective-settings

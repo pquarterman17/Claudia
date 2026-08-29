@@ -1,7 +1,7 @@
 import type { PromptImage } from '@claudia/shared';
 import { AsyncQueue } from './async-queue.js';
 import { CodexClient, type CodexApproval } from './codex-client.js';
-import type { CodexDecision } from './codex-protocol.js';
+import { codexPermissions, type CodexDecision } from './codex-protocol.js';
 import { CodexNotInstalledError, spawnCodexAppServer, type CodexProcess } from './codex-process.js';
 import { routeCodexMessage } from './codex-router.js';
 import { errorStep } from './feed.js';
@@ -11,6 +11,9 @@ import type { SessionDriver } from './session-driver.js';
 
 export interface CodexDriverOptions {
   cwd: string;
+  /** Claudia's permission mode, mapped onto Codex's approvalPolicy + sandbox. */
+  permissionMode: string;
+  model?: string;
   /** A Codex thread id to reopen, for a relaunch that must keep the conversation. */
   resume?: string;
   onApproval: (approval: CodexApproval) => Promise<CodexDecision>;
@@ -35,10 +38,14 @@ export class CodexDriver implements SessionDriver {
   private failed = false;
   private readonly cwd: string;
   private readonly resume: string | undefined;
+  private readonly permissionMode: string;
+  private readonly model: string | undefined;
 
   constructor(opts: CodexDriverOptions) {
     this.cwd = opts.cwd;
     this.resume = opts.resume;
+    this.permissionMode = opts.permissionMode;
+    this.model = opts.model;
     const spawn = opts.spawn ?? spawnCodexAppServer;
     try {
       const { channel, exited } = spawn(opts.cwd);
@@ -84,13 +91,28 @@ export class CodexDriver implements SessionDriver {
       if (!this.threadId) {
         this.threadId = this.resume
           ? await this.client.resumeThread(this.resume)
-          : await this.client.startThread({ workingDirectory: this.cwd });
+          : await this.client.startThread(this.threadOptions());
       }
       if (this.threadId) await this.client.startTurn(this.threadId, text);
     } catch (err) {
       const errMsg = describeStartupError(err);
       this.outbox.push({ steps: [errorStep('Codex turn failed', errMsg)], state: 'error', errorMessage: errMsg });
     }
+  }
+
+  /**
+   * Options for thread/start. The field is `cwd`, not `workingDirectory`:
+   * an unknown key is ignored silently, so the wrong name merely inherits the
+   * spawned process's directory and looks like it worked.
+   */
+  private threadOptions(): Record<string, unknown> {
+    const permissions = codexPermissions(this.permissionMode);
+    return {
+      cwd: this.cwd,
+      approvalPolicy: permissions.approvalPolicy,
+      sandbox: permissions.sandbox,
+      ...(this.model ? { model: this.model } : {}),
+    };
   }
 
   async interrupt(): Promise<void> {

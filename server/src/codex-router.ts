@@ -122,10 +122,14 @@ function stepForItem(item: Record<string, unknown>): MappedItem | null {
  * for every other tile would be worse than an empty one.
  */
 function usageFrom(params: Record<string, unknown>, model: string): ModelUsage[] {
-  const raw = (params['usage'] ?? params) as Record<string, unknown>;
-  const inputTokens = num(raw['input_tokens'] ?? raw['inputTokens']);
-  const cacheReadTokens = num(raw['cached_input_tokens'] ?? raw['cachedInputTokens']);
-  const outputTokens = num(raw['output_tokens'] ?? raw['outputTokens']);
+  // Measured shape: { threadId, turnId, tokenUsage: { total: {...}, last: {...} } }
+  // with camelCase counts. `total` is the cumulative one; `last` covers only the
+  // most recent request, so summing it across notifications would over-count.
+  const envelope = (params['tokenUsage'] ?? params['usage'] ?? params) as Record<string, unknown>;
+  const raw = (envelope['total'] ?? envelope) as Record<string, unknown>;
+  const inputTokens = num(raw['inputTokens'] ?? raw['input_tokens']);
+  const cacheReadTokens = num(raw['cachedInputTokens'] ?? raw['cached_input_tokens']);
+  const outputTokens = num(raw['outputTokens'] ?? raw['output_tokens']);
   if (inputTokens + cacheReadTokens + outputTokens === 0) return [];
   return [
     {
@@ -133,7 +137,7 @@ function usageFrom(params: Record<string, unknown>, model: string): ModelUsage[]
       inputTokens,
       outputTokens,
       cacheReadTokens,
-      cacheCreationTokens: num(raw['cache_write_input_tokens'] ?? raw['cacheWriteInputTokens']),
+      cacheCreationTokens: num(raw['cacheWriteInputTokens'] ?? raw['cache_write_input_tokens']),
       // Zero because Codex reports no dollar figure, not because the turn was
       // free. Tokens above are real; the cost column stays empty for these
       // tiles rather than showing an invented number beside exact ones.
@@ -154,7 +158,11 @@ export function routeCodexMessage(
   model = 'codex',
 ): RoutedMessage {
   if (method === 'thread/started') {
-    const id = str(params['threadId']) ?? str(params['thread_id']);
+    // Measured against codex-cli 0.151.0: the payload is { thread: { id, ... } }.
+    // Reading a top-level threadId -- which the docs suggest -- silently yields
+    // nothing, leaving the session with no id to resume from.
+    const thread = (params['thread'] ?? {}) as Record<string, unknown>;
+    const id = str(thread['id']) ?? str(thread['sessionId']) ?? str(params['threadId']);
     return {
       steps: [step('info', 'Session started', id ? `codex - ${id.slice(0, 8)}` : 'codex')],
       state: 'working',
@@ -189,7 +197,7 @@ export function routeCodexMessage(
     return delta ? { steps: [], draftDelta: delta } : EMPTY;
   }
 
-  if (method === 'item/started' || method === 'item/completed' || method === 'item/updated') {
+  if (method === 'item/started' || method === 'item/completed') {
     const item = (params['item'] ?? {}) as Record<string, unknown>;
     const mapped = stepForItem(item);
     if (!mapped) return EMPTY;

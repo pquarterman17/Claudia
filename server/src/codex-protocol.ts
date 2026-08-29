@@ -30,11 +30,33 @@ export const METHOD = {
   turnInterrupt: 'turn/interrupt',
 } as const;
 
-/** Server -> client requests that must be answered or the turn stalls. */
+/**
+ * Server -> client requests that must be answered or the turn stalls.
+ *
+ * There are two generations of these and a live CLI uses the newer pair, so
+ * handling only the documented legacy names means every approval is refused
+ * and the agent reports "shell approval failed" — measured against
+ * codex-cli 0.151.0 before both were supported.
+ *
+ * They do NOT share a decision vocabulary: the legacy pair answers with
+ * ReviewDecision ("approved" / {denied:{rejection}}), the modern pair with
+ * "accept" / "decline".
+ */
 export const APPROVAL_METHOD = {
+  /** Legacy. */
   exec: 'execCommandApproval',
   patch: 'applyPatchApproval',
+  /** Current. */
+  execRequest: 'item/commandExecution/requestApproval',
+  patchRequest: 'item/fileChange/requestApproval',
+  /** A request to widen the sandbox, answered with a permission grant. */
+  permissionsRequest: 'item/permissions/requestApproval',
 } as const;
+
+/** True when a method answers with the modern accept/decline vocabulary. */
+export function usesModernDecision(method: string): boolean {
+  return method === APPROVAL_METHOD.execRequest || method === APPROVAL_METHOD.patchRequest;
+}
 
 /** A decision Claudia can return. Deny carries a reason the agent reads. */
 export type CodexDecision =
@@ -44,11 +66,28 @@ export type CodexDecision =
   | { kind: 'abort' };
 
 /**
- * Encodes a decision for the wire. Unit variants serialise as bare strings;
- * `denied` carries a payload, so it becomes an object. Getting this wrong does
- * not error — the turn simply never resumes.
+ * Encodes a decision for the wire, in the vocabulary the asking method expects.
+ *
+ * Getting this wrong does not error — the turn simply never resumes, or the
+ * agent reports an approval failure and gives up on the command.
+ *
+ * Legacy (ReviewDecision): unit variants are bare strings, but `denied` is a
+ * struct variant and must be an object.
+ * Modern: every variant is a bare string.
  */
-export function encodeDecision(decision: CodexDecision): unknown {
+export function encodeDecision(decision: CodexDecision, method: string = APPROVAL_METHOD.exec): unknown {
+  if (usesModernDecision(method)) {
+    switch (decision.kind) {
+      case 'denied':
+        return 'decline';
+      case 'approved_for_session':
+        return 'acceptForSession';
+      case 'abort':
+        return 'cancel';
+      default:
+        return 'accept';
+    }
+  }
   switch (decision.kind) {
     case 'denied':
       return { denied: { rejection: decision.rejection } };
@@ -87,4 +126,40 @@ export interface CodexFrame {
   params?: Record<string, unknown>;
   result?: unknown;
   error?: { code?: number; message?: string };
+}
+
+/**
+ * Codex's own permission vocabulary, and how Claudia's modes map onto it.
+ *
+ * Values verified against `codex app-server generate-json-schema` for the
+ * installed CLI: approvalPolicy is "untrusted" | "on-request" | "never", and
+ * sandbox is "read-only" | "workspace-write" | "danger-full-access".
+ *
+ * Without these, thread/start uses Codex's defaults and commands run with no
+ * approval at all — measured: a real session executed a shell command without
+ * ever asking, which silently defeats the point of supervising it.
+ */
+export interface CodexPermissions {
+  approvalPolicy: 'untrusted' | 'on-request' | 'never';
+  sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
+}
+
+export function codexPermissions(mode: string): CodexPermissions {
+  switch (mode) {
+    case 'bypassPermissions':
+      // "Skip all" means what it says on both sides.
+      return { approvalPolicy: 'never', sandbox: 'danger-full-access' };
+    case 'plan':
+      // Research without changing anything: the sandbox enforces it.
+      return { approvalPolicy: 'untrusted', sandbox: 'read-only' };
+    case 'acceptEdits':
+      // Edits inside the workspace land; anything beyond it still asks.
+      return { approvalPolicy: 'on-request', sandbox: 'workspace-write' };
+    case 'default':
+      // Ask for anything not already trusted.
+      return { approvalPolicy: 'untrusted', sandbox: 'workspace-write' };
+    default:
+      // 'auto' — Codex decides when it needs to escalate.
+      return { approvalPolicy: 'on-request', sandbox: 'workspace-write' };
+  }
 }

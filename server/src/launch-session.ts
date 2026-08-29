@@ -32,7 +32,13 @@ export function launchSession(
   settings.update({ defaultPermissionMode: cmd.permissionMode ?? 'auto' });
 }
 
-/** Saved sessions are Claude-only today — resuming never needs an agent field. */
+/**
+ * Resumes or forks a stored conversation with the agent that wrote it.
+ *
+ * The agent is carried on the command rather than guessed: a Codex thread id
+ * means nothing to Claude and vice versa, so resuming with the wrong driver
+ * fails in a way that looks like corrupt history.
+ */
 export function resumeSavedSession(
   cmd: Extract<ClientCommand, { type: 'resume_saved_session' | 'fork_saved_session' }>,
   manager: SessionManager,
@@ -42,6 +48,7 @@ export function resumeSavedSession(
   assertUsableDirectory(cwd);
   manager.launch({
     cwd,
+    agent: cmd.agent ?? 'claude',
     permissionMode: cmd.permissionMode ?? settings.get().defaultPermissionMode,
     resume: cmd.sessionId,
     ...(cmd.type === 'fork_saved_session' ? { forkSession: true } : {}),

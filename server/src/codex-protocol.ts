@@ -27,6 +27,8 @@ export const METHOD = {
   threadStart: 'thread/start',
   modelList: 'model/list',
   threadResume: 'thread/resume',
+  threadFork: 'thread/fork',
+  threadList: 'thread/list',
   turnStart: 'turn/start',
   turnInterrupt: 'turn/interrupt',
 } as const;

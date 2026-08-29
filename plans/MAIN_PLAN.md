@@ -102,6 +102,12 @@ path — measure before building.
       `tokenUsage.total` in camelCase; and this CLI sends
       `item/commandExecution/requestApproval` rather than the documented
       `execCommandApproval`, with `accept`/`decline` instead of `approved`/`denied`.
+    - [x] **Resume and fork** (2026-07-26) — `thread/list` feeds the picker (both agents merged,
+      newest first, tagged by agent), `thread/resume` restores history and `thread/fork` copies
+      it. Verified live: a resumed thread recalled 5192, a fork recalled 7734 while the original
+      stayed open. Codex threads are SINGLE-WRITER, so resuming one still open in another tile
+      is refused — the error now says so and points at fork. Listing is bounded by a timeout;
+      without one a wedged app-server left the picker spinning forever.
     - Known asymmetries, by measurement not guesswork: Codex reports token counts but **no
       dollar cost**; usage arrives on its own `thread/tokenUsage/updated` notification; its
       sub-agents are separate threads rather than nested calls; `/cost`, `/context`, the MCP

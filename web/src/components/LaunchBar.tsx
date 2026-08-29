@@ -236,19 +236,26 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
         if ((e.currentTarget as HTMLDetailsElement).open) send({ type: 'list_saved_sessions', ...(cwd.trim() ? { cwd: cwd.trim() } : {}) });
       }}>
         <summary>Resume history{savedSessions.length ? ` (${savedSessions.length})` : ''}</summary>
-        <div className="launch-more-panel" aria-label="Saved Claude sessions">
-          {savedSessions.length === 0 && <small>Open to load saved Claude Code sessions.</small>}
+        <div className="launch-more-panel" aria-label="Saved sessions">
+          {savedSessions.length === 0 && <small>Open to load saved Claude Code and Codex history for this folder.</small>}
           {savedSessions.map((session) => {
             const sessionCwd = session.cwd ?? cwd.trim();
             const history = checkpoints[session.sessionId];
+            // A thread id only means something to the agent that wrote it, so
+            // resume and fork must carry it rather than assume Claude.
+            const sessionAgent = session.agent ?? 'claude';
+            const isCodexRow = sessionAgent === 'codex';
             return <div className="launch-template-row" key={session.sessionId} style={{ display: 'block' }}>
-              <strong title={session.summary}>{(session.customTitle ?? session.summary) || 'Untitled session'}</strong>
+              <strong title={session.summary}>
+                {isCodexRow && <span style={{ fontSize: 9, fontWeight: 600, color: '#8ec1e8', marginRight: 5 }}>CODEX</span>}
+                {(session.customTitle ?? session.summary) || 'Untitled session'}
+              </strong>
               <small>{session.tag ? `${session.tag} · ` : ''}{sessionCwd || 'Choose a directory to resume'}</small>
               <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
-                <button type="button" disabled={!sessionCwd} title="Continue this Claude conversation" onClick={() => send({ type: 'resume_saved_session', sessionId: session.sessionId, cwd: sessionCwd, permissionMode: mode })}>Resume</button>
-                <button type="button" disabled={!sessionCwd} title="Create a new conversation branch; file checkpoints are not copied" onClick={() => send({ type: 'fork_saved_session', sessionId: session.sessionId, cwd: sessionCwd, permissionMode: mode })}>Fork conversation…</button>
-                <button type="button" title="Show user-message file checkpoints" onClick={() => send({ type: 'get_saved_session_detail', sessionId: session.sessionId, ...(session.cwd ? { cwd: session.cwd } : {}) })}>Checkpoints</button>
-                <button type="button" title="Rename this saved Claude session" onClick={() => {
+                <button type="button" disabled={!sessionCwd} title={isCodexRow ? 'Continue this Codex thread — it must not be open in another tile' : 'Continue this Claude conversation'} onClick={() => send({ type: 'resume_saved_session', sessionId: session.sessionId, cwd: sessionCwd, agent: sessionAgent, permissionMode: mode })}>Resume</button>
+                <button type="button" disabled={!sessionCwd} title={isCodexRow ? 'Copy this thread and run beside it — works even while the original is open' : 'Create a new conversation branch; file checkpoints are not copied'} onClick={() => send({ type: 'fork_saved_session', sessionId: session.sessionId, cwd: sessionCwd, agent: sessionAgent, permissionMode: mode })}>Fork conversation…</button>
+                <button type="button" disabled={isCodexRow} title={isCodexRow ? 'File checkpoints are Claude-only' : 'Show user-message file checkpoints'} onClick={() => send({ type: 'get_saved_session_detail', sessionId: session.sessionId, ...(session.cwd ? { cwd: session.cwd } : {}) })}>Checkpoints</button>
+                <button type="button" disabled={isCodexRow} title={isCodexRow ? 'Renaming saved threads is Claude-only' : 'Rename this saved Claude session'} onClick={() => {
                   const title = window.prompt('Session title', session.customTitle ?? session.summary);
                   if (title?.trim()) send({ type: 'rename_saved_session', sessionId: session.sessionId, ...(session.cwd ? { cwd: session.cwd } : {}), title: title.trim() });
                 }}>Rename…</button>

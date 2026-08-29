@@ -175,6 +175,8 @@ export interface SessionSummary {
 
 export interface SavedSession {
   sessionId: string;
+  /** Which agent wrote this history; resuming must use the same one. */
+  agent?: AgentKind;
   summary: string;
   lastModified: number;
   cwd?: string;

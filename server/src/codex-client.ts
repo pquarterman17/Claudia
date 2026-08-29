@@ -88,6 +88,26 @@ export class CodexClient {
   }
 
   /**
+   * Copies a thread and opens the copy, leaving the original untouched.
+   *
+   * `lastTurnId` would fork from a specific earlier turn; it is deliberately
+   * not passed, because Claudia's fork means "carry on beside this one", not
+   * "rewind and branch".
+   */
+  async forkThread(threadId: string, options: Record<string, unknown> = {}): Promise<string | undefined> {
+    const result = (await this.request(METHOD.threadFork, { threadId, ...options })) as
+      | Record<string, unknown>
+      | undefined;
+    return readThreadId(result);
+  }
+
+  /** Past threads for a directory, newest first, for the resume picker. */
+  async listThreads(cwd: string, limit = 40): Promise<Array<Record<string, unknown>>> {
+    const result = (await this.request(METHOD.threadList, { cwd, limit })) as { data?: unknown } | undefined;
+    return Array.isArray(result?.data) ? (result.data as Array<Record<string, unknown>>) : [];
+  }
+
+  /**
    * Submits user input. Resolves when the turn is accepted, not when it ends.
    *
    * `model` and `effort` are per-turn overrides, which is exactly how Claude's

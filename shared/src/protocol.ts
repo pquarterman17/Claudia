@@ -85,9 +85,9 @@ export type ClientCommand =
     }
   | { type: 'list_saved_sessions'; cwd?: string }
   | { type: 'get_saved_session_detail'; sessionId: string; cwd?: string }
-  | { type: 'resume_saved_session'; sessionId: string; cwd: string; permissionMode?: PermissionLaunchMode }
+  | { type: 'resume_saved_session'; sessionId: string; cwd: string; agent?: AgentKind; permissionMode?: PermissionLaunchMode }
   /** Resumes into a new Claude conversation branch (file checkpoints are not copied). */
-  | { type: 'fork_saved_session'; sessionId: string; cwd: string; permissionMode?: PermissionLaunchMode }
+  | { type: 'fork_saved_session'; sessionId: string; cwd: string; agent?: AgentKind; permissionMode?: PermissionLaunchMode }
   | { type: 'rename_saved_session'; sessionId: string; cwd?: string; title: string }
   | { type: 'tag_saved_session'; sessionId: string; cwd?: string; tag: string | null }
   | { type: 'rewind_files'; sessionId: string; checkpointId: string }

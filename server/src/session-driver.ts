@@ -49,6 +49,7 @@ export function createDriver(spec: DriverSpec): SessionDriver {
     return new CodexDriver({
       cwd: spec.cwd,
       resume: spec.resume,
+      forkSession: spec.forkSession,
       permissionMode: spec.permissionMode,
       model: spec.model,
       onApproval: (approval) => decideCodexApproval(spec.gateCtx, approval),

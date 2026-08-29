@@ -16,6 +16,8 @@ export interface CodexDriverOptions {
   model?: string;
   /** A Codex thread id to reopen, for a relaunch that must keep the conversation. */
   resume?: string;
+  /** Copy that thread instead of continuing it, leaving the original alone. */
+  forkSession?: boolean;
   onApproval: (approval: CodexApproval) => Promise<CodexDecision>;
   /** Overridable so tests can drive this without a Codex install. */
   spawn?: (cwd: string) => CodexProcess;
@@ -38,6 +40,7 @@ export class CodexDriver implements SessionDriver {
   private failed = false;
   private readonly cwd: string;
   private readonly resume: string | undefined;
+  private readonly forkSession: boolean;
   private readonly permissionMode: string;
   private readonly model: string | undefined;
   /** A model chosen mid-session, applied as a per-turn override. */
@@ -46,6 +49,7 @@ export class CodexDriver implements SessionDriver {
   constructor(opts: CodexDriverOptions) {
     this.cwd = opts.cwd;
     this.resume = opts.resume;
+    this.forkSession = opts.forkSession === true;
     this.permissionMode = opts.permissionMode;
     this.model = opts.model;
     const spawn = opts.spawn ?? spawnCodexAppServer;
@@ -105,9 +109,12 @@ export class CodexDriver implements SessionDriver {
     if (!this.client) return;
     try {
       if (!this.threadId) {
+        const options = this.threadOptions();
         this.threadId = this.resume
-          ? await this.client.resumeThread(this.resume)
-          : await this.client.startThread(this.threadOptions());
+          ? this.forkSession
+            ? await this.client.forkThread(this.resume, options)
+            : await this.client.resumeThread(this.resume, options)
+          : await this.client.startThread(options);
       }
       if (this.threadId) {
         const model = this.selectedModel ?? this.model;
@@ -119,7 +126,7 @@ export class CodexDriver implements SessionDriver {
         if (model) this.outbox.push({ steps: [], model });
       }
     } catch (err) {
-      const errMsg = describeStartupError(err);
+      const errMsg = describeTurnError(err);
       this.outbox.push({ steps: [errorStep('Codex turn failed', errMsg)], state: 'error', errorMessage: errMsg });
     }
   }
@@ -178,4 +185,19 @@ export async function decideCodexApproval(ctx: gateActions.GateCtx, approval: Co
   const toolName = approval.kind === 'exec' ? 'Codex Command' : 'Codex Patch';
   const result = await gateActions.openPermissionRequest(ctx, toolName, { ...approval.params, command: approval.summary });
   return result.behavior === 'allow' ? { kind: 'approved' } : { kind: 'denied', rejection: result.message };
+}
+
+/**
+ * Turns a Codex failure into something the user can act on.
+ *
+ * Codex threads are single-writer: resuming one that another tile still holds
+ * open fails with "already has an active writer", which reads like corruption
+ * rather than the ordinary situation it is.
+ */
+function describeTurnError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/active writer/i.test(message)) {
+    return 'That Codex thread is already open in another session. Stop that one first, or fork the thread instead of resuming it.';
+  }
+  return describeStartupError(err);
 }

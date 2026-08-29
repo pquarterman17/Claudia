@@ -4,7 +4,7 @@ import { isClientLive } from './client-liveness.js';
 import { pickFolders } from './folder-picker.js';
 import { launchSession, resumeSavedSession } from './launch-session.js';
 import { decideRewind, describeRewind } from './rewind-flow.js';
-import { retagSavedSession, retitleSavedSession, savedSessionDetail, savedSessions } from './saved-sessions.js';
+import { allSavedSessions, retagSavedSession, retitleSavedSession, savedSessionDetail } from './saved-sessions.js';
 import type { SessionManager } from './session-manager.js';
 import type { SettingsStore } from './settings-store.js';
 import type { TriggerEngine } from './trigger-engine.js';
@@ -164,7 +164,7 @@ export class Gateway {
         this.broadcastSettings();
         return;
       case 'list_saved_sessions':
-        void savedSessions(cmd.cwd).then((sessions) => this.sendTo(socket, { type: 'saved_sessions', sessions }));
+        void allSavedSessions(cmd.cwd).then((sessions) => this.sendTo(socket, { type: 'saved_sessions', sessions }));
         return;
       case 'get_saved_session_detail':
         void savedSessionDetail(cmd.sessionId, cmd.cwd).then((checkpoints) =>

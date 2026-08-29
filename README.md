@@ -194,6 +194,12 @@ documented `execCommandApproval`, and the two generations answer with different 
 `codex` as a `.cmd` shim with no `.exe` on PATH, so the binary is resolved on the filesystem
 rather than left to `spawn`, which cannot execute either PATH entry.
 
+**Resume and fork work for Codex too.** The Resume history panel lists both agents' past
+conversations for a folder, tagged so you can tell them apart, and each row resumes or forks
+with the agent that wrote it. One Codex-specific rule, learned the hard way: a Codex thread has
+a single writer, so resuming one that is still open in another tile is refused — fork it
+instead, which works even while the original runs.
+
 **Model choice works for Codex too** — the same picker as Claude. `model/list` enumerates what
 your install offers and `turn/start` takes a per-turn `model`, so a switch lands on the next
 turn exactly as it does for Claude.

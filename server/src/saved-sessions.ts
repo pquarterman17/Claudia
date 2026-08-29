@@ -1,5 +1,6 @@
 import { getSessionInfo, getSessionMessages, listSessions, renameSession, tagSession } from '@anthropic-ai/claude-agent-sdk';
 import type { FileCheckpoint, SavedSession } from '@claudia/shared';
+import { listCodexThreads } from './codex-threads.js';
 
 /**
  * Every one of these reads session files written by another process. A corrupt
@@ -10,6 +11,22 @@ import type { FileCheckpoint, SavedSession } from '@claudia/shared';
 export async function savedSessions(cwd?: string): Promise<SavedSession[]> {
   const sessions = await listSessions(cwd ? { dir: cwd, limit: 40 } : { limit: 40 }).catch(() => []);
   return sessions.map(({ sessionId, summary, lastModified, cwd: sessionCwd, tag, customTitle }) => ({ sessionId, summary, lastModified, cwd: sessionCwd, tag, customTitle }));
+}
+
+/**
+ * Both agents' history for a directory, newest first.
+ *
+ * Merged here rather than in the gateway so the picker sees one list. Each row
+ * carries the agent that wrote it, because resuming a Codex thread id with the
+ * Claude driver (or the reverse) fails in a way that reads like corrupt
+ * history rather than a mismatch.
+ */
+export async function allSavedSessions(cwd?: string): Promise<SavedSession[]> {
+  const [claude, codex] = await Promise.all([
+    savedSessions(cwd).then((rows) => rows.map((row) => ({ ...row, agent: 'claude' as const }))),
+    cwd ? listCodexThreads(cwd) : Promise.resolve([]),
+  ]);
+  return [...claude, ...codex].sort((a, b) => b.lastModified - a.lastModified);
 }
 
 export async function savedSessionDetail(sessionId: string, cwd?: string): Promise<FileCheckpoint[]> {

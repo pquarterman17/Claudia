@@ -1,7 +1,8 @@
 import type { ClientCommand, HostPlatform, ServerEvent } from '@claudia/shared';
 import { WebSocket, WebSocketServer } from 'ws';
 import { isClientLive } from './client-liveness.js';
-import { assertUsableDirectory, normalizePath, pickFolders } from './folder-picker.js';
+import { pickFolders } from './folder-picker.js';
+import { launchSession, resumeSavedSession } from './launch-session.js';
 import { decideRewind, describeRewind } from './rewind-flow.js';
 import { retagSavedSession, retitleSavedSession, savedSessionDetail, savedSessions } from './saved-sessions.js';
 import type { SessionManager } from './session-manager.js';
@@ -158,23 +159,10 @@ export class Gateway {
 
   private dispatch(cmd: ClientCommand, socket: WebSocket): void {
     switch (cmd.type) {
-      case 'launch_session': {
-        const cwd = normalizePath(cmd.cwd);
-        assertUsableDirectory(cwd);
-        this.manager.launch({
-          cwd,
-          prompt: cmd.prompt,
-          model: cmd.model,
-          permissionMode: cmd.permissionMode ?? 'auto',
-          effortLevel: cmd.effortLevel ?? 'high',
-          thinkingMode: cmd.thinkingMode ?? 'adaptive',
-        });
-        this.settings.rememberDirectory(cwd);
-        // The launch mode is sticky: most people keep one posture.
-        this.settings.update({ defaultPermissionMode: cmd.permissionMode ?? 'auto' });
+      case 'launch_session':
+        launchSession(cmd, this.manager, this.settings);
         this.broadcastSettings();
         return;
-      }
       case 'list_saved_sessions':
         void savedSessions(cmd.cwd).then((sessions) => this.sendTo(socket, { type: 'saved_sessions', sessions }));
         return;
@@ -184,18 +172,9 @@ export class Gateway {
         );
         return;
       case 'resume_saved_session':
-      case 'fork_saved_session': {
-        const cwd = normalizePath(cmd.cwd);
-        assertUsableDirectory(cwd);
-        this.manager.launch({
-          cwd,
-          permissionMode: cmd.permissionMode ?? this.settings.get().defaultPermissionMode,
-          resume: cmd.sessionId,
-          ...(cmd.type === 'fork_saved_session' ? { forkSession: true } : {}),
-        });
-        this.settings.rememberDirectory(cwd);
+      case 'fork_saved_session':
+        resumeSavedSession(cmd, this.manager, this.settings);
         return;
-      }
       case 'rename_saved_session':
         void retitleSavedSession(cmd.sessionId, cmd.title, cmd.cwd).then(() => this.dispatch({ type: 'list_saved_sessions', cwd: cmd.cwd }, socket));
         return;

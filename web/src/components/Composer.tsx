@@ -56,6 +56,7 @@ export function Composer({ session }: Props) {
 
   const status = statusOf(session.state);
   const yolo = session.permissionMode === 'bypassPermissions';
+  const isCodex = session.agent === 'codex';
 
   const submit = () => {
     const text = draft.trim();
@@ -304,12 +305,17 @@ export function Composer({ session }: Props) {
           {session.queuedPrompts.length} queued
         </span>
       )}
-      <span style={{ flex: 'none', fontSize: 10, color: '#75798c', fontVariantNumeric: 'tabular-nums' }}>
+      <span
+        title={isCodex ? 'Codex reports token counts only — no dollar cost' : undefined}
+        style={{ flex: 'none', fontSize: 10, color: '#75798c', fontVariantNumeric: 'tabular-nums' }}
+      >
         {fmtTokens(session.inputTokens + session.outputTokens)}
       </span>
-      <span style={{ flex: 'none', fontSize: 10, color: '#b5abfc', fontVariantNumeric: 'tabular-nums' }}>
-        {fmtCost(session.costUsd)}
-      </span>
+      {!isCodex && (
+        <span style={{ flex: 'none', fontSize: 10, color: '#b5abfc', fontVariantNumeric: 'tabular-nums' }}>
+          {fmtCost(session.costUsd)}
+        </span>
+      )}
       <button
         className="btn btn-ghost"
         title="Start a fresh session beside this one, same folder and permissions"
@@ -320,8 +326,10 @@ export function Composer({ session }: Props) {
       </button>
       <span style={{ position: 'relative', flex: 'none' }}>
         <button
+          type="button"
           className="btn btn-ghost"
-          title="Pick the model for this session"
+          disabled={isCodex}
+          title={isCodex ? 'Codex has no model picker — its model is fixed at launch' : 'Pick the model for this session'}
           onClick={toggleModelPicker}
           style={{ fontSize: 10, padding: '2px 6px', color: '#75798c' }}
         >

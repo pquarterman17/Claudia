@@ -1,5 +1,6 @@
-import type { FileCheckpoint, HostPlatform, PermissionLaunchMode, SavedSession, SessionTemplate } from '@claudia/shared';
+import type { AgentKind, FileCheckpoint, HostPlatform, PermissionLaunchMode, SavedSession, SessionTemplate } from '@claudia/shared';
 import { useEffect, useRef, useState } from 'react';
+import { AGENT_KINDS } from '../agent-kinds';
 import { PERMISSION_MODES, permissionModeLabel } from '../permission-modes';
 import { onFoldersPicked, send } from '../store';
 import { folderPickerHint } from '../platform-copy';
@@ -19,6 +20,8 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
   const [cwd, setCwd] = useState('');
   const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<PermissionLaunchMode>(defaultMode);
+  // Claude is the default agent — picking it takes no action from the user.
+  const [agent, setAgent] = useState<AgentKind>('claude');
 
   // Adopt the remembered mode once it arrives, unless already changed by hand.
   const touched = useRef(false);
@@ -43,6 +46,7 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
           send({
             type: 'launch_session',
             cwd: dir,
+            agent,
             ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
             permissionMode: mode,
           });
@@ -50,7 +54,7 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
         setCwd(paths[paths.length - 1] ?? '');
         setPrompt('');
       }),
-    [prompt, mode],
+    [prompt, mode, agent],
   );
 
   // Never strand the button on "Choosing…". If the dialog is missed or the
@@ -67,6 +71,7 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
     send({
       type: 'launch_session',
       cwd: cwd.trim(),
+      agent,
       ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
       permissionMode: mode,
     });
@@ -163,6 +168,20 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
         placeholder="first prompt (optional)…"
         style={{ flex: 1, minWidth: 120, fontSize: 11.5, padding: '4px 8px' }}
       />
+      <label className="launch-mode">
+        <span className="sr-only">Agent</span>
+        <select
+          value={agent}
+          title={AGENT_KINDS.find((a) => a.key === agent)?.title}
+          onChange={(e) => setAgent(e.target.value as AgentKind)}
+        >
+          {AGENT_KINDS.map((a) => (
+            <option key={a.key} value={a.key}>
+              Agent: {a.label}
+            </option>
+          ))}
+        </select>
+      </label>
       <label className={`launch-mode ${danger ? 'danger' : ''}`}>
         <span className="sr-only">Permission mode</span>
         <select

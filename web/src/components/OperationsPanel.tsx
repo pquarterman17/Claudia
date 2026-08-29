@@ -1,12 +1,13 @@
 import type { EffectiveSettings, McpServerInfo, SessionSummary } from '@claudia/shared';
 import { useEffect, useState } from 'react';
+import { capabilitiesFor } from '../agent-kinds';
 import { send } from '../store';
 
 export function OperationsPanel({ session, servers, settings }: { session: SessionSummary; servers?: McpServerInfo[]; settings?: EffectiveSettings }) {
   const [open, setOpen] = useState(false);
-  const isCodex = session.agent === 'codex';
-  useEffect(() => { if (open && !isCodex) send({ type: 'get_mcp_status', sessionId: session.id }); }, [open, isCodex, session.id]);
-  if (isCodex) {
+  const can = capabilitiesFor(session.agent);
+  useEffect(() => { if (open && !!can.mcpPanel) send({ type: 'get_mcp_status', sessionId: session.id }); }, [open, !can.mcpPanel, session.id]);
+  if (!can.mcpPanel) {
     return <section style={{ borderTop: '1px solid #303344', marginTop: 10, paddingTop: 8 }}>
       <button type="button" className="btn btn-ghost" disabled title="Codex has no MCP panel or effective-settings inspector">Operations (unavailable for Codex)</button>
     </section>;

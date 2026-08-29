@@ -1,6 +1,7 @@
 import type { EffectiveSettings, FeedStep, FileCheckpoint, McpServerInfo, SessionSummary, TranscriptItem } from '@claudia/shared';
 import { useEffect, useRef, useState } from 'react';
 import { accentFor } from '../accent';
+import { capabilitiesFor } from '../agent-kinds';
 import { elapsed, fmtModel } from '../format';
 import { PERMISSION_MODES } from '../permission-modes';
 import { send } from '../store';
@@ -76,7 +77,7 @@ export function SessionTile({
   const [renaming, setRenaming] = useState(false);
   const status = statusOf(session.state);
   const yolo = session.permissionMode === 'bypassPermissions';
-  const isCodex = session.agent === 'codex';
+  const can = capabilitiesFor(session.agent);
   const accent = accentFor(session.id);
 
   const submitRename = (value: string) => {
@@ -213,7 +214,9 @@ export function SessionTile({
               : `${session.model ?? 'model unknown'} · ${session.permissionMode}`
           }
         >
-          {fmtModel(session.model)}
+          {/* Codex never reports which model it picked when none was named, so
+              say that rather than the bare "model?" used for a real unknown. */}
+          {session.model ? fmtModel(session.model) : can.cost ? fmtModel(session.model) : 'Codex default'}
           {/* A switch only takes effect next turn, so show it as pending rather
               than pretending the running turn changed model. */}
           {session.selectedModel && (
@@ -262,7 +265,7 @@ export function SessionTile({
             ))}
             <div style={{ borderTop: '1px solid #2c2f3d', margin: '4px 0' }} />
             <MenuAction onClick={() => { setRenaming(true); setMenuOpen(false); }}>Rename</MenuAction>
-            {isCodex ? (
+            {!can.fileCheckpoints ? (
               <div style={{ padding: '4px 6px', fontSize: 10, color: '#595d6c' }}>File checkpoints aren't available for Codex sessions</div>
             ) : (
               <>

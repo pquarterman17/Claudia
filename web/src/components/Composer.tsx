@@ -1,6 +1,7 @@
 import type { SessionSummary, SlashCommandInfo } from '@claudia/shared';
 import { useRef, useState } from 'react';
 import { fmtCost, fmtTokens } from '../format';
+import { capabilitiesFor } from '../agent-kinds';
 import { PromptHistory } from '../prompt-history';
 import { send, useClaudia } from '../store';
 import { COLORS, statusOf } from '../status';
@@ -57,7 +58,10 @@ export function Composer({ session }: Props) {
 
   const status = statusOf(session.state);
   const yolo = session.permissionMode === 'bypassPermissions';
-  const isCodex = session.agent === 'codex';
+  // Read capabilities rather than testing the agent inline: a hardcoded
+  // `agent === 'codex'` check is how the model picker stayed disabled after
+  // Codex was found to support models perfectly well.
+  const can = capabilitiesFor(session.agent);
 
   const submit = () => {
     const text = draft.trim();
@@ -285,12 +289,12 @@ export function Composer({ session }: Props) {
         </span>
       )}
       <span
-        title={isCodex ? 'Codex reports token counts only — no dollar cost' : undefined}
+        title={can.cost ? undefined : 'Codex reports token counts only — no dollar cost'}
         style={{ flex: 'none', fontSize: 10, color: '#75798c', fontVariantNumeric: 'tabular-nums' }}
       >
         {fmtTokens(session.inputTokens + session.outputTokens)}
       </span>
-      {!isCodex && (
+      {can.cost && (
         <span style={{ flex: 'none', fontSize: 10, color: '#b5abfc', fontVariantNumeric: 'tabular-nums' }}>
           {fmtCost(session.costUsd)}
         </span>
@@ -307,8 +311,8 @@ export function Composer({ session }: Props) {
         <button
           type="button"
           className="btn btn-ghost"
-          disabled={isCodex}
-          title={isCodex ? 'Codex has no model picker — its model is fixed at launch' : 'Pick the model for this session'}
+          disabled={!can.modelPicker}
+          title={can.modelPicker ? 'Pick the model for this session' : 'This agent has no model picker'}
           onClick={toggleModelPicker}
           style={{ fontSize: 10, padding: '2px 6px', color: '#75798c' }}
         >

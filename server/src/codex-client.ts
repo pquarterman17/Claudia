@@ -87,9 +87,38 @@ export class CodexClient {
     return readThreadId(result) ?? threadId;
   }
 
-  /** Submits user input. Resolves when the turn is accepted, not when it ends. */
-  async startTurn(threadId: string, text: string): Promise<void> {
-    await this.request(METHOD.turnStart, { threadId, input: [{ type: 'text', text }] });
+  /**
+   * Submits user input. Resolves when the turn is accepted, not when it ends.
+   *
+   * `model` and `effort` are per-turn overrides, which is exactly how Claude's
+   * setModel behaves too — a switch applies from the next turn, never to the
+   * one already running.
+   */
+  async startTurn(threadId: string, text: string, overrides: { model?: string; effort?: string } = {}): Promise<void> {
+    await this.request(METHOD.turnStart, {
+      threadId,
+      input: [{ type: 'text', text }],
+      ...(overrides.model ? { model: overrides.model } : {}),
+      ...(overrides.effort ? { effort: overrides.effort } : {}),
+    });
+  }
+
+  /**
+   * The models this Codex install offers, in the shape the session's model
+   * picker already expects. Hidden entries are dropped: they are not meant to
+   * be chosen from a list.
+   */
+  async listModels(): Promise<Array<{ value: string; displayName: string; description: string }>> {
+    const result = (await this.request(METHOD.modelList, { limit: 50 })) as { data?: unknown } | undefined;
+    const rows = Array.isArray(result?.data) ? (result.data as Array<Record<string, unknown>>) : [];
+    return rows
+      .filter((row) => row['hidden'] !== true)
+      .map((row) => ({
+        value: String(row['id'] ?? row['model'] ?? ''),
+        displayName: String(row['displayName'] ?? row['id'] ?? 'model'),
+        description: typeof row['description'] === 'string' ? row['description'] : '',
+      }))
+      .filter((row) => row.value !== '');
   }
 
   /** Cancels an in-flight turn. */

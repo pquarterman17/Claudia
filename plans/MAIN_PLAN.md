@@ -104,8 +104,9 @@ path — measure before building.
       `execCommandApproval`, with `accept`/`decline` instead of `approved`/`denied`.
     - Known asymmetries, by measurement not guesswork: Codex reports token counts but **no
       dollar cost**; usage arrives on its own `thread/tokenUsage/updated` notification; its
-      sub-agents are separate threads rather than nested calls; `/cost`, `/context`, the model
-      picker, MCP panel, settings inspector and file rewind are all Claude-only.
+      sub-agents are separate threads rather than nested calls; `/cost`, `/context`, the MCP
+      panel, settings inspector and file rewind are Claude-only. Model choice is NOT a gap —
+      an earlier assumption that it was had disabled the picker for no reason.
 
 
 7. **"Commit + push" finish action** — deliberately disabled in the UI rather than shipped

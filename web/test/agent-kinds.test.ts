@@ -38,12 +38,16 @@ describe('capabilitiesFor', () => {
     expect(capabilitiesFor(undefined)).toEqual(capabilitiesFor('claude'));
   });
 
-  it('withholds every measured-gap capability from Codex', () => {
+  it('withholds only the capabilities Codex actually lacks', () => {
+    // Model choice is NOT a gap: model/list enumerates them and turn/start
+    // takes a per-turn override, so a switch applies on the next turn exactly
+    // as it does for Claude. Verified against a live codex-cli, after an
+    // earlier assumption to the contrary disabled the picker for no reason.
     const caps = capabilitiesFor('codex');
     expect(caps).toEqual({
       cost: false,
       context: false,
-      modelPicker: false,
+      modelPicker: true,
       mcpPanel: false,
       effectiveSettings: false,
       fileCheckpoints: false,

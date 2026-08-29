@@ -40,6 +40,8 @@ export class CodexDriver implements SessionDriver {
   private readonly resume: string | undefined;
   private readonly permissionMode: string;
   private readonly model: string | undefined;
+  /** A model chosen mid-session, applied as a per-turn override. */
+  private selectedModel: string | undefined;
 
   constructor(opts: CodexDriverOptions) {
     this.cwd = opts.cwd;
@@ -67,11 +69,25 @@ export class CodexDriver implements SessionDriver {
     }
   }
 
+  /**
+   * The operations Codex genuinely supports, in the shape the session already
+   * narrows for Claude. Exposing `supportedModels`/`setModel` here is what
+   * makes the model picker work for Codex with no change in session.ts —
+   * callers narrow with `as X | null` and anything absent (mcp status, rewind,
+   * /cost, /context) degrades to "unsupported" for free.
+   */
   get raw(): unknown {
-    // No Claude-only operation (models, mcp status, rewind, /cost, /context…)
-    // applies to Codex; every caller narrows this with `as X | null` and
-    // already degrades to "unsupported" when the field it wants is missing.
-    return undefined;
+    if (!this.client) return undefined;
+    const client = this.client;
+    return {
+      supportedModels: () => client.listModels(),
+      // Stored, not applied now: Codex takes `model` as a per-turn override, so
+      // a switch lands on the next turn — the same semantics setModel has for
+      // Claude, and what the tile's "next turn" marker already promises.
+      setModel: async (model?: string) => {
+        this.selectedModel = model;
+      },
+    };
   }
 
   [Symbol.asyncIterator](): AsyncIterator<RoutedMessage> {
@@ -93,7 +109,15 @@ export class CodexDriver implements SessionDriver {
           ? await this.client.resumeThread(this.resume)
           : await this.client.startThread(this.threadOptions());
       }
-      if (this.threadId) await this.client.startTurn(this.threadId, text);
+      if (this.threadId) {
+        const model = this.selectedModel ?? this.model;
+        await this.client.startTurn(this.threadId, text, { ...(model ? { model } : {}) });
+        // Codex never reports the active model back: `thread/started` carries a
+        // modelProvider but no model, and turn/completed carries none either.
+        // So the only honest source is what we asked for -- report it, or the
+        // tile's model chip reads "model?" for the whole session.
+        if (model) this.outbox.push({ steps: [], model });
+      }
     } catch (err) {
       const errMsg = describeStartupError(err);
       this.outbox.push({ steps: [errorStep('Codex turn failed', errMsg)], state: 'error', errorMessage: errMsg });

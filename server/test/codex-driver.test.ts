@@ -198,9 +198,41 @@ describe('CodexDriver message flow', () => {
     await expect(driver[Symbol.asyncIterator]().next()).resolves.toMatchObject({ done: true });
   });
 
-  it('exposes no raw query — every Claude-only operation degrades on its own', () => {
+  it('exposes exactly the operations Codex supports, and nothing else', () => {
+    // Codex genuinely has models -- model/list plus a per-turn `model` override
+    // on turn/start -- so the picker works through the same seam Claude uses.
+    // Everything Codex lacks is simply absent, and each caller's `as X | null`
+    // narrowing degrades it to "unsupported" with no branching in session.ts.
     const fp = fakeProcess();
-    const driver = new CodexDriver({ cwd: '/repo', onApproval: noopApproval, spawn: () => fp.proc });
-    expect(driver.raw).toBeUndefined();
+    const driver = new CodexDriver({
+      cwd: '/repo',
+      permissionMode: 'auto',
+      onApproval: noopApproval,
+      spawn: () => fp.proc,
+    });
+    const raw = driver.raw as Record<string, unknown>;
+    expect(typeof raw['supportedModels']).toBe('function');
+    expect(typeof raw['setModel']).toBe('function');
+    for (const claudeOnly of ['mcpServerStatus', 'rewindFiles', 'supportedCommands', 'stopTask']) {
+      expect(raw[claudeOnly]).toBeUndefined();
+    }
+  });
+
+  it('sends a switched model as a per-turn override on the NEXT turn', async () => {
+    const fp = fakeProcess();
+    const driver = new CodexDriver({
+      cwd: '/repo',
+      permissionMode: 'auto',
+      onApproval: noopApproval,
+      spawn: () => fp.proc,
+    });
+    await (driver.raw as { setModel: (m: string) => Promise<void> }).setModel('gpt-5.6-sol');
+    driver.sendPrompt('go');
+    await vi.waitFor(() => expect(fp.sent.some((f) => f['method'] === 'thread/start')).toBe(true));
+    const start = fp.sent.find((f) => f['method'] === 'thread/start');
+    fp.emit({ id: start?.['id'], result: { thread: { id: 'th_1' } } });
+    await vi.waitFor(() => expect(fp.sent.some((f) => f['method'] === 'turn/start')).toBe(true));
+    const turn = fp.sent.find((f) => f['method'] === 'turn/start') as { params?: Record<string, unknown> };
+    expect(turn.params?.['model']).toBe('gpt-5.6-sol');
   });
 });

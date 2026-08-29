@@ -13,7 +13,7 @@ export interface AgentKindOption {
  */
 export const AGENT_KINDS: AgentKindOption[] = [
   { key: 'claude', label: 'Claude Code', title: "Anthropic's coding agent — Claudia's default" },
-  { key: 'codex', label: 'Codex', title: 'OpenAI Codex, driven through codex app-server — see tile badge for coverage gaps' },
+  { key: 'codex', label: 'Codex', title: 'OpenAI Codex, driven through codex app-server — approvals and model choice work; see the tile badge for what does not' },
 ];
 
 export const agentKindLabel = (agent?: AgentKind): string =>
@@ -47,7 +47,10 @@ const CLAUDE_CAPABILITIES: AgentCapabilities = {
 const CODEX_CAPABILITIES: AgentCapabilities = {
   cost: false,
   context: false,
-  modelPicker: false,
+  // Codex does have models: `model/list` enumerates them and `turn/start`
+  // takes a per-turn `model`, so a switch lands on the next turn exactly as it
+  // does for Claude. Verified against a live codex-cli.
+  modelPicker: true,
   mcpPanel: false,
   effectiveSettings: false,
   fileCheckpoints: false,

@@ -194,9 +194,13 @@ documented `execCommandApproval`, and the two generations answer with different 
 `codex` as a `.cmd` shim with no `.exe` on PATH, so the binary is resolved on the filesystem
 rather than left to `spawn`, which cannot execute either PATH entry.
 
+**Model choice works for Codex too** — the same picker as Claude. `model/list` enumerates what
+your install offers and `turn/start` takes a per-turn `model`, so a switch lands on the next
+turn exactly as it does for Claude.
+
 **What a Codex tile does not have**, measured rather than assumed: no dollar cost (it reports
-token counts only), no `/cost` or `/context`, no model picker, MCP panel, effective-settings
-inspector, or file-checkpoint rewind. Those controls are hidden or disabled with the reason
+token counts only), no `/cost` or `/context`, no MCP panel, effective-settings inspector, or
+file-checkpoint rewind. Those controls are hidden or disabled with the reason
 attached rather than left in place to silently do nothing. Its sub-agents are separate threads,
 so they appear as their own feed entries rather than nested inside the call that spawned them.
 

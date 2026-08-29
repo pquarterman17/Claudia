@@ -25,6 +25,7 @@ export const METHOD = {
   initialize: 'initialize',
   initialized: 'initialized',
   threadStart: 'thread/start',
+  modelList: 'model/list',
   threadResume: 'thread/resume',
   turnStart: 'turn/start',
   turnInterrupt: 'turn/interrupt',

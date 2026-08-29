@@ -13,7 +13,7 @@ export function AgentBadge({ agent }: { agent?: AgentKind }) {
   if (agent !== 'codex') return null;
   return (
     <span
-      title="Codex session — no dollar cost, /context, model picker, MCP panel, effective-settings inspector, or file-checkpoint rewind"
+      title="Codex session — approvals and model choice work. No dollar cost, /context, MCP panel, effective-settings inspector, or file-checkpoint rewind."
       style={{
         flex: 'none',
         fontSize: 10,

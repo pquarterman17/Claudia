@@ -82,10 +82,17 @@ The full history — 106 commits, 187 distinct files — was scanned before publ
   removing from history.
 - **No email address or machine name** appears in any commit.
 
-Two things are personal context rather than secrets, and are published deliberately:
-`plans/MAIN_PLAN.md` names other projects of the author's, and one commit message quotes real
-plan-usage percentages from a `/cost` reply. Neither is sensitive; both are permanent once
-public, which is the only reason they are worth stating.
+The working tree was scrubbed of personal context before publishing: test fixtures and the plan
+no longer carry other project names, a synced-folder path, or a real user directory. The tests
+exercise exactly the same logic on neutral values.
+
+**Rewriting history to remove those strings from past commits was considered and declined.** It
+would change every commit SHA, breaking the references on 19 merged pull requests, and a
+force-push does not guarantee GitHub drops the old objects — only deleting and recreating the
+repository does, which would destroy the review history outright. Weighed against what is
+actually there — two project names, a folder layout, a username already implied by the account,
+and one commit message quoting usage percentages, with no credentials anywhere — the cost was
+not worth it. Recorded here so the absence reads as a decision rather than an oversight.
 
 ## When this repository becomes public
 

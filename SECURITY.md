@@ -72,6 +72,21 @@ the Claude Agent SDK. Dependabot is enabled for npm and GitHub Actions, grouped
 and monthly so routine bumps stay quiet; security advisories arrive immediately
 and automated security fixes are on.
 
+## Pre-publication audit (2026-07-26)
+
+The full history — 106 commits, 187 distinct files — was scanned before publishing:
+
+- **No credentials of any kind.** No API keys, tokens, private keys or cloud credentials match
+  in any commit, and no `.env`, `.pem`, `.key` or similarly named file was ever added.
+- **No Claude configuration was ever committed** (`.claude/`, `CLAUDE.md`), so nothing needs
+  removing from history.
+- **No email address or machine name** appears in any commit.
+
+Two things are personal context rather than secrets, and are published deliberately:
+`plans/MAIN_PLAN.md` names other projects of the author's, and one commit message quotes real
+plan-usage percentages from a `/cost` reply. Neither is sensitive; both are permanent once
+public, which is the only reason they are worth stating.
+
 ## When this repository becomes public
 
 Two protections are free for public repositories but unavailable on a private

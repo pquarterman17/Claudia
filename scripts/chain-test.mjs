@@ -1,5 +1,9 @@
 // Drive a real chain run end to end: build it, arm it, launch a trivial
 // session, and watch each step transition.
+// The directory to run the test session in. Defaults to the current one so the
+// script works from any checkout, on any machine.
+const cwd = (process.argv[2] ?? process.cwd()).split('\\').join('/');
+
 const ws = new WebSocket('ws://127.0.0.1:4317/ws');
 let armed = false;
 const seen = [];
@@ -24,7 +28,7 @@ ws.addEventListener('message', (e) => {
       armed = true;
       ws.send(JSON.stringify({ type: 'arm_trigger' }));
       // Forward slashes on purpose: valid on Windows and they survive shells.
-      ws.send(JSON.stringify({ type: 'launch_session', cwd: 'C:/Users/patri/git/Claudia', prompt: 'Reply with exactly: ready' }));
+      ws.send(JSON.stringify({ type: 'launch_session', cwd, prompt: 'Reply with exactly: ready' }));
     }
     if (v.trigger.state === 'fired') {
       console.log('\nRESULT:', v.trigger.lastResult);

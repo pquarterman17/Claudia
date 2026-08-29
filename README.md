@@ -165,6 +165,32 @@ Use forward slashes in these paths — most shells eat backslashes.
 - **The usage bars look wrong** — they are estimates from local logs, by design; other
   machines' usage is invisible. See the note inside the panel.
 
+## Two agents on one board
+
+A tile can run **Claude Code** (the default) or **OpenAI Codex**. Pick the agent in the launch
+bar; Codex tiles carry a badge so a glance is enough to tell them apart.
+
+Codex is driven through `codex app-server`, its JSON-RPC interface — not the `@openai/codex-sdk`
+package, which sets an approval policy but exposes no approval callback, so a UI cannot decide
+per command with it. The app-server sends `execCommandApproval` and `applyPatchApproval` as
+requests, which park exactly like a Claude `canUseTool` call, so approvals work the same way in
+the same banner.
+
+To use it:
+
+```bash
+npm install -g @openai/codex
+```
+
+then sign in to Codex once. Verify the wiring end to end with `node scripts/codex-smoke.mjs
+"C:/path/to/a/repo"`.
+
+**What a Codex tile does not have**, measured rather than assumed: no dollar cost (it reports
+token counts only), no `/cost` or `/context`, no model picker, MCP panel, effective-settings
+inspector, or file-checkpoint rewind. Those controls are hidden or disabled with the reason
+attached rather than left in place to silently do nothing. Its sub-agents are separate threads,
+so they appear as their own feed entries rather than nested inside the call that spawned them.
+
 ## Security
 
 Claudia can launch sessions that read, write, and run commands — so "it only listens on

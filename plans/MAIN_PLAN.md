@@ -90,8 +90,9 @@ path — measure before building.
     layer has shipped; integration and UI are in flight.
     - [x] `codex app-server` JSON-RPC client, router onto the existing `RoutedMessage`, process
       host, 35 tests, missing-binary path verified
-    - [ ] Driver seam in `session.ts` so both agents share the state machine, feed and gate
-    - [ ] Agent picker at launch + per-tile badge
+    - [x] Driver seam in `session.ts` so both agents share the state machine, feed and gate
+    - [x] Agent picker at launch + per-tile badge, with Claude-only controls disabled and the
+      reason attached
     - [ ] **Needs the owner:** `npm install -g @openai/codex` and an OpenAI login. Nothing here
       is verified against a live Codex — this machine has none — so the first real run is the
       test that matters.

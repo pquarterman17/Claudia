@@ -1,5 +1,7 @@
 {
   "name": "@claudia/server",
+  "license": "AGPL-3.0-only",
+  "author": "Paige Quarterman",
   "version": "0.1.0",
   "private": true,
   "type": "module",

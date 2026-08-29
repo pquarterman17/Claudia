@@ -38,6 +38,18 @@ export function StatusFooter({ sessions, platform }: Props) {
         {working} working · {waiting} need you · {blocked} blocked
       </span>
       <span style={{ flex: 1 }} />
+      {/* AGPL-3.0 section 13: anyone interacting with this over a network is
+          entitled to its source. A visible link is the simplest way to honour
+          that, and it keeps a modified deployment honest by default. */}
+      <a
+        href="https://github.com/pquarterman17/Claudia"
+        target="_blank"
+        rel="noreferrer"
+        title="Claudia is free software under the AGPL-3.0 — source available here"
+        style={{ color: '#75798c', textDecoration: 'none' }}
+      >
+        AGPL-3.0 · source
+      </a>
       <span>
         {mod}1–9 jump · {mod}⏎ approve oldest · {mod}U usage
         {platform ? ` · on ${HOST_NAME[platform]}` : ''}

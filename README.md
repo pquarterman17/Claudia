@@ -235,3 +235,13 @@ vulnerability: **[SECURITY.md](SECURITY.md)**.
 
 Personal tool, built fast and verified as it grew: 354 unit tests plus scripted live
 end-to-end checks. Windows is the daily driver; macOS/Linux passes welcome. Not yet public.
+
+## License
+
+[AGPL-3.0-only](LICENSE). Use it, fork it, sell it if you like — but modifications have to stay
+open, and under the AGPL that includes ones only ever offered **over a network**, which is how
+anyone would realistically run a tool like this. A permissive licence would have let a fork be
+closed and hosted; that is the case this one is chosen to cover.
+
+If you deploy a modified copy for anyone but yourself, section 13 requires you to offer them its
+source. The footer link is already there for that reason — point it at your fork.

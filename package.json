@@ -1,5 +1,7 @@
 {
   "name": "claudia",
+  "license": "AGPL-3.0-only",
+  "author": "Paige Quarterman",
   "private": true,
   "version": "0.1.0",
   "description": "Claudia \u2014 one window over every parallel Claude Code session",

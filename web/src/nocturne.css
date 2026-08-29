@@ -7,13 +7,8 @@
   --color-bg: #161826;
   --color-surface: #232532;
   --color-text: #e9e9ed;
-  --color-accent: #9184d9; /* review round 7 (Barron): the accent moves to
-     the product's blurple — OKLCH hue 289.2, the hue of the app's own Pro
-     accent (#9a8fe0, --om-accent-pro) — at the same lightness the steel
-     accent held (L 0.660, so the documented ratios survive) and chroma
-     in the product blurple's own range (its token sits at C 0.118; the
-     accent takes 0.125, from the old steel's 0.030):
-     the accent now reads as an accent rather than another neutral. */
+  --color-accent: #9184d9; /* The accent is the product blurple, kept at the lightness the earlier
+     steel accent held so the documented contrast ratios still hold. */
   --color-accent-2: #a7a1db; /* the machine-derived stand-in follows: same
      hue, same L 0.734, chroma at the same 2:3 proportion it held */
   --color-divider: color-mix(in srgb, #e9e9ed 16%, transparent);
@@ -50,7 +45,7 @@
   --color-accent-2-800: #423e5d;
   --color-accent-2-900: #2b293a;
 
-  /* Deck section-divider ground — review round 3: saturation as presence.
+  /* Section-divider ground: saturation carries presence here,
      Dividers take a saturated deep indigo (hue 277, the neutral ramp's own
      family; C 0.094 — written when the accent held C 0.030, before the
      round-7 blurple raised it past the ground's) with a lighter bloom and

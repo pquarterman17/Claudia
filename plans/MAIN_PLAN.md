@@ -86,6 +86,20 @@ path — measure before building.
 
 ## Tier 2 — Medium Impact
 
+45. **Codex (ChatGPT) sessions as a second agent** — one board, two kinds of tile. The protocol
+    layer has shipped; integration and UI are in flight.
+    - [x] `codex app-server` JSON-RPC client, router onto the existing `RoutedMessage`, process
+      host, 35 tests, missing-binary path verified
+    - [ ] Driver seam in `session.ts` so both agents share the state machine, feed and gate
+    - [ ] Agent picker at launch + per-tile badge
+    - [ ] **Needs the owner:** `npm install -g @openai/codex` and an OpenAI login. Nothing here
+      is verified against a live Codex — this machine has none — so the first real run is the
+      test that matters.
+    - Known asymmetries, by measurement not guesswork: Codex reports token counts but **no
+      dollar cost**; usage arrives on its own `thread/tokenUsage/updated` notification; its
+      sub-agents are separate threads rather than nested calls; `/cost`, `/context`, the model
+      picker, MCP panel, settings inspector and file rewind are all Claude-only.
+
 
 7. **"Commit + push" finish action** — deliberately disabled in the UI rather than shipped
    as a silent no-op. Needs per-repo rules before it pushes unreviewed work: which repos are

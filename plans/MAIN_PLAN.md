@@ -166,6 +166,15 @@ Recording these so they are not rediscovered as bugs:
 
 ## Completed
 
+- ~~**Licence: AGPL-3.0**~~ (2026-07-26) — Apache-2.0 was the first instinct, chosen to stop a
+  company monetizing a fork; it would not, being permissive. Plain GPL would not either, since
+  its obligations trigger on distribution and the realistic exploit is running a modified copy
+  as a service. AGPL section 13 counts network use, which is the actual match. The limit is
+  worth remembering: no OSI licence can forbid commercial use at all (OSD 6) — AGPL stops
+  changes being kept, not selling. Section 13 also binds whoever deploys it, so the footer
+  carries a source link. Also caught on the way: `nocturne.css` was carrying its design
+  export's internal review commentary and a reviewer's name verbatim; reworded.
+
 - ~~**#25 resume+rewind, #26 context awareness, #31 /context, #33 effort+thinking, #35 resume, #36 checkpoints, #37 fork, #38 MCP panel,
   #39 settings inspector, #40 background tasks, #44 session.ts extraction**~~ (2026-07-26) —
   landed as an external seven-PR stack (#18–24) built directly on this plan, reviewed

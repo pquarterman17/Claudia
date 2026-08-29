@@ -68,6 +68,14 @@ type Listener = () => void;
  * Minimal external store: one WS connection, immutable snapshots, no deps.
  * Snapshots are replaced (never mutated) so useSyncExternalStore stays stable.
  */
+/** Property names that must never be written from remote data. */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** A usable object key: a non-empty string that cannot reach the prototype. */
+function isSafeKey(value: unknown): value is string {
+  return typeof value === 'string' && value !== '' && !UNSAFE_KEYS.has(value);
+}
+
 class Store {
   private state: ClaudiaState = {
     connected: false,
@@ -180,6 +188,13 @@ class Store {
   }
 
   private handle(event: ServerEvent): void {
+    // Session ids arrive over the wire and are used as object keys throughout
+    // this file. They are server-generated UUIDs in practice, but "in practice"
+    // is not a guarantee worth resting prototype safety on: a key of
+    // `__proto__` or `constructor` would poison every object it touched.
+    // Rejecting once here covers every use below.
+    if ('sessionId' in event && !isSafeKey((event as { sessionId?: unknown }).sessionId)) return;
+
     switch (event.type) {
       case 'hello':
         this.set({

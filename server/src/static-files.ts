@@ -1,6 +1,6 @@
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -31,10 +31,14 @@ export function createStaticHandler(rootDir: string) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return false;
 
     const urlPath = decodeURIComponent((req.url ?? '/').split('?')[0] ?? '/');
-    let filePath = join(root, normalize(urlPath));
+    let filePath = resolve(root, `.${normalize(`/${urlPath}`)}`);
 
-    // Never let a crafted path escape the build directory.
-    if (filePath !== root && !filePath.startsWith(root + sep)) {
+    // Never let a crafted path escape the build directory. Expressed as a
+    // containment check on the resolved path rather than a prefix test on the
+    // joined one: `relative` cannot be fooled by a sibling directory that
+    // merely starts with the same characters, and it states the actual
+    // invariant — the target must sit inside root.
+    if (!isInside(root, filePath)) {
       res.writeHead(403).end();
       return true;
     }
@@ -64,6 +68,13 @@ export function createStaticHandler(rootDir: string) {
     createReadStream(filePath).pipe(res);
     return true;
   };
+}
+
+/** True when `target` is `root` itself or sits beneath it. */
+function isInside(root: string, target: string): boolean {
+  if (target === root) return true;
+  const rel = relative(root, target);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
 function isFile(path: string): boolean {

@@ -11,7 +11,7 @@ architecture does not. The Claude Design export that started this is deliberatel
 **Updated:** 2026-07-26
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
-genuinely new work or was deliberately deferred for a decision. 220 tests, clean typecheck.
+genuinely new work or was deliberately deferred for a decision. 532 tests, clean typecheck.
 Everything so far was built and verified on Windows only — see #13.
 
 ---

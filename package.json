@@ -4,7 +4,7 @@
   "author": "Paige Quarterman",
   "private": true,
   "version": "0.1.0",
-  "description": "Claudia \u2014 one window over every parallel Claude Code session",
+  "description": "Claudia — one window over every parallel Claude Code session",
   "workspaces": [
     "shared",
     "server",
@@ -20,8 +20,8 @@
     "start": "node scripts/ensure-build.mjs && npm run start -w server"
   },
   "devDependencies": {
-    "npm-run-all2": "^9.0.2",
-    "typescript": "^5.6.0"
+    "npm-run-all2": "^9.0.3",
+    "typescript": "^7.0.2"
   },
   "engines": {
     "node": ">=20.11"

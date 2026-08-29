@@ -23,12 +23,17 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        # Both the version CI pins and the one development actually happens on.
+        # A single-version job cannot see a break that only one runtime has, and
+        # Node now ships web globals that shadow test-environment ones — exactly
+        # the class of failure that stays invisible until someone else's machine.
+        node: [22, 24]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       - run: npx tsc -b shared server web

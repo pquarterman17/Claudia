@@ -4,7 +4,13 @@ import { send } from '../store';
 
 export function OperationsPanel({ session, servers, settings }: { session: SessionSummary; servers?: McpServerInfo[]; settings?: EffectiveSettings }) {
   const [open, setOpen] = useState(false);
-  useEffect(() => { if (open) send({ type: 'get_mcp_status', sessionId: session.id }); }, [open, session.id]);
+  const isCodex = session.agent === 'codex';
+  useEffect(() => { if (open && !isCodex) send({ type: 'get_mcp_status', sessionId: session.id }); }, [open, isCodex, session.id]);
+  if (isCodex) {
+    return <section style={{ borderTop: '1px solid #303344', marginTop: 10, paddingTop: 8 }}>
+      <button type="button" className="btn btn-ghost" disabled title="Codex has no MCP panel or effective-settings inspector">Operations (unavailable for Codex)</button>
+    </section>;
+  }
   return <section style={{ borderTop: '1px solid #303344', marginTop: 10, paddingTop: 8 }}>
     <button type="button" className="btn btn-ghost" aria-expanded={open} onClick={() => setOpen(!open)}>Operations {servers?.some((s) => s.status === 'failed') ? '• attention' : ''}</button>
     {open && <div style={{ display: 'grid', gap: 7, marginTop: 8, fontSize: 11 }}>

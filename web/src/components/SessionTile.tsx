@@ -5,6 +5,7 @@ import { elapsed, fmtModel } from '../format';
 import { PERMISSION_MODES } from '../permission-modes';
 import { send } from '../store';
 import { COLORS, statusOf } from '../status';
+import { AgentBadge } from './AgentBadge';
 import { ApprovalBanner } from './ApprovalBanner';
 import { Composer } from './Composer';
 import { ContextMeter } from './ContextMeter';
@@ -75,6 +76,7 @@ export function SessionTile({
   const [renaming, setRenaming] = useState(false);
   const status = statusOf(session.state);
   const yolo = session.permissionMode === 'bypassPermissions';
+  const isCodex = session.agent === 'codex';
   const accent = accentFor(session.id);
 
   const submitRename = (value: string) => {
@@ -193,6 +195,7 @@ export function SessionTile({
         <span style={{ flex: 'none', fontSize: 10.5, color: '#75798c', fontVariantNumeric: 'tabular-nums' }}>
           {elapsed(session.startedAt, now)}
         </span>
+        <AgentBadge agent={session.agent} />
         <span
           style={{
             flex: 'none',
@@ -259,13 +262,19 @@ export function SessionTile({
             ))}
             <div style={{ borderTop: '1px solid #2c2f3d', margin: '4px 0' }} />
             <MenuAction onClick={() => { setRenaming(true); setMenuOpen(false); }}>Rename</MenuAction>
-            {session.claudeSessionId && <MenuAction onClick={() => send({ type: 'get_saved_session_detail', sessionId: session.claudeSessionId!, cwd: session.cwd })}>Load file checkpoints</MenuAction>}
-            {checkpoints.map((checkpoint) => (
-              <MenuAction key={checkpoint.messageId} title="Restores tracked files only; conversation is unchanged" color="#e0c58c" onClick={() => {
-                if (window.confirm(`Restore tracked files to “${checkpoint.label}”? Conversation history will not change.`)) send({ type: 'rewind_files', sessionId: session.id, checkpointId: checkpoint.messageId });
-                setMenuOpen(false);
-              }}>{`Restore files: ${checkpoint.label}`}</MenuAction>
-            ))}
+            {isCodex ? (
+              <div style={{ padding: '4px 6px', fontSize: 10, color: '#595d6c' }}>File checkpoints aren't available for Codex sessions</div>
+            ) : (
+              <>
+                {session.claudeSessionId && <MenuAction onClick={() => send({ type: 'get_saved_session_detail', sessionId: session.claudeSessionId!, cwd: session.cwd })}>Load file checkpoints</MenuAction>}
+                {checkpoints.map((checkpoint) => (
+                  <MenuAction key={checkpoint.messageId} title="Restores tracked files only; conversation is unchanged" color="#e0c58c" onClick={() => {
+                    if (window.confirm(`Restore tracked files to “${checkpoint.label}”? Conversation history will not change.`)) send({ type: 'rewind_files', sessionId: session.id, checkpointId: checkpoint.messageId });
+                    setMenuOpen(false);
+                  }}>{`Restore files: ${checkpoint.label}`}</MenuAction>
+                ))}
+              </>
+            )}
             {(session.state === 'working' || session.state === 'starting') && <MenuAction color={COLORS.warn} onClick={() => { send({ type: 'interrupt', sessionId: session.id }); setMenuOpen(false); }}>Interrupt</MenuAction>}
             <MenuAction color="#e0a0a0" onClick={removeSession}>Stop and remove…</MenuAction>
           </div>

@@ -121,8 +121,21 @@ export interface ModelUsage {
   costUsd: number;
 }
 
+/**
+ * Which coding agent backs a session.
+ *
+ * Claudia was built around Claude Code, but the machinery below it -- the state
+ * machine, feed, approval gate, transcript -- never depended on that. A Codex
+ * session is driven through `codex app-server`, whose approval requests park
+ * exactly like a Claude `canUseTool` call, which is what lets one board hold
+ * both kinds of tile.
+ */
+export type AgentKind = 'claude' | 'codex';
+
 export interface SessionSummary {
   id: string;
+  /** Which agent backs this session. Absent means Claude, for older clients. */
+  agent?: AgentKind;
   /** Display name — basename of cwd. */
   name: string;
   /** Auto-generated from the task (like terminal tab titles), or user-set. */

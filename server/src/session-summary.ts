@@ -43,6 +43,7 @@ export function buildSessionSummary(
 ): SessionSummary {
   return {
     id: state.id,
+    agent: opts.agent ?? 'claude',
     name: basename(opts.cwd) || opts.cwd,
     title: state.customTitle ?? state.generatedTitle,
     cwd: opts.cwd,

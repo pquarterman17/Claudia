@@ -17,12 +17,11 @@ import { AsyncQueue } from './async-queue.js';
 import { DraftBuffer } from './draft-buffer.js';
 import { errorStep, infoStep } from './feed.js';
 import * as gateActions from './gate-actions.js';
-import { routeMessage } from './message-router.js';
+import type { RoutedMessage } from './message-router.js';
 import { listCommands, listModels, maybeGenerateTitle, modelMatches, type ParityQuery } from './parity-controls.js';
 import { TranscriptLog } from './transcript-log.js';
 import { abandonRunningSteps, applyToolEvents, patchSubAgent } from './step-patcher.js';
-import { createSessionQuery, describeAttachments, userMessage } from './query-factory.js';
-import { describeMode } from './permission-labels.js';
+import { describeAttachments } from './query-factory.js';
 import { switchPermissionMode } from './permission-switch.js';
 import { PromptQueue } from './prompt-queue.js';
 import { SubAgentTracker } from './sub-agent-tracker.js';
@@ -32,6 +31,7 @@ import { TodoTracker } from './todo-tracker.js';
 import { SessionRuntimeControls, type RuntimeControlQuery } from './session-runtime-controls.js';
 import { rewindFiles, type RewindResult } from './file-checkpoints.js';
 import * as operations from './session-operations.js';
+import { createDriver, type SessionDriver } from './session-driver.js';
 
 export type { LaunchOptions, SessionCallbacks } from './session-contract.js';
 
@@ -42,11 +42,10 @@ export class ClaudiaSession {
   private readonly todos = new TodoTracker();
   private input = new AsyncQueue<unknown>();
   private queryGen = 0; // Bumped on relaunch so outdated consume loops cannot mutate current state.
-  private q: ReturnType<typeof createSessionQuery> | null = null;
+  private driver: SessionDriver | null = null;
   private state: SessionState = 'starting';
   private readonly startedAt = Date.now();
   private lastActivityAt = Date.now();
-  private turnStartedAt = Date.now();
   private costUsd = 0;
   private modelUsage: ModelUsage[] = [];
   private model: string | undefined;
@@ -94,17 +93,23 @@ export class ClaudiaSession {
       todos: this.todos.todos,
     });
   }
-  mcpStatus() { return operations.mcpStatus(this.q as operations.OperationalQuery | null); }
-  reconnectMcp(name: string) { return this.q && (this.q as operations.OperationalQuery).reconnectMcpServer?.(name); }
-  toggleMcp(name: string, enabled: boolean) { return this.q && (this.q as operations.OperationalQuery).toggleMcpServer?.(name, enabled); }
-  stopTask(taskId: string) { return this.q && (this.q as operations.OperationalQuery).stopTask?.(taskId); }
-  effectiveSettings() { return operations.resolvedSettings(this.opts.cwd); }
+
+  private get raw(): unknown {
+    return this.driver?.raw ?? null;
+  }
+
+  mcpStatus() { return operations.mcpStatus(this.raw as operations.OperationalQuery | null); }
+  reconnectMcp(name: string) { return (this.raw as operations.OperationalQuery | null)?.reconnectMcpServer?.(name); }
+  toggleMcp(name: string, enabled: boolean) { return (this.raw as operations.OperationalQuery | null)?.toggleMcpServer?.(name, enabled); }
+  stopTask(taskId: string) { return (this.raw as operations.OperationalQuery | null)?.stopTask?.(taskId); }
+  // Meaningless for Codex — .claude/settings.json has nothing to do with it.
+  effectiveSettings() { return this.opts.agent === 'codex' ? Promise.resolve(null) : operations.resolvedSettings(this.opts.cwd); }
 
   start(): void {
     if (this.opts.prompt?.trim()) {
       this.firstPrompt = this.opts.prompt;
-      this.beginQuery();
-      this.pushUserText(this.opts.prompt);
+      this.beginDriver();
+      this.driver?.sendPrompt(this.opts.prompt);
       const item: TranscriptItem = { ts: Date.now(), kind: 'user', text: this.opts.prompt };
       this.transcript.append(item);
       this.cb.onTranscript(this.id, item);
@@ -116,35 +121,36 @@ export class ClaudiaSession {
   }
 
   /**
-   * The single place that knows how to construct this session's query. Both
+   * The single place that knows how to construct this session's driver. Both
    * first start and a permission relaunch go through it, so the two cannot
    * drift apart on the settings they pass.
    */
-  private makeQuery(mode: PermissionLaunchMode, resume: string | undefined, input: AsyncQueue<unknown>, fork?: boolean) {
-    return createSessionQuery({
+  private makeDriver(mode: PermissionLaunchMode, resume: string | undefined, input: AsyncQueue<unknown>): SessionDriver {
+    return createDriver({
+      agent: this.opts.agent ?? 'claude',
       cwd: this.opts.cwd,
       model: this.opts.model,
       permissionMode: mode,
       effortLevel: this.controls.effortLevel,
       thinkingMode: this.controls.thinkingMode,
       resume,
-      forkSession: fork,
+      forkSession: this.opts.forkSession,
       input,
-      onPermission: (toolName, toolInput) => gateActions.openPermissionRequest(this.gateCtx(), toolName, toolInput),
+      gateCtx: this.gateCtx(),
     });
   }
 
-  private beginQuery(): void {
-    if (this.q) return;
-    this.q = this.makeQuery(this.opts.permissionMode, this.opts.resume, this.input, this.opts.forkSession);
+  private beginDriver(): void {
+    if (this.driver) return;
+    this.driver = this.makeDriver(this.opts.permissionMode, this.opts.resume, this.input);
     void this.consume(this.queryGen);
   }
 
   private async consume(gen: number): Promise<void> {
     try {
-      for await (const message of this.q as AsyncIterable<Record<string, unknown>>) {
+      for await (const routed of this.driver as SessionDriver) {
         if (gen !== this.queryGen) return; // superseded mid-iteration
-        this.applyMessage(message);
+        this.applyRouted(routed);
       }
       if (gen !== this.queryGen) return;
       if (this.state !== 'error') this.setState('stopped');
@@ -154,9 +160,8 @@ export class ClaudiaSession {
     }
   }
 
-  private applyMessage(message: Record<string, unknown>): void {
+  private applyRouted(routed: RoutedMessage): void {
     this.lastActivityAt = Date.now();
-    const routed = routeMessage(message, this.turnStartedAt);
 
     if (routed.draftDelta !== undefined) {
       const emit = this.draft.append(routed.draftDelta);
@@ -185,7 +190,7 @@ export class ClaudiaSession {
       this.costUsd = routed.costUsd;
       this.promptQueue.shift();
       maybeGenerateTitle(
-        this.q as ParityQuery | null,
+        this.raw as ParityQuery | null,
         { generated: this.generatedTitle, custom: this.customTitle, firstPrompt: this.firstPrompt },
         (title) => {
           if (this.customTitle) return;
@@ -242,7 +247,7 @@ export class ClaudiaSession {
   }
 
   async switchModel(model: string): Promise<void> {
-    const q = this.q as ParityQuery | null;
+    const q = this.raw as ParityQuery | null;
     await q?.setModel?.(model).catch(() => undefined);
     this.selectedModel = model;
     this.cb.onFeed(this.id, infoStep('Model switched', `${model} — from the next turn`));
@@ -250,13 +255,13 @@ export class ClaudiaSession {
   }
 
   async setEffort(effortLevel: EffortLevel): Promise<void> {
-    await this.controls.setEffort(this.q as RuntimeControlQuery | null, effortLevel).catch(() => undefined);
+    await this.controls.setEffort(this.raw as RuntimeControlQuery | null, effortLevel).catch(() => undefined);
     this.cb.onFeed(this.id, infoStep('Effort changed', effortLevel));
     this.cb.onUpdate(this.summary());
   }
 
   async setThinking(thinkingMode: ThinkingMode): Promise<void> {
-    await this.controls.setThinking(this.q as RuntimeControlQuery | null, thinkingMode).catch(() => undefined);
+    await this.controls.setThinking(this.raw as RuntimeControlQuery | null, thinkingMode).catch(() => undefined);
     this.cb.onFeed(this.id, infoStep('Thinking changed', thinkingMode));
     this.cb.onUpdate(this.summary());
   }
@@ -268,17 +273,6 @@ export class ClaudiaSession {
     this.cb.onUpdate(this.summary());
   }
 
-  /**
-   * Sends a CLI control command (`/context`, `/cost`) rather than a user task.
-   * Returns false when there is nothing to send it to.
-   *
-   * The guard is the point: a session launched with no prompt has no query yet,
-   * and these are inspector buttons. Routing them through sendPrompt would
-   * SPAWN the session, spend a real turn, and — because the first prompt seeds
-   * the auto-title — leave it permanently named after the button rather than
-   * the work. Requiring an existing query also means `firstPrompt` is already
-   * set, so a control command can never become the title basis.
-   */
   /** True while a turn is in flight, so destructive actions can refuse. */
   isBusy(): boolean {
     return this.state === 'working' || this.state === 'starting' || this.state === 'awaiting_approval';
@@ -289,23 +283,28 @@ export class ClaudiaSession {
     this.cb.onFeed(this.id, infoStep('Files restored', detail));
   }
 
-  /** Whether a control command has a live query to go to. */
+  /**
+   * Whether `/context` or `/cost` has a live driver to reach. Required
+   * because a session with no query yet would otherwise SPAWN one, spending a
+   * real turn and permanently naming the session after the button rather
+   * than the work. Excludes Codex, which has no such slash commands.
+   */
   canSendControlPrompt(): boolean {
-    return this.q !== null;
+    return this.driver !== null && this.opts.agent !== 'codex';
   }
 
   sendControlPrompt(text: string): boolean {
-    if (!this.q) return false;
+    if (!this.canSendControlPrompt()) return false;
     this.sendPrompt(text);
     return true;
   }
 
   models(): Promise<ModelChoice[]> {
-    return listModels(this.q as ParityQuery | null);
+    return listModels(this.raw as ParityQuery | null);
   }
 
   commands() {
-    return listCommands(this.q as ParityQuery | null);
+    return listCommands(this.raw as ParityQuery | null);
   }
 
   sendPrompt(text: string, images: PromptImage[] = []): void {
@@ -315,8 +314,8 @@ export class ClaudiaSession {
     this.awaitingFirstPrompt = false;
     this.needsAction = undefined;
     if (!this.firstPrompt) this.firstPrompt = text;
-    this.beginQuery();
-    this.pushUserText(text, images);
+    this.beginDriver();
+    this.driver?.sendPrompt(text, images);
     const item: TranscriptItem = { ts: Date.now(), kind: 'user', text: `${text}${describeAttachments(images)}` };
     this.transcript.append(item);
     this.cb.onTranscript(this.id, item);
@@ -325,13 +324,17 @@ export class ClaudiaSession {
     this.setState('working');
   }
 
-  /** See permission-switch.ts — tighten in place, loosen via resuming relaunch. */
+  /**
+   * See permission-switch.ts — tighten in place, loosen via relaunch. Codex's
+   * `raw` is always falsy, so it takes the same "no live query" path as an
+   * unstarted Claude session: mode recorded, no relaunch attempted.
+   */
   setPermissionMode(mode: PermissionLaunchMode): Promise<'in-place' | 'relaunched' | 'unchanged'> {
     return switchPermissionMode(
       {
         getMode: () => this.opts.permissionMode,
         setMode: (m) => (this.opts.permissionMode = m),
-        getQuery: () => this.q,
+        getQuery: () => this.raw,
         getInput: () => this.input,
         setInput: (queue) => (this.input = queue),
         bumpGeneration: () => (this.queryGen += 1),
@@ -345,7 +348,7 @@ export class ClaudiaSession {
         feedInfo: (title, meta) => this.cb.onFeed(this.id, infoStep(title, meta)),
         updated: () => this.cb.onUpdate(this.summary()),
         replaceQuery: (m, resume, input) => {
-          this.q = this.makeQuery(m, resume, input);
+          this.driver = this.makeDriver(m, resume, input);
           void this.consume(this.queryGen);
         },
       },
@@ -354,15 +357,14 @@ export class ClaudiaSession {
   }
 
   async interrupt(): Promise<void> {
-    const q = this.q as { interrupt?: () => Promise<unknown> } | null;
-    if (!q?.interrupt) return;
-    await q.interrupt().catch(() => undefined);
+    if (!this.driver) return;
+    await this.driver.interrupt();
     this.cb.onFeed(this.id, infoStep('Interrupted'));
     this.setState('idle');
   }
 
   rewindFiles(checkpointId: string): Promise<RewindResult> {
-    return rewindFiles(this.q, checkpointId);
+    return rewindFiles(this.raw, checkpointId);
   }
 
   stop(): void {
@@ -371,11 +373,7 @@ export class ClaudiaSession {
     abandonRunningSteps(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), 'session stopped');
     this.promptQueue.clear();
     this.input.close();
-    try {
-      (this.q as { close?: () => void } | null)?.close?.();
-    } catch {
-      /* already closed */
-    }
+    this.driver?.close();
     this.setState('stopped');
   }
 
@@ -387,8 +385,6 @@ export class ClaudiaSession {
     this.cb.onFeed(this.id, errorStep('Session error', message));
     this.setState('error');
   }
-
-  private pushUserText(text: string, images: PromptImage[] = []): void { this.turnStartedAt = Date.now(); this.input.push(userMessage(text, this.claudeSessionId, images)); }
 
   private setState(state: SessionState): void {
     if (this.state === 'stopped' && state !== 'stopped') return;

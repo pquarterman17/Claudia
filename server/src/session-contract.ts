@@ -1,4 +1,5 @@
 import type {
+  AgentKind,
   FeedStep,
   FeedStepPatch,
   EffortLevel,
@@ -24,6 +25,8 @@ export interface SessionCallbacks {
 
 export interface LaunchOptions {
   cwd: string;
+  /** Which agent backs this session. Absent means Claude. */
+  agent?: AgentKind;
   /** Absent means: open the session and wait for the user to type. */
   prompt?: string;
   model?: string;

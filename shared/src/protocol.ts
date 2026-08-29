@@ -9,6 +9,7 @@
  * consumers import from one place as before.
  */
 import type {
+  AgentKind,
   ChainStep, ContextUsage, EffectiveSettings, EffortLevel, FeedStep, FeedStepPatch,
   FileCheckpoint, FinishActionKey, HostPlatform, McpServerInfo, ModelChoice,
   PermissionLaunchMode, PromptImage, SavedSession, SessionSummary, SessionTemplate,
@@ -73,6 +74,8 @@ export type ClientCommand =
   | {
       type: 'launch_session';
       cwd: string;
+      /** Which agent to run. Defaults to Claude when absent. */
+      agent?: AgentKind;
       /** Optional — an empty session opens idle and waits for a prompt. */
       prompt?: string;
       model?: string;

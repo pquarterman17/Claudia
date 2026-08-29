@@ -383,7 +383,7 @@ Running it for real, as the owner would, surfaced things no unit test did:
 
 - The error banner never cleared. A stale "No such directory" sat on screen through several
   successful launches. Now dismissible, and any successful command retires it.
-- Repos are not all under `git/` — `quantized` lives under OneDrive. Mistyping a path is normal,
+- Repos are not all under one root — some live under a synced folder. Mistyping a path is normal,
   which is why the Browse button and the recent-directories autocomplete earn their place.
 - Four orphaned dev-server process trees had accumulated from manual restarts; `tsx watch`
   cannot rebind a held port, so each failed silently and left its npm wrapper alive. The

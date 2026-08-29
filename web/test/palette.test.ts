@@ -11,7 +11,7 @@ const action = (id: string, label: string, keywords = ''): PaletteAction => ({
 
 describe('filterActions', () => {
   const actions = [
-    action('a', 'Jump to quantized'),
+    action('a', 'Jump to gamma'),
     action('b', 'Toggle usage panel', 'tokens plan spend'),
     action('c', 'Columns: auto', 'board grid layout'),
     action('d', 'Arrange all tiles', 'reset uniform'),
@@ -72,7 +72,7 @@ describe('buildPaletteActions', () => {
     setSizeMode: vi.fn(),
     setColumns: vi.fn(),
     arrangeAll: vi.fn(),
-    recentDirectories: ['C:\\Users\\x\\git\\alpha', 'C:\\Users\\x\\OneDrive\\Coding\\git\\quantized'],
+    recentDirectories: ['C:\\Users\\x\\git\\alpha', 'C:\\Users\\x\\Archive\\code\\git\\gamma'],
     defaultPermissionMode: 'auto' as const,
     launch: vi.fn(),
   };
@@ -83,7 +83,7 @@ describe('buildPaletteActions', () => {
     expect(labels).toContain('Jump to beta');
     // Windows paths shorten to their last two segments.
     expect(labels).toContain('New session in git/alpha');
-    expect(labels).toContain('New session in git/quantized');
+    expect(labels).toContain('New session in git/gamma');
   });
 
   it('omits approve when nothing is pending, includes it when something is', () => {
@@ -95,7 +95,7 @@ describe('buildPaletteActions', () => {
   it('launching uses the palette-chosen directory', () => {
     const launch = vi.fn();
     const actions = buildPaletteActions({ ...deps, launch });
-    actions.find((a) => a.label === 'New session in git/quantized')?.run();
-    expect(launch).toHaveBeenCalledWith('C:\\Users\\x\\OneDrive\\Coding\\git\\quantized');
+    actions.find((a) => a.label === 'New session in git/gamma')?.run();
+    expect(launch).toHaveBeenCalledWith('C:\\Users\\x\\Archive\\code\\git\\gamma');
   });
 });

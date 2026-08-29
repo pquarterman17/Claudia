@@ -158,10 +158,10 @@ describe('UsageStore', () => {
 
 describe('decodeProject', () => {
   it('shows the recognisable tail of an encoded project directory', () => {
-    expect(decodeProject('/x/.claude/projects/C--Users-patri-git-Claudia/abc.jsonl')).toBe('git/Claudia');
+    expect(decodeProject('/x/.claude/projects/C--Users-dev-git-Claudia/abc.jsonl')).toBe('git/Claudia');
   });
 
   it('handles Windows separators', () => {
-    expect(decodeProject('C:\\x\\projects\\C--Users-patri-git-fermiviewer\\s.jsonl')).toBe('git/fermiviewer');
+    expect(decodeProject('C:\\x\\projects\\C--Users-dev-git-gamma\\s.jsonl')).toBe('git/gamma');
   });
 });

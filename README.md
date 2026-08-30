@@ -138,6 +138,19 @@ Wrap-up script location: `~/bin/wrapup.sh` (macOS/Linux) or `C:\bin\wrapup.ps1` 
   something asks for a second, confirming click. Nothing is lost: the conversation left behind
   stays in that directory's resume picker. A session launched idle and never prompted switches
   for free, and nothing is spawned until its first prompt.
+- **Let two agents argue it out** — hand one problem to Claude and Codex and have them settle
+  it, instead of you carrying messages between two windows. Pick what they argue about: the
+  **working-tree diff**, a **design question** with nothing written yet, or **whatever a session
+  just said**. Claudia launches the reviewer as the *other* agent, relays the critique back to
+  the author, and ends with a verdict in a fixed shape — AGREED / CHANGED / DISPUTED / NEEDS
+  YOU — so you can tell at a glance whether you need to look.
+  Bounded three ways, because it spends turns on two agents while you are not watching: a hard
+  ceiling of 4 rounds, a per-turn timeout, and an early stop the moment the reviewer says it has
+  no objections. The prompts are the feature — the reviewer is told another model wrote the
+  work (otherwise it defends it as its own) and that agreeing is allowed (otherwise it invents
+  objections), and the author is told explicitly *not* to change working code just because it
+  was challenged. Sessions in a running exchange are exempt from the close-the-tab stop, since
+  running unattended is the entire point.
 - **Terminal sessions** — sessions you start in a terminal are invisible to Claudia by
   default: there is no attach path to a running CLI. Turn on **watch terminal sessions** and
   Claudia adds an `http` hook to your **global** `~/.claude/settings.json` that posts each
@@ -199,6 +212,8 @@ npm run build      # production UI bundle into web/dist
 | `server/src/finish-actions.ts` | Per-OS command table |
 | `server/src/commit-action.ts` | The commit + push step: per-repo planning, branch rules, git |
 | `server/src/agent-switch.ts` | Re-points a session at the other agent, conversation rules and all |
+| `server/src/relay.ts` | The prompts that make a cross-agent critique load-bearing |
+| `server/src/debate.ts` | Runs the exchange: rounds, early stop, verdict |
 | `server/src/hook-monitor.ts` | Terminal sessions rebuilt from hook events |
 | `server/src/hook-install.ts` | Writes/removes Claudia's hook in global settings, with a backup |
 | `server/src/touched-files.ts` | What each session wrote, so a commit can be scoped to it |

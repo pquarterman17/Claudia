@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { BoardControls } from './components/BoardControls';
 import { ControlSidebar } from './components/ControlSidebar';
 import { LaunchBar } from './components/LaunchBar';
+import { DebateStrip } from './components/DebateStrip';
 import { ObservedStrip } from './components/ObservedStrip';
 import { SessionTile } from './components/SessionTile';
 import { StatusFooter } from './components/StatusFooter';
@@ -27,6 +28,7 @@ export function App() {
     lastNotice,
     observed,
     monitoring,
+    debates,
     trigger,
     usage,
     recentDirectories,
@@ -253,6 +255,7 @@ export function App() {
               </div>
             )}
           </div>
+          <DebateStrip debates={debates} sessions={ordered} />
           <ObservedStrip observed={observed} monitoring={monitoring} now={now} />
         </div>
       </div>

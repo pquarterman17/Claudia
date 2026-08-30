@@ -13,6 +13,8 @@ import type {
   ChainStep, ContextUsage, EffectiveSettings, EffortLevel, FeedStep, FeedStepPatch,
   FileCheckpoint, FinishActionKey, HostPlatform, McpServerInfo, ModelChoice,
   PermissionLaunchMode, PromptImage, SavedSession, SessionSummary, SessionTemplate,
+  DebateStatus,
+  DebateSubject,
   FileMatch,
   ObservedSession,
   SlashCommandInfo,
@@ -65,6 +67,8 @@ export type ServerEvent =
   | { type: 'usage'; usage: UsageSnapshot }
   /** Terminal sessions Claudia did not launch, seen through global hooks. */
   | { type: 'observed_sessions'; sessions: ObservedSession[]; monitoring: boolean }
+  /** A cross-agent exchange, pushed on every turn so it can be watched live. */
+  | { type: 'debate'; debate: DebateStatus }
   | {
       type: 'settings';
       recentDirectories: string[];
@@ -180,6 +184,19 @@ export type ClientCommand =
   /** Point one session at a different agent. Always starts a fresh
    * conversation — the two agents cannot resume each other's history. */
   | { type: 'set_agent'; sessionId: string; agent: AgentKind }
+  /** Hand one problem to two agents and let them argue it out. Spends turns on
+   * both with nobody watching, so the server bounds the rounds. */
+  | {
+      type: 'start_debate';
+      cwd: string;
+      objective: string;
+      subject: DebateSubject;
+      /** Reuse this tile as the author; absent launches a fresh one. */
+      authorSessionId?: string;
+      author: AgentKind;
+      reviewer: AgentKind;
+      rounds: number;
+    }
   | { type: 'save_toolkit_action'; action: ToolkitAction }
   | { type: 'delete_toolkit_action'; id: string }
   | { type: 'delete_template'; name: string }

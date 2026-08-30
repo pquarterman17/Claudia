@@ -33,6 +33,7 @@ export interface AgentCapabilities {
   mcpPanel: boolean;
   effectiveSettings: boolean;
   fileCheckpoints: boolean;
+  outputStylePicker: boolean;
 }
 
 const CLAUDE_CAPABILITIES: AgentCapabilities = {
@@ -42,6 +43,7 @@ const CLAUDE_CAPABILITIES: AgentCapabilities = {
   mcpPanel: true,
   effectiveSettings: true,
   fileCheckpoints: true,
+  outputStylePicker: true,
 };
 
 const CODEX_CAPABILITIES: AgentCapabilities = {
@@ -54,6 +56,9 @@ const CODEX_CAPABILITIES: AgentCapabilities = {
   mcpPanel: false,
   effectiveSettings: false,
   fileCheckpoints: false,
+  // Output styles are a Claude Code CLI concept (system-prompt presets); codex
+  // app-server has no equivalent request.
+  outputStylePicker: false,
 };
 
 export const capabilitiesFor = (agent?: AgentKind): AgentCapabilities =>

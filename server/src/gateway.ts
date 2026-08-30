@@ -264,6 +264,9 @@ export class Gateway {
       case 'set_thinking':
         void this.manager.get(cmd.sessionId)?.setThinking(cmd.thinkingMode);
         return;
+      case 'set_output_style':
+        void this.manager.get(cmd.sessionId)?.setOutputStyle(cmd.style);
+        return;
       case 'refresh_context':
         this.manager.get(cmd.sessionId)?.refreshContext();
         return;
@@ -381,9 +384,13 @@ export class Gateway {
         this.broadcastSettings();
         return;
       case 'search_files':
-        this.manager
+        // searchFiles itself never rejects, but sendTo can: the socket may
+        // have closed during the walk. An unhandled rejection ends the whole
+        // process, and a completion nobody is waiting for is not worth that.
+        void this.manager
           .searchFiles(cmd.sessionId, cmd.query)
-          .then((matches) => this.sendTo(socket, { type: 'file_matches', sessionId: cmd.sessionId, query: cmd.query, matches }));
+          .then((matches) => this.sendTo(socket, { type: 'file_matches', sessionId: cmd.sessionId, query: cmd.query, matches }))
+          .catch(() => undefined);
         return;
     }
   }

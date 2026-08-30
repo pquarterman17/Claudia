@@ -30,6 +30,7 @@ export interface SessionSummaryState {
     thinkingMode: SessionSummary['thinkingMode'];
     contextUsage: SessionSummary['contextUsage'];
     contextPending: boolean;
+    outputStyles: SessionSummary['outputStyles'];
   };
   todos: SessionSummary['todos'];
 }
@@ -54,6 +55,7 @@ export function buildSessionSummary(
     thinkingMode: state.controls.thinkingMode,
     contextUsage: state.controls.contextUsage,
     contextPending: state.controls.contextPending,
+    outputStyles: state.controls.outputStyles,
     state: state.state,
     startedAt: state.startedAt,
     lastActivityAt: state.lastActivityAt,

@@ -139,6 +139,33 @@ describe('unusable bounds', () => {
   });
 });
 
+describe('replayIsUsable on a filtered stream', () => {
+  it('accepts the gaps another mission leaves behind', () => {
+    // Found in review: seq is global, so a per-mission read skips every number
+    // another mission wrote. Demanding contiguity rejected every healthy read
+    // and would have forced a snapshot on every resync — invisible until a
+    // second mission existed.
+    expect(replayIsUsable([101, 104, 109], 101, 110, 'filtered')).toBe(true);
+  });
+
+  it('still rejects a batch out of order', () => {
+    expect(replayIsUsable([104, 101], 101, 110, 'filtered')).toBe(false);
+  });
+
+  it('still rejects a batch outside the window', () => {
+    expect(replayIsUsable([99], 101, 110, 'filtered')).toBe(false);
+    expect(replayIsUsable([111], 101, 110, 'filtered')).toBe(false);
+  });
+
+  it('rejects a repeated sequence number', () => {
+    expect(replayIsUsable([101, 101], 101, 110, 'filtered')).toBe(false);
+  });
+
+  it('accepts an empty batch, because a mission may have written nothing', () => {
+    expect(replayIsUsable([], 101, 110, 'filtered')).toBe(true);
+  });
+});
+
 describe('replayIsUsable', () => {
   it('accepts exactly the range that was planned', () => {
     expect(replayIsUsable([101, 102, 103], 101, 103)).toBe(true);
@@ -160,5 +187,12 @@ describe('replayIsUsable', () => {
 
   it('rejects an inverted range', () => {
     expect(replayIsUsable([], 103, 101)).toBe(false);
+    expect(replayIsUsable([], 103, 101, 'filtered')).toBe(false);
+  });
+
+  it('rejects a global batch with a hole, which filtered would accept', () => {
+    // The whole reason the two modes exist as separate answers.
+    expect(replayIsUsable([101, 103], 101, 103)).toBe(false);
+    expect(replayIsUsable([101, 103], 101, 103, 'filtered')).toBe(true);
   });
 });

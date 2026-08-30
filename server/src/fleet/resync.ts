@@ -77,18 +77,41 @@ export function planResync(request: ResyncRequest, bounds: ResyncBounds): Resync
 }
 
 /**
+ * Which stream a batch came from, because the two admit different gaps.
+ *
+ * `seq` is global. A batch read from the whole log is contiguous or something
+ * was pruned between planning and fetching. A batch filtered to one mission is
+ * full of holes by construction — every event another mission wrote occupies a
+ * number this one skips — and demanding contiguity there rejects every healthy
+ * read, forcing a snapshot on every resync forever. Found in review, and it
+ * would have been invisible until a second mission existed.
+ */
+export type ReplayStream = 'global' | 'filtered';
+
+/**
  * Whether a batch the store actually returned can be sent as a replay.
  *
  * Planning reads the bounds and fetching reads the events, and between those
- * two reads the log can be pruned or extended. Found in review: without this
- * the client is handed a batch with a hole in it and told it is contiguous,
- * which is the same silent gap the snapshot path exists to avoid. Cheap to
- * check, and the fallback is already built.
+ * two reads the log can be pruned or extended. Without this the client is
+ * handed a batch with a hole in it and told it is contiguous, which is the
+ * same silent gap the snapshot path exists to avoid.
+ *
+ * On a filtered stream the trade is explicit: gaps cannot be distinguished
+ * from other missions' events, so ordering and range are checked and pruning
+ * inside the window is caught by `planResync`'s `oldestSeq` guard instead.
  */
-export function replayIsUsable(seqs: readonly number[], fromSeq: number, toSeq: number): boolean {
+export function replayIsUsable(
+  seqs: readonly number[],
+  fromSeq: number,
+  toSeq: number,
+  stream: ReplayStream = 'global',
+): boolean {
   if (toSeq < fromSeq) return false;
-  if (seqs.length !== toSeq - fromSeq + 1) return false;
-  return seqs.every((seq, i) => seq === fromSeq + i);
+  if (seqs.some((seq, i) => seq < fromSeq || seq > toSeq || (i > 0 && seq <= (seqs[i - 1] ?? -1)))) {
+    return false;
+  }
+  if (stream === 'filtered') return true;
+  return seqs.length === toSeq - fromSeq + 1;
 }
 
 /**

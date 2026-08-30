@@ -45,9 +45,21 @@ pub fn show_main_window(app: &tauri::AppHandle) {
 /// Turns a startup failure into the splash's own error banner (see
 /// assets/loading.html's `window.__claudiaError`) instead of a spinner that
 /// never resolves or a webview "can't reach this page".
+/// The JS string literal for `msg`, escaped by serde_json rather than by hand.
+/// Split out from the eval so the escaping is testable without a webview.
+fn error_literal(msg: &str) -> String {
+    serde_json::to_string(msg).unwrap_or_else(|_| String::from("\"Claudia could not start.\""))
+}
+
 pub fn show_splash_error(win: &tauri::WebviewWindow, msg: &str) {
-    let escaped = msg.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', " ");
-    let _ = win.eval(format!("window.__claudiaError && window.__claudiaError('{escaped}')"));
+    // serde_json emits a correctly escaped JS string literal, quotes included.
+    // The hand-rolled escaping this replaces handled backslash, quote and \n but
+    // NOT a carriage return, and a Windows failure message is CRLF-terminated:
+    // the raw \r landed inside a single-quoted literal, which is a syntax error.
+    // The call then failed to parse, so the banner stayed blank at the one
+    // moment it exists for -- the server failing to start.
+    let literal = error_literal(msg);
+    let _ = win.eval(format!("window.__claudiaError && window.__claudiaError({literal})"));
 }
 
 /// Tray icon with an explicit menu — Linux tray implementations require one;
@@ -108,6 +120,32 @@ pub fn handle_window_event<R: tauri::Runtime>(window: &tauri::Window<R>, event: 
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn escapes_a_carriage_return_so_a_windows_error_still_renders() {
+        // A Windows failure message is CRLF-terminated. The escaping this
+        // replaced let the raw CR through into a single-quoted JS literal,
+        // which does not parse - so the splash banner stayed blank at exactly
+        // the moment the server had failed to start.
+        //
+        // The control characters are built rather than written as escapes so
+        // this test cannot itself be broken by a stray literal CR in the file.
+        let cr = char::from(13);
+        let msg = format!("spawn failed: ENOENT{cr}{}node not found", char::from(10));
+        let literal = error_literal(&msg);
+        let escaped_cr = format!("{}r", char::from(92));
+        assert!(!literal.contains(cr), "a raw CR would break the generated JS: {literal}");
+        assert!(literal.contains(&escaped_cr), "the CR should survive as an escape: {literal}");
+        assert!(literal.starts_with('"') && literal.ends_with('"'));
+    }
+
+    #[test]
+    fn escapes_a_quote_without_ending_the_literal() {
+        let literal = error_literal("it's here");
+        assert!(!literal[1..literal.len() - 1].contains('"'));
+    }
+
     /// Exercises the exact matcher Tauri's ACL uses at runtime (not a
     /// reimplementation of it) against the literal string in
     /// capabilities/main.json, so a future edit to that file that breaks the

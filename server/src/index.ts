@@ -1,4 +1,4 @@
-import { CLAUDIA_PORT } from '@claudia/shared';
+import { resolvePort } from './resolve-port.js';
 import { createServer, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
@@ -114,8 +114,32 @@ const gitTicker = setInterval(() => void manager.refreshGit(), 15_000);
 gitTicker.unref?.();
 void manager.refreshGit();
 
-httpServer.listen(CLAUDIA_PORT, '127.0.0.1', () => {
-  console.log(`[claudia] listening on http://127.0.0.1:${CLAUDIA_PORT} · ${platform}`);
+const requested = resolvePort(process.env['CLAUDIA_PORT']);
+// The overwhelmingly likely failure here is that Claudia is ALREADY running:
+// it is a supervisor meant to stay up, and it is normally started by
+// double-clicking a launcher, so an unhandled 'error' event prints a Node
+// stack trace into a console window that may close before it can be read.
+//
+// The listener has to go on BOTH emitters. `ws` was constructed with
+// `{ server: httpServer }`, so it forwards the HTTP server's errors onto the
+// WebSocketServer — with a listener only on httpServer, that re-emit is the
+// unhandled one and the process still dies on the same stack trace.
+const onListenError = (err: NodeJS.ErrnoException): void => {
+  if (err.code !== 'EADDRINUSE') throw err;
+  console.error(`[claudia] port ${requested.port} is already in use.`);
+  console.error(`[claudia] Claudia is probably running already — open http://127.0.0.1:${requested.port}`);
+  console.error('[claudia] To run a second instance, set CLAUDIA_PORT to a free port (or 0 to pick one).');
+  process.exit(1);
+};
+httpServer.on('error', onListenError);
+wss.on('error', onListenError);
+if (requested.warning) console.warn(`[claudia] ${requested.warning}`);
+httpServer.listen(requested.port, '127.0.0.1', () => {
+  // Report what was actually bound, not what was asked for: with port 0 the
+  // requested value is meaningless and a log saying "0" helps nobody.
+  const bound = httpServer.address();
+  const port = typeof bound === 'object' && bound !== null ? bound.port : requested.port;
+  console.log(`[claudia] listening on http://127.0.0.1:${port} · ${platform}`);
 });
 
 // Backstop, not a substitute for handling rejections where they happen: this

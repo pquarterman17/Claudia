@@ -128,20 +128,20 @@ path — measure before building.
 
 ## Tier 3 — Nice-to-Have
 
-27. **Session todo list** — render the session's own TaskCreate/TodoWrite list in the tile,
-    as the terminal does.
-28. **Input niceties** — paste images into the composer (SDK user messages take image blocks);
-    `@file` mention autocomplete (needs a small server file-search endpoint).
-29. **Review surfaces** — edit approvals show a real diff; plan mode rendered with
-    approve/revise from the tile (probe what the SDK delivers). Owner: later tier is fine
-    while running permission-skipped. Extends #12.
+28. **`@file` autocomplete** — a small server file-search endpoint plus completion in the
+    composer. Image paste shipped with the composer work; this is the remaining half, and the
+    probe below makes it worth doing.
+29. **Plan-mode review surface** — plan mode is selectable and edit approvals already show a
+    before/after preview; what remains is rendering a proposed plan with approve/revise from
+    the tile.
 
-41. **Output style per session** — **probe first.** `initializationResult()` reports the
-    current style and the available ones, but no setter is documented; it may be reachable
-    through the generic `settings` / `applyFlagSettings()` path.
-42. **`@file` mention expansion** — **probe first.** Unknown whether `@path` in a prompt string
-    gets the CLI input box's automatic file inclusion, or arrives as literal text for Claude to
-    Read itself. Measure before building the autocomplete half of #28.
+41. **Output style per session** — **probed, buildable.** `outputStyle` is a key on the same
+    `Settings` interface `applyFlagSettings()` accepts, and `initializationResult()` reports
+    `output_style` plus `available_output_styles`. List from the former, set with the latter.
+42. ~~**`@file` mention expansion**~~ — **probed 2026-07-26: it DOES expand.** A prompt of
+    "@SECURITY.md — reply with only the first heading" answered correctly with ZERO tool calls,
+    so the file was included before the model saw it. That settles #28: an autocomplete is
+    worth building, and saves a Read round-trip every time it is used.
 43. **Compaction visibility** — `/compact [instructions]` runs as prompt text and the SDK emits
     `system/compact_boundary` with `pre_tokens`. Show compaction in the feed instead of a
     mysterious context drop.
@@ -165,6 +165,14 @@ Recording these so they are not rediscovered as bugs:
   construction; Claudia is not the Claude Code product.
 
 ## Completed
+
+- ~~**#27 Session todo list**~~ (2026-07-26) — shipped with the external stack as
+  `todo-tracker.ts` + `TodoPanel.tsx`; found already done during a reconciliation pass, never
+  struck at the time.
+- ~~**#28 image paste**~~ (2026-07-26) — the composer takes pasted, dropped and chosen images,
+  bounded at four per prompt and 5 MB each. The `@file` half remains as #28.
+- ~~**#29 edit-approval diffs**~~ (2026-07-26) — approvals render a before/after preview. The
+  plan-mode half remains as #29.
 
 - ~~**Ideas taken from a rival orchestrator**~~ (2026-07-26) — the owner liked its controls, not
   its look. Three gaps were real; the rest of its monitoring layer Claudia already had.

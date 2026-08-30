@@ -11,6 +11,7 @@ import { BranchChip } from './BranchChip';
 import { ApprovalBanner } from './ApprovalBanner';
 import { Composer } from './Composer';
 import { ContextMeter } from './ContextMeter';
+import { PlanReview } from './PlanReview';
 import { QuestionPicker } from './QuestionPicker';
 import { SessionFeed } from './SessionFeed';
 import { TranscriptView } from './TranscriptView';
@@ -350,14 +351,18 @@ export function SessionTile({
       )}
 
       {session.pendingApproval && !session.pendingQuestion && (
-        <ApprovalBanner
-          approval={session.pendingApproval}
-          now={now}
-          onApprove={() =>
-            send({ type: 'approve', sessionId: session.id, requestId: session.pendingApproval!.requestId })
-          }
-          onDeny={() => send({ type: 'deny', sessionId: session.id, requestId: session.pendingApproval!.requestId })}
-        />
+        session.pendingApproval.change?.kind === 'plan' ? (
+          <PlanReview sessionId={session.id} approval={session.pendingApproval} />
+        ) : (
+          <ApprovalBanner
+            approval={session.pendingApproval}
+            now={now}
+            onApprove={() =>
+              send({ type: 'approve', sessionId: session.id, requestId: session.pendingApproval!.requestId })
+            }
+            onDeny={() => send({ type: 'deny', sessionId: session.id, requestId: session.pendingApproval!.requestId })}
+          />
+        )
       )}
 
       <Composer session={session} />

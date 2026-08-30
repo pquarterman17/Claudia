@@ -20,6 +20,9 @@ function truncate(s: string, n: number): string {
 
 /** One-line human summary of a tool call's input, used in tiles and approvals. */
 export function summarizeToolInput(toolName: string, input: Record<string, unknown>): string {
+  // The full plan is rendered in the review surface; the one-liner used in
+  // notifications and the activity digest just needs to say what's waiting.
+  if (toolName === 'ExitPlanMode') return 'Plan ready for review';
   const cmd = input['command'];
   if (typeof cmd === 'string') return truncate(cmd, 160);
   const filePath = input['file_path'] ?? input['path'] ?? input['pattern'];

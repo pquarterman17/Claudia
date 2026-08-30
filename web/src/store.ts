@@ -17,6 +17,7 @@ import {
   type TranscriptItem,
   type TriggerStatus,
   type UsageSnapshot,
+  type ToolkitAction,
 } from '@claudia/shared';
 import { useSyncExternalStore } from 'react';
 
@@ -58,6 +59,7 @@ export interface ClaudiaState {
   stopSessionsWhenClosedSec: number;
   defaultPermissionMode: PermissionLaunchMode;
   templates: SessionTemplate[];
+  toolkit: ToolkitAction[];
   customCeilings?: { sessionTokens: number; weeklyTokens: number };
   lastError?: string;
 }
@@ -94,6 +96,7 @@ class Store {
     stopSessionsWhenClosedSec: 30,
     defaultPermissionMode: 'auto',
     templates: [],
+    toolkit: [],
   };
   private listeners = new Set<Listener>();
   private ws: WebSocket | null = null;
@@ -208,6 +211,7 @@ class Store {
           stopSessionsWhenClosedSec: event.stopSessionsWhenClosedSec,
           defaultPermissionMode: event.defaultPermissionMode,
           templates: event.templates,
+          toolkit: event.toolkit,
           customCeilings: event.customCeilings,
           mcp: event.mcp,
           lastError: undefined,
@@ -220,6 +224,7 @@ class Store {
           stopSessionsWhenClosedSec: event.stopSessionsWhenClosedSec,
           defaultPermissionMode: event.defaultPermissionMode,
           templates: event.templates,
+          toolkit: event.toolkit,
           customCeilings: event.customCeilings,
         });
         return;

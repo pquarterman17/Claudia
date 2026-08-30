@@ -96,6 +96,11 @@ Wrap-up script location: `~/bin/wrapup.sh` (macOS/Linux) or `C:\bin\wrapup.ps1` 
   blocks on approval, errors, or asks a question. Fires only on the transition, stays quiet
   while the window is focused.
 - **Templates** — save a cwd + prompt + permission mode; relaunch from a chip.
+- **Toolkit** — saved prompts fired at a session that is *already running*: run and fix the
+  tests, summarise the diff, review my changes. Templates only ever launch a session; the
+  retyping happens in the ones already open. Actions appear in the sidebar for the focused
+  session and in the command palette, and can be scoped to one directory. Three ship by
+  default; add your own with **+ add**.
 - **Queued prompts** — type the next instruction mid-turn; the tile shows "N queued".
 - **Closing the tab stops sessions** after a grace period (default 30 s; 0 disables). Pages
   heartbeat, so a reload never kills work but a genuinely closed tab does — even when the

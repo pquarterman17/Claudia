@@ -251,6 +251,24 @@ export type HostPlatform = 'win32' | 'darwin' | 'linux';
 // ---------- templates ----------
 
 /** A saved launch shape: same repo, same kind of prompt, same permission posture. */
+/**
+ * A saved prompt you can fire at a session that is already running.
+ *
+ * Distinct from SessionTemplate, which only ever LAUNCHES a session. The
+ * repetitive work is not starting sessions, it is retyping the same
+ * instructions into ones already open — run the tests, summarise the diff,
+ * rebase onto main.
+ */
+export interface ToolkitAction {
+  id: string;
+  /** Shown on the button and matched in the command palette. */
+  name: string;
+  /** The text sent to the session, verbatim. */
+  prompt: string;
+  /** When set, the action only appears for sessions in this directory. */
+  cwd?: string;
+}
+
 export interface SessionTemplate {
   name: string;
   cwd: string;

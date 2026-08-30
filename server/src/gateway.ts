@@ -57,6 +57,7 @@ export class Gateway {
         stopSessionsWhenClosedSec: settings.get().stopSessionsWhenClosedSec,
         defaultPermissionMode: settings.get().defaultPermissionMode,
         templates: settings.get().templates,
+        toolkit: settings.get().toolkit,
         customCeilings: settings.get().customCeilings,
         mcp,
       }));
@@ -138,6 +139,7 @@ export class Gateway {
     this.broadcast({
       type: 'settings',
       recentDirectories: s.recentDirectories,
+      toolkit: s.toolkit,
       countdownSec: s.countdownSec,
       stopSessionsWhenClosedSec: s.stopSessionsWhenClosedSec,
       defaultPermissionMode: s.defaultPermissionMode,
@@ -348,6 +350,14 @@ export class Gateway {
       case 'set_countdown':
         this.trigger.setCountdown(cmd.seconds);
         this.settings.update({ countdownSec: this.trigger.countdownLength });
+        this.broadcastSettings();
+        return;
+      case 'save_toolkit_action':
+        this.settings.saveToolkitAction(cmd.action);
+        this.broadcastSettings();
+        return;
+      case 'delete_toolkit_action':
+        this.settings.deleteToolkitAction(cmd.id);
         this.broadcastSettings();
         return;
       case 'save_template':

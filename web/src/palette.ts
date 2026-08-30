@@ -2,7 +2,7 @@
  * Command palette model — pure, no React, so ranking and the action list are
  * testable on their own.
  */
-import type { PermissionLaunchMode, SessionSummary } from '@claudia/shared';
+import type { PermissionLaunchMode, SessionSummary, ToolkitAction } from '@claudia/shared';
 
 export interface PaletteAction {
   id: string;
@@ -41,6 +41,12 @@ export function filterActions(actions: PaletteAction[], query: string): PaletteA
 
 export interface PaletteDeps {
   sessions: SessionSummary[];
+  /** Saved prompts that can be fired at a running session. */
+  toolkit: ToolkitAction[];
+  /** The session a toolkit action targets when one is focused. */
+  focusedSessionId?: string;
+  /** Sends a toolkit action's prompt to a session. */
+  runToolkitAction: (sessionId: string, action: ToolkitAction) => void;
   focusSession: (id: string) => void;
   approveOldest: (() => void) | null;
   toggleUsage: () => void;
@@ -64,6 +70,26 @@ export function buildPaletteActions(deps: PaletteDeps): PaletteAction[] {
       keywords: `session focus go ${session.cwd}`,
       run: () => deps.focusSession(session.id),
     });
+  }
+
+  // Toolkit actions target the focused session, falling back to the only one
+  // when a single session is open — the common case, where making the user pick
+  // a target first would be pure ceremony.
+  const target =
+    deps.sessions.find((s) => s.id === deps.focusedSessionId) ??
+    (deps.sessions.length === 1 ? deps.sessions[0] : undefined);
+  if (target) {
+    for (const action of deps.toolkit) {
+      // An action scoped to a directory is noise everywhere else.
+      if (action.cwd && action.cwd !== target.cwd) continue;
+      actions.push({
+        id: `toolkit-${action.id}`,
+        label: action.name,
+        hint: target.title ?? target.name,
+        keywords: `toolkit run prompt ${action.prompt}`,
+        run: () => deps.runToolkitAction(target.id, action),
+      });
+    }
   }
 
   if (deps.approveOldest) {

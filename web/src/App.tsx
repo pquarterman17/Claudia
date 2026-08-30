@@ -31,6 +31,7 @@ export function App() {
     stopSessionsWhenClosedSec,
     defaultPermissionMode,
     templates,
+    toolkit,
     customCeilings,
     savedSessions,
     checkpoints,
@@ -187,6 +188,8 @@ export function App() {
             stopOnCloseSec={stopSessionsWhenClosedSec}
             width={layout.sidebarWidth}
             onResize={setSidebarWidth}
+            toolkit={toolkit}
+            focusedSessionId={focused}
           />
         )}
 
@@ -256,6 +259,10 @@ export function App() {
           onClose={() => setPaletteOpen(false)}
           actions={buildPaletteActions({
             sessions: ordered,
+            toolkit,
+            focusedSessionId: focused,
+            runToolkitAction: (sessionId, action) =>
+              send({ type: 'send_prompt', sessionId, text: action.prompt }),
             focusSession: (id) => {
               document.getElementById(`session-${id}`)?.scrollIntoView({ block: 'nearest' });
               setFocused(id);

@@ -1,6 +1,7 @@
-import type { FeedStep, SessionSummary, TriggerStatus } from '@claudia/shared';
+import type { FeedStep, SessionSummary, TriggerStatus, ToolkitAction } from '@claudia/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityDigest } from './ActivityDigest';
+import { ToolkitPanel } from './ToolkitPanel';
 import { ControllerTile } from './ControllerTile';
 
 interface Props {
@@ -11,6 +12,8 @@ interface Props {
   countdownSec: number;
   stopOnCloseSec: number;
   width: number;
+  toolkit: ToolkitAction[];
+  focusedSessionId?: string;
   onResize: (px: number) => void;
 }
 
@@ -31,7 +34,13 @@ export function ControlSidebar({
   stopOnCloseSec,
   width,
   onResize,
+  toolkit,
+  focusedSessionId,
 }: Props) {
+  // Same rule as the command palette: the focused session, or the only one.
+  // Two surfaces disagreeing about the target would be worse than either.
+  const toolkitTarget =
+    sessions.find((s) => s.id === focusedSessionId) ?? (sessions.length === 1 ? sessions[0] : undefined);
   const dragging = useRef(false);
   const active = trigger.state !== 'disarmed';
   const [automationOpen, setAutomationOpen] = useState(active);
@@ -76,6 +85,7 @@ export function ControlSidebar({
           }}
         >
           <ActivityDigest sessions={sessions} feeds={feeds} now={now} />
+          <ToolkitPanel target={toolkitTarget} actions={toolkit} />
           <section>
             <button
               type="button"

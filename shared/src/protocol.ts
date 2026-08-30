@@ -13,7 +13,8 @@ import type {
   ChainStep, ContextUsage, EffectiveSettings, EffortLevel, FeedStep, FeedStepPatch,
   FileCheckpoint, FinishActionKey, HostPlatform, McpServerInfo, ModelChoice,
   PermissionLaunchMode, PromptImage, SavedSession, SessionSummary, SessionTemplate,
-  SlashCommandInfo, ThinkingMode, TranscriptItem, TriggerStatus,
+  SlashCommandInfo,
+  ToolkitAction, ThinkingMode, TranscriptItem, TriggerStatus,
 } from './index.js';
 import type { PlanTier, UsageSnapshot } from './usage.js';
 
@@ -32,6 +33,7 @@ export type ServerEvent =
       stopSessionsWhenClosedSec: number;
       defaultPermissionMode: PermissionLaunchMode;
       templates: SessionTemplate[];
+      toolkit: ToolkitAction[];
       customCeilings?: { sessionTokens: number; weeklyTokens: number };
       mcp: Record<string, McpServerInfo[]>;
     }
@@ -62,6 +64,7 @@ export type ServerEvent =
       stopSessionsWhenClosedSec: number;
       defaultPermissionMode: PermissionLaunchMode;
       templates: SessionTemplate[];
+      toolkit: ToolkitAction[];
       customCeilings?: { sessionTokens: number; weeklyTokens: number };
     }
   /** Result of a browse_folder request; empty when the user cancelled. */
@@ -144,6 +147,8 @@ export type ClientCommand =
   | { type: 'set_stop_on_close'; seconds: number }
   /** Saves (or overwrites, by name) a reusable launch shape. */
   | { type: 'save_template'; template: SessionTemplate }
+  | { type: 'save_toolkit_action'; action: ToolkitAction }
+  | { type: 'delete_toolkit_action'; id: string }
   | { type: 'delete_template'; name: string }
   /** Liveness beat from a page that is actually running. See CLIENT_PING_MS. */
   | { type: 'ping' };

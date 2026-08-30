@@ -75,6 +75,8 @@ describe('buildPaletteActions', () => {
     recentDirectories: ['C:\\Users\\x\\git\\alpha', 'C:\\Users\\x\\Archive\\code\\git\\gamma'],
     defaultPermissionMode: 'auto' as const,
     launch: vi.fn(),
+    toolkit: [] as ToolkitAction[],
+    runToolkitAction: vi.fn(),
   };
 
   it('offers a jump per session and launch per recent directory', () => {
@@ -97,5 +99,78 @@ describe('buildPaletteActions', () => {
     const actions = buildPaletteActions({ ...deps, launch });
     actions.find((a) => a.label === 'New session in git/gamma')?.run();
     expect(launch).toHaveBeenCalledWith('C:\\Users\\x\\Archive\\code\\git\\gamma');
+  });
+});
+
+describe('toolkit actions in the palette', () => {
+  const tests: ToolkitAction = { id: 't1', name: 'Run & fix tests', prompt: 'run the tests' };
+  const iosOnly: ToolkitAction = { id: 't2', name: 'Open Xcode', prompt: 'open xcode', cwd: '/ios' };
+
+  const base = {
+    focusSession: vi.fn(),
+    approveOldest: null as (() => void) | null,
+    toggleUsage: vi.fn(),
+    setSizeMode: vi.fn(),
+    setColumns: vi.fn(),
+    arrangeAll: vi.fn(),
+    recentDirectories: [],
+    defaultPermissionMode: 'auto' as const,
+    launch: vi.fn(),
+  };
+
+  it('offers them for the focused session', () => {
+    const labels = buildPaletteActions({
+      ...base,
+      sessions: [session('s1', 'alpha'), session('s2', 'beta')],
+      focusedSessionId: 's2',
+      toolkit: [tests],
+      runToolkitAction: vi.fn(),
+    }).map((a) => a.label);
+    expect(labels).toContain('Run & fix tests');
+  });
+
+  it('targets the only session when nothing is focused', () => {
+    // Making someone pick a target when there is exactly one is pure ceremony.
+    const run = vi.fn();
+    const actions = buildPaletteActions({
+      ...base,
+      sessions: [session('s1', 'alpha')],
+      toolkit: [tests],
+      runToolkitAction: run,
+    });
+    actions.find((a) => a.label === 'Run & fix tests')?.run();
+    expect(run).toHaveBeenCalledWith('s1', tests);
+  });
+
+  it('offers none when several sessions are open and none is focused', () => {
+    // Firing a prompt at an arbitrary session is worse than offering nothing.
+    const labels = buildPaletteActions({
+      ...base,
+      sessions: [session('s1', 'alpha'), session('s2', 'beta')],
+      toolkit: [tests],
+      runToolkitAction: vi.fn(),
+    }).map((a) => a.label);
+    expect(labels).not.toContain('Run & fix tests');
+  });
+
+  it('hides an action scoped to a different directory', () => {
+    const labels = buildPaletteActions({
+      ...base,
+      sessions: [session('s1', 'alpha')],
+      toolkit: [tests, iosOnly],
+      runToolkitAction: vi.fn(),
+    }).map((a) => a.label);
+    expect(labels).toContain('Run & fix tests');
+    expect(labels).not.toContain('Open Xcode');
+  });
+
+  it('matches on the prompt text too, not just the name', () => {
+    const actions = buildPaletteActions({
+      ...base,
+      sessions: [session('s1', 'alpha')],
+      toolkit: [tests],
+      runToolkitAction: vi.fn(),
+    });
+    expect(filterActions(actions, 'run the tests').map((a) => a.label)).toContain('Run & fix tests');
   });
 });

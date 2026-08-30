@@ -1,4 +1,4 @@
-import type { FinishActionKey, PermissionLaunchMode, PlanTier, SessionTemplate } from '@claudia/shared';
+import type { FinishActionKey, PermissionLaunchMode, PlanTier, SessionTemplate, ToolkitAction } from '@claudia/shared';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -18,9 +18,14 @@ export interface Settings {
   defaultPermissionMode: PermissionLaunchMode;
   /** Saved launch shapes (cwd + prompt + permission mode), most-recent first. */
   templates: SessionTemplate[];
+  /** Saved prompts that can be fired at a session already running. */
+  toolkit: ToolkitAction[];
   /** Ceilings the user has calibrated themselves, used when planTier === 'custom'. */
   customCeilings?: { sessionTokens: number; weeklyTokens: number };
 }
+
+/** A generous ceiling; the palette stops being scannable long before this. */
+const MAX_TOOLKIT = 40;
 
 const DEFAULTS: Settings = {
   planTier: 'auto',
@@ -32,6 +37,26 @@ const DEFAULTS: Settings = {
   recentDirectories: [],
   defaultPermissionMode: 'auto',
   templates: [],
+  // Seeded rather than empty: a toolkit with nothing in it reads as broken, and
+  // these three are the ones worth having in any repo. All are read-or-fix
+  // instructions; nothing here pushes, tags or rewrites anything on its own.
+  toolkit: [
+    {
+      id: 'seed-tests',
+      name: 'Run & fix tests',
+      prompt: "Run this project's test suite. If anything fails, diagnose and fix it, then run it again to confirm.",
+    },
+    {
+      id: 'seed-diff',
+      name: 'Diff summary',
+      prompt: 'Summarise the changes on this branch compared with main, grouped by intent rather than by file.',
+    },
+    {
+      id: 'seed-review',
+      name: 'Review my changes',
+      prompt: 'Review the uncommitted changes critically for bugs, missed cases, and anything inconsistent with the conventions of this repo. Report first; do not fix anything yet.',
+    },
+  ],
 };
 
 const MAX_RECENT = 8;
@@ -83,6 +108,16 @@ export class SettingsStore {
 
   deleteTemplate(name: string): void {
     this.update({ templates: this.current.templates.filter((t) => t.name !== name) });
+  }
+
+  /** Adds or replaces an action, keyed by id so editing one does not duplicate it. */
+  saveToolkitAction(action: ToolkitAction): void {
+    const rest = this.current.toolkit.filter((a) => a.id !== action.id);
+    this.update({ toolkit: [...rest, action].slice(0, MAX_TOOLKIT) });
+  }
+
+  deleteToolkitAction(id: string): void {
+    this.update({ toolkit: this.current.toolkit.filter((a) => a.id !== id) });
   }
 
   private load(): Settings {

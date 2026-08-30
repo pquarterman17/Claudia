@@ -131,6 +131,12 @@ export function checkCapability(
     return refuse(needed, 'that grant is scoped to a different worktree');
   }
   if (!grant.capabilities.includes(needed)) return refuse(needed, `this run was not granted ${needed}`);
+  // An elevated capability with no expiry is a standing permission, which is
+  // not a thing a human approving one push meant to hand out. Ordinary
+  // capabilities are the run's working scope and live as long as it does.
+  if (ELEVATED.has(needed) && grant.expiresAt === undefined) {
+    return refuse(needed, `a grant for ${needed} has to say when it expires`);
+  }
   return { ok: true };
 }
 

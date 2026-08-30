@@ -65,7 +65,7 @@ describe('checkCapability', () => {
     // `issuedBy: "system"` with the right run and `git.push` passed every
     // check. There is now no parameter to put a forged grant into: the only
     // way to reach one is to look it up in the server's own store.
-    const forged: Grant = grant({ issuedBy: 'system', capabilities: ['git.push'] });
+    const forged: Grant = grant({ issuedBy: 'system', capabilities: ['git.push'], expiresAt: NOW + 60_000 });
     expect(checkCapability('git.push', REQUEST, store(), NOW).ok).toBe(false);
     // And it only passes once the SERVER is holding that grant.
     expect(checkCapability('git.push', REQUEST, store(forged), NOW).ok).toBe(true);
@@ -111,6 +111,24 @@ describe('checkCapability', () => {
   it('honours a grant that has not expired yet', () => {
     const live = grant({ capabilities: ['git.push'], expiresAt: NOW + 1 });
     expect(checkCapability('git.push', REQUEST, store(live), NOW)).toEqual({ ok: true });
+  });
+
+  it.each([...ELEVATED])('refuses %s from a grant with no expiry', (cap) => {
+    // An elevated capability that never expires is a standing permission, and
+    // a human approving one push did not mean to hand one out.
+    const forever = grant({ capabilities: [cap] });
+    expect(checkCapability(cap, REQUEST, store(forever), NOW).ok).toBe(false);
+  });
+
+  it('allows an elevated capability that does expire', () => {
+    const bounded = grant({ capabilities: ['git.push'], expiresAt: NOW + 60_000 });
+    expect(checkCapability('git.push', REQUEST, store(bounded), NOW)).toEqual({ ok: true });
+  });
+
+  it("does not require an expiry for the run's ordinary working scope", () => {
+    // repo.write lives as long as the run does; demanding a deadline there
+    // would just be ceremony.
+    expect(checkCapability('repo.write', REQUEST, store(grant()), NOW)).toEqual({ ok: true });
   });
 
   it('refuses a capability outside the grant', () => {

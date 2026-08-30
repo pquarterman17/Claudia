@@ -108,6 +108,17 @@ export type WatchdogAction =
   | { kind: 'escalate'; request: string; reason: string; severity: EscalationSeverity; key: string }
   | { kind: 'give_up'; reason: string };
 
+/**
+ * When the run stopped being useful — the fixed point a backoff counts from.
+ *
+ * A run that ended has an end time. One that is merely silent has not ended,
+ * so the anchor is when it last did anything; failing that, when it started.
+ * None of these change between ticks, which is the whole requirement.
+ */
+export function retryAnchor(observation: RunObservation): number {
+  return observation.run.endedAt ?? observation.lastActivityAt ?? observation.run.startedAt;
+}
+
 /** The reservation key for one retry of one run. Derived, never random. */
 export function retryKey(runId: string, attempt: number): string {
   return `retry:${runId}:${attempt}`;
@@ -126,10 +137,10 @@ export function retryKey(runId: string, attempt: number): string {
  */
 export function nextAction(
   health: RunHealth,
-  run: ChildRun,
+  observation: RunObservation,
   policy: WatchdogPolicy = DEFAULT_WATCHDOG,
-  now = 0,
 ): WatchdogAction {
+  const { run } = observation;
   if (health.kind === 'healthy' || health.kind === 'finished') return { kind: 'wait' };
 
   if (health.kind === 'stuck') {
@@ -156,7 +167,12 @@ export function nextAction(
     kind: 'retry',
     attempt: next,
     afterMs,
-    notBefore: (run.endedAt ?? now) + afterMs,
+    // Anchored on something that does not move. Found in review: anchoring on
+    // `now` meant the deadline advanced with every tick and was never reached,
+    // and defaulting `now` to 0 failed the other way — instantly eligible,
+    // forever. All three fallbacks here are fixed points in the run's past, so
+    // ticking more often cannot change when the retry becomes due.
+    notBefore: retryAnchor(observation) + afterMs,
     reason: health.reason,
     key: retryKey(run.id, next),
   };

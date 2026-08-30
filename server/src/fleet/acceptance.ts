@@ -78,10 +78,39 @@ export function missingEvidence(evidence: Evidence, policy: AcceptancePolicy = D
   if (!evidence.branch) missing.push('branch');
   if (!evidence.headSha) missing.push('head commit');
   if (evidence.filesChanged === undefined) missing.push('diff summary');
+  // Required whenever ancestry is being claimed. Found in review: a
+  // complete-looking object could omit the base entirely while asserting
+  // `descendsFromBase: true` — descending from nothing in particular.
+  if (!policy.allowUnverifiedAncestry && !evidence.baseSha) missing.push('base commit');
   if (!policy.allowMissingTests && (!evidence.tests || evidence.tests.length === 0)) {
     missing.push('test results');
   }
   return missing;
+}
+
+/**
+ * Evidence that is present but not usable.
+ *
+ * Distinct from missing, and checked first: `filesChanged: -1` is not an
+ * absent diff summary, it is a claim that cannot be true. Found in review —
+ * only zero was rejected, so every other impossible number passed. Whatever
+ * produced it is broken, and treating its output as authority is worse than
+ * having none.
+ */
+export function malformedEvidence(evidence: Evidence): string | undefined {
+  const files = evidence.filesChanged;
+  if (files !== undefined && (!Number.isSafeInteger(files) || files < 0)) {
+    return `filesChanged is ${files}, which is not a number of files`;
+  }
+  for (const test of evidence.tests ?? []) {
+    if (typeof test?.command !== 'string' || test.command.trim() === '') {
+      return 'a test result has no command';
+    }
+    if (!Number.isSafeInteger(test.exitCode)) {
+      return `the exit code for ${test.command} is not a number`;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -93,6 +122,12 @@ export function missingEvidence(evidence: Evidence, policy: AcceptancePolicy = D
  * answers and collapsing them either hides real failures or cries wolf.
  */
 export function judge(evidence: Evidence, policy: AcceptancePolicy = DEFAULT_ACCEPTANCE): AcceptanceVerdict {
+  // Before anything is read as a fact. Nonsense is not a near-miss to be
+  // weighed against the rest; it means the thing that produced this evidence
+  // cannot be trusted about any of it.
+  const malformed = malformedEvidence(evidence);
+  if (malformed) return { kind: 'reject', reason: malformed };
+
   const failed = (evidence.tests ?? []).filter((t) => t.exitCode !== 0);
   if (failed.length > 0) {
     return {
@@ -153,6 +188,8 @@ export function blocksCleanup(
   observed: { dirty?: boolean; merged?: boolean },
   policy: AcceptancePolicy = DEFAULT_ACCEPTANCE,
 ): string | undefined {
+  const malformed = malformedEvidence(evidence);
+  if (malformed) return malformed;
   // Every unknown blocks. Found in review: this only refused when `merged` was
   // explicitly false, so an observation that could not answer — a git call
   // that failed, a field nobody filled in — read as permission to delete.

@@ -173,6 +173,14 @@ export interface Escalation {
   resolvedAt?: number;
   /** Freeform note from whoever resolved it. */
   resolutionNote?: string;
+  /**
+   * Stable key for the condition that raised this, when there is one.
+   *
+   * A watchdog tick that finds a stuck run produces the same escalation every
+   * time. Unique in the store, so a pulse every minute updates nobody's inbox
+   * rather than filling it.
+   */
+  idempotencyKey?: string;
 }
 
 /**

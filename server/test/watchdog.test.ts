@@ -5,6 +5,7 @@ import {
   backoffMs,
   DEFAULT_WATCHDOG,
   nextAction,
+  retryAnchor,
   retryKey,
   type RunObservation,
 } from '../src/fleet/watchdog.js';
@@ -87,35 +88,35 @@ describe('assess', () => {
 
 describe('nextAction', () => {
   it.each(['healthy', 'finished'] as const)('waits on a %s run', (kind) => {
-    expect(nextAction({ kind }, run())).toEqual({ kind: 'wait' });
+    expect(nextAction({ kind }, observe())).toEqual({ kind: 'wait' });
   });
 
   it('escalates a stuck approval instead of retrying it', () => {
     // A retry would park on the same approval at full price, and a child
     // cannot grant itself the capability.
-    const action = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, run());
+    const action = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, observe({ run: run() }));
     expect(action.kind).toBe('escalate');
     expect(action.kind === 'escalate' && action.severity).toBe('blocking');
   });
 
   it('retries a silent run', () => {
-    const action = nextAction({ kind: 'silent', reason: 'nothing for 20m' }, run({ attempt: 1 }));
+    const action = nextAction({ kind: 'silent', reason: 'nothing for 20m' }, observe({ run: run({ attempt: 1 }) }));
     expect(action).toMatchObject({ kind: 'retry', attempt: 2, reason: 'nothing for 20m' });
   });
 
   it('retries an orphaned run', () => {
-    expect(nextAction({ kind: 'orphaned', reason: 'gone' }, run()).kind).toBe('retry');
+    expect(nextAction({ kind: 'orphaned', reason: 'gone' }, observe({ run: run() })).kind).toBe('retry');
   });
 
   it('gives up once the attempts are spent', () => {
-    const action = nextAction({ kind: 'silent', reason: 'x' }, run({ attempt: DEFAULT_WATCHDOG.maxAttempts }));
+    const action = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: run({ attempt: DEFAULT_WATCHDOG.maxAttempts }) }));
     expect(action.kind).toBe('give_up');
   });
 
   it('never retries past the limit however high the attempt count got', () => {
     // The bound is on the loop, not on the caller remembering to check.
     for (const attempt of [3, 4, 10, 1000]) {
-      expect(nextAction({ kind: 'silent', reason: 'x' }, run({ attempt })).kind).toBe('give_up');
+      expect(nextAction({ kind: 'silent', reason: 'x' }, observe({ run: run({ attempt }) })).kind).toBe('give_up');
     }
   });
 });
@@ -152,8 +153,8 @@ describe('a tick is not a launch', () => {
     // retry, so a pulse each minute would have started a session each minute.
     // A derived key makes repeated ticks collide on one reservation.
     const r = run({ attempt: 1 });
-    const first = nextAction({ kind: 'silent', reason: 'x' }, r);
-    const second = nextAction({ kind: 'silent', reason: 'x' }, r);
+    const first = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: r }));
+    const second = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: r }));
     expect(first).toEqual(second);
     expect(first.kind === 'retry' && first.key).toBe(retryKey('r1', 2));
   });
@@ -162,20 +163,54 @@ describe('a tick is not a launch', () => {
     // A caller that has not reached notBefore does nothing, which is what
     // makes a fast pulse safe.
     const r = run({ attempt: 1, endedAt: 5_000 });
-    const action = nextAction({ kind: 'silent', reason: 'x' }, r);
+    const action = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: r }));
     expect(action.kind === 'retry' && action.notBefore).toBe(5_000 + DEFAULT_WATCHDOG.retryBaseMs);
   });
 
+  it('holds the deadline still as the clock advances', () => {
+    // Found in review, and it was my own regression: anchoring on `now` meant
+    // the deadline moved forward with every tick and was never reached, so a
+    // silent run would never be retried at all.
+    const r = run({ attempt: 1, startedAt: 1_000 });
+    const at = (now: number) => nextAction({ kind: 'silent', reason: 'x' }, observe({ run: r, lastActivityAt: 2_000, now }));
+    const first = at(NOW);
+    const later = at(NOW + 10 * 60_000);
+    expect(first.kind === 'retry' && first.notBefore).toBe(2_000 + DEFAULT_WATCHDOG.retryBaseMs);
+    expect(later).toEqual(first);
+  });
+
+  it('anchors a silent run on its last activity, not on the tick', () => {
+    const action = nextAction(
+      { kind: 'silent', reason: 'x' },
+      observe({ run: run({ attempt: 1, startedAt: 1_000 }), lastActivityAt: 7_000 }),
+    );
+    expect(action.kind === 'retry' && action.notBefore).toBe(7_000 + DEFAULT_WATCHDOG.retryBaseMs);
+  });
+
+  it('falls back to the start time when a run never did anything', () => {
+    const r = run({ attempt: 1, startedAt: 3_000 });
+    const action = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: r, lastActivityAt: undefined }));
+    expect(action.kind === 'retry' && action.notBefore).toBe(3_000 + DEFAULT_WATCHDOG.retryBaseMs);
+  });
+
+  it.each([
+    ['ended', { run: run({ attempt: 1, startedAt: 1, endedAt: 9_000 }), lastActivityAt: 5_000 }, 9_000],
+    ['silent', { run: run({ attempt: 1, startedAt: 1 }), lastActivityAt: 5_000 }, 5_000],
+    ['never active', { run: run({ attempt: 1, startedAt: 4_000 }), lastActivityAt: undefined }, 4_000],
+  ])('anchors a %s run on a fixed point in its past', (_label, over, expected) => {
+    expect(retryAnchor(observe(over))).toBe(expected);
+  });
+
   it('gives each attempt its own key', () => {
-    const a = nextAction({ kind: 'silent', reason: 'x' }, run({ attempt: 1 }));
-    const b = nextAction({ kind: 'silent', reason: 'x' }, run({ attempt: 2 }));
+    const a = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: run({ attempt: 1 }) }));
+    const b = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: run({ attempt: 2 }) }));
     expect(a.kind === 'retry' && a.key).not.toBe(b.kind === 'retry' && b.key);
   });
 
   it('files one escalation for a stuck run however often it is ticked', () => {
     const r = run();
-    const first = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, r);
-    const second = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, r);
+    const first = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, observe({ run: r }));
+    const second = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, observe({ run: r }));
     expect(first.kind === 'escalate' && first.key).toBe(second.kind === 'escalate' && second.key);
   });
 });

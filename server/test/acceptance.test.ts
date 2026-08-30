@@ -64,6 +64,7 @@ describe('judge', () => {
     expect(verdict.kind === 'needs_human' && verdict.missing).toEqual([
       'head commit',
       'diff summary',
+      'base commit',
       'test results',
     ]);
   });
@@ -109,7 +110,7 @@ describe('judge', () => {
 
   it('can be told tests are not required', () => {
     const verdict = judge(
-      { branch: 'b', headSha: 'c', filesChanged: 1, descendsFromBase: true },
+      { branch: 'b', baseSha: 'a', headSha: 'c', filesChanged: 1, descendsFromBase: true },
       { autoAcceptWhenGreen: true, allowMissingTests: true },
     );
     expect(verdict.kind).toBe('accept');
@@ -183,7 +184,7 @@ describe('blocksCleanup', () => {
     // accepted under `allowMissingTests` became permanently uncleanable —
     // accepted and undeletable at once, with nothing the human could do.
     const lenient = { autoAcceptWhenGreen: true, allowMissingTests: true };
-    const evidence = { branch: 'b', headSha: 'c', filesChanged: 1, descendsFromBase: true };
+    const evidence = { branch: 'b', baseSha: 'a', headSha: 'c', filesChanged: 1, descendsFromBase: true };
     expect(judge(evidence, lenient).kind).toBe('accept');
     expect(blocksCleanup(true, evidence, SETTLED, lenient)).toBeUndefined();
     // And the default policy still refuses it, which is why passing it matters.
@@ -192,5 +193,56 @@ describe('blocksCleanup', () => {
 
   it('allows cleanup of accepted, merged, clean, fully evidenced work', () => {
     expect(blocksCleanup(true, GREEN, SETTLED)).toBeUndefined();
+  });
+});
+
+describe('evidence that is present but impossible', () => {
+  it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])('rejects filesChanged: %s', (filesChanged) => {
+    // Found in review: only zero was rejected, so every other impossible
+    // number passed. Whatever produced it is broken, and treating its output
+    // as authority is worse than having no evidence at all.
+    const verdict = judge({ ...GREEN, filesChanged }, { ...DEFAULT_ACCEPTANCE, autoAcceptWhenGreen: true });
+    expect(verdict.kind).toBe('reject');
+  });
+
+  it('rejects a test result with no command', () => {
+    const verdict = judge({ ...GREEN, tests: [{ command: '   ', exitCode: 0 }] });
+    expect(verdict).toMatchObject({ kind: 'reject', reason: 'a test result has no command' });
+  });
+
+  it('rejects a non-integer exit code', () => {
+    const verdict = judge({ ...GREEN, tests: [{ command: 'npm test', exitCode: Number.NaN }] });
+    expect(verdict.kind).toBe('reject');
+  });
+
+  it('treats nonsense as disqualifying, not as a near miss to be weighed', () => {
+    // Even with everything else green and a lenient policy.
+    const verdict = judge({ ...GREEN, filesChanged: -5 }, { autoAcceptWhenGreen: true, allowMissingTests: true });
+    expect(verdict.kind).toBe('reject');
+  });
+
+  it('blocks cleanup on the same nonsense', () => {
+    expect(blocksCleanup(true, { ...GREEN, filesChanged: -1 }, SETTLED)).toContain('not a number of files');
+  });
+
+  it('still accepts zero files as a real, damning observation', () => {
+    expect(judge({ ...GREEN, filesChanged: 0 })).toMatchObject({ kind: 'reject', reason: 'reported complete but changed no files' });
+  });
+});
+
+describe('ancestry needs something to descend from', () => {
+  it('will not take descendsFromBase on trust with no base recorded', () => {
+    // Descending from nothing in particular is not ancestry.
+    const evidence = { ...GREEN, descendsFromBase: true };
+    delete evidence.baseSha;
+    const verdict = judge(evidence, { ...DEFAULT_ACCEPTANCE, autoAcceptWhenGreen: true });
+    expect(verdict).toMatchObject({ kind: 'needs_human' });
+    expect(verdict.kind === 'needs_human' && verdict.missing).toContain('base commit');
+  });
+
+  it('does not demand a base when ancestry checking is switched off', () => {
+    const evidence = { branch: 'b', headSha: 'c', filesChanged: 1, tests: [{ command: 't', exitCode: 0 }] };
+    const verdict = judge(evidence, { autoAcceptWhenGreen: true, allowMissingTests: false, allowUnverifiedAncestry: true });
+    expect(verdict.kind).toBe('accept');
   });
 });

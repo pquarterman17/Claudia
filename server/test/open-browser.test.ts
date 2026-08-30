@@ -30,8 +30,15 @@ describe('openCommand', () => {
   });
 
   it('never runs a Windows command on a POSIX platform', () => {
+    // Two assertions rather than one alternation: `/cmd|\.exe$/` reads as
+    // "cmd anywhere, OR ends in .exe", because the anchor binds to its own
+    // branch only. Both halves happen to be what was wanted here, but a
+    // regex whose meaning depends on knowing that is a trap for the next
+    // person — and CodeQL rightly flags it.
     for (const platform of ['darwin', 'linux'] as const) {
-      expect(openCommand('http://127.0.0.1:4317', platform).file, platform).not.toMatch(/cmd|\.exe$/i);
+      const { file } = openCommand('http://127.0.0.1:4317', platform);
+      expect(file.toLowerCase(), platform).not.toBe('cmd');
+      expect(file, platform).not.toMatch(/\.exe$/i);
     }
   });
 

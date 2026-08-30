@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { commitAndPush, commitMessage, repoName } from '../src/commit-action.js';
 
 /**
@@ -12,19 +12,31 @@ import { commitAndPush, commitMessage, repoName } from '../src/commit-action.js'
  * this action (unrelated dirty files are NOT swept in) lives in git's behaviour.
  */
 
+// Vitest's 5s default is sized for unit tests, and every test below drives
+// real git: the heaviest spawn fifteen to twenty processes. That costs ~280ms
+// here and over 5s on a Windows CI runner, where process creation is slow and
+// Defender scans each new file under the temp directory — which is exactly how
+// this file started timing out. Bounded, not removed: nothing here should take
+// thirty seconds, so a genuine hang still fails.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 const git = (dir: string, args: string[]): string =>
   // stderr dropped: `git init` warns about the default branch name and would
   // bury a real failure, which still throws, in hint text.
   execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 
+/** Enough identity to commit, without spending a spawn to persist it. */
+const IDENTITY = ['-c', 'user.email=test@example.com', '-c', 'user.name=Test'];
+
 function repo(branch = 'feat/work', withRemote = true): string {
   const dir = mkdtempSync(join(tmpdir(), 'claudia-commit-'));
   git(dir, ['init', '--initial-branch', branch]);
-  git(dir, ['config', 'user.email', 'test@example.com']);
-  git(dir, ['config', 'user.name', 'Test']);
   writeFileSync(join(dir, 'tracked.txt'), 'original\n');
   git(dir, ['add', '.']);
-  git(dir, ['commit', '-m', 'first']);
+  // Identity inline rather than two more `git config` spawns per repository:
+  // process creation is the expensive part on Windows, and this helper runs
+  // once or twice per test.
+  git(dir, [...IDENTITY, 'commit', '-m', 'first']);
   if (withRemote) {
     const bare = mkdtempSync(join(tmpdir(), 'claudia-origin-'));
     git(bare, ['init', '--bare']);
@@ -240,6 +252,8 @@ describe('commitAndPush', () => {
     git(dir, ['init', '--initial-branch', 'feat/first']);
     git(dir, ['config', 'user.email', 'test@example.com']);
     git(dir, ['config', 'user.name', 'Test']);
+    // Persisted here on purpose: commitAndPush does the committing in this
+    // test, so the identity has to outlive the setup.
     await commitAndPush([{ cwd: dir, files: [write(dir, 'a.txt', 'work')], titles: ['First ever'] }]);
     expect(log(dir)).toEqual(['First ever']);
   });

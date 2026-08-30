@@ -1,11 +1,15 @@
 /**
- * Which approvals an unattended exchange may clear for itself.
+ * Which approvals an unattended run may clear for itself.
  *
- * This is not a convenience. A debate runs with nobody watching, so a session
+ * Shared by every multi-agent run Claudia drives — the two-agent debate and
+ * the crew that splits an objective — because they have the same problem and
+ * must not answer it differently.
+ *
+ * This is not a convenience. Such a run has nobody watching, so a session
  * that parks on `canUseTool` waits for a human who is not coming — observed
  * live, and it is not a slow exchange, it is a dead one: the author sat at
  * `awaiting_approval` on a **Read**, zero tokens spent, until the turn timed
- * out. An orchestrator that cannot clear a read cannot review a repository at
+ * out. An orchestrator that cannot clear a read cannot read a repository at
  * all.
  *
  * The line is drawn at OBSERVATION. Reading, searching and listing are what a
@@ -35,16 +39,16 @@ const OBSERVE_ONLY = new Set([
   'Codex Search',
 ]);
 
-export function isRoutineForReview(toolName: string): boolean {
+export function isRoutineUnattended(toolName: string): boolean {
   return OBSERVE_ONLY.has(toolName.trim());
 }
 
 /**
- * What to say when an exchange stops for a human.
+ * What to say when a run stops for a human.
  *
  * Names the tool, because "waiting for approval" without saying what for is
  * the thing that makes people stop trusting an unattended process.
  */
 export function escalationReason(toolName: string): string {
-  return `waiting on you to approve ${toolName} — an exchange only clears read-only tools by itself`;
+  return `waiting on you to approve ${toolName} — an unattended run only clears read-only tools by itself`;
 }

@@ -157,6 +157,42 @@ Recording these so they are not rediscovered as bugs:
 
 ## Completed
 
+- ~~**Crew — one objective, split by an agent, worked in parallel**~~ (2026-08-30, owner ask) —
+  the second half of the Argus-shaped ask the debate did not cover: not a pair relaying, but a
+  fleet. The owner was cutting a job into pieces by hand and feeding one piece to each window.
+  Now `crew-plan.ts` asks an agent to split the objective (at most 5 pieces, fewer allowed), and
+  each piece gets its own agent and its own **git worktree on its own branch**.
+  **Isolation is the whole reason this is defensible.** Several agents editing one working tree
+  at the same time overwrite each other with NO error and no way to tell afterwards which change
+  lost — the failure is silent and unattributable, which is the worst kind. `worktree.ts` was
+  already there for a different feature; this is the use that makes parallelism safe rather than
+  reckless. The one thing deliberately NOT parallel is opening the checkouts: `git worktree add`
+  takes the repository lock, so five at once means four failing on a lock they cannot see.
+  Pinned in the tests, since it looks like a missed optimisation.
+  Two prompt lessons carried over from the debate, both about what a model does when unsupervised.
+  It over-splits (listing feels like working), so the cap is stated as a maximum and fewer is
+  explicitly permitted. And it splits by ACTIVITY — "write the tests", "write the docs" — which
+  produces pieces that cannot start until another finishes; the split prompt asks for
+  independence in those words, and forbids activity splits by name.
+  The parser is forgiving about decoration and strict about structure: `- **TASK:** x` is a task
+  (a model asked for a plain line bullets and bolds it anyway, and rejecting a good plan over
+  asterisks would be the dumbest available failure), but loose prose is never promoted to a task
+  — the caller can fall back, it cannot un-launch an agent. When nothing parses, ONE agent takes
+  the whole objective: an error after a paid planning turn is strictly worse than what the owner
+  would have had without the feature.
+  `orchestrators.ts` now fronts both kinds of run, because gateway.ts needs exactly four things
+  from each (owned sessions, session updates, replay, one command) and it has hit the size
+  ceiling five times. That replay also fixed a real gap the debate shipped with: **a run outlived
+  the socket that started it, but nothing sent it to a browser that connected later** — a reload
+  mid-run showed an empty panel. `debate-approvals.ts` became `unattended-approvals.ts` for the
+  same reason: two subsystems with the same problem must not answer it differently.
+  **Verified live, end to end.** A two-area scratch repo, objective "validate the API request
+  bodies, and make the upload survive transient failures": split by area (not activity) into two
+  pieces, both worktrees created, both members working at overlapping times, the original
+  checkout untouched, and a report in the requested shape — CONFLICTS correctly "none, the two
+  changes touch disjoint files", NEEDS YOU naming both branches to merge. 2m23s wall clock, no
+  approval ever blocked. Same limit as the debate: Claude-only, since codex is not installed in
+  this container, so the round-robin across agent KINDS is unit-tested but not live.
 - ~~**Cross-agent debate — "let Claude and Codex argue it out"**~~ (2026-08-30, owner ask) —
   prompted by scape.work, whose pitch is exactly this. The owner was hand-relaying between two
   agents; the missing primitive turned out to be small and specific: **Claudia's sessions could
@@ -196,8 +232,8 @@ Recording these so they are not rediscovered as bugs:
   "AGREED / CHANGED / DISPUTED: nothing / NEEDS YOU: nothing". The human relayed nothing.
   LIMIT worth naming: this was Claude↔Claude, because codex is not installed in this container.
   Every part except the second driver kind is exercised; the cross-AGENT half is unverified.
-  Still open from the owner's Argus-shaped ask: child agents beyond a pair, and an objective the
-  orchestrator decomposes itself. This is the relay and the exchange, not yet the fleet.
+  Still open at the time from the owner's Argus-shaped ask: child agents beyond a pair, and an
+  objective the orchestrator decomposes itself. Both are the Crew entry above.
 
 
 - ~~**The .bat launcher never opened the browser**~~ (2026-08-30, owner report) — reported as

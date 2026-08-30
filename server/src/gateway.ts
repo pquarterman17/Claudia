@@ -2,7 +2,7 @@ import type { ClientCommand, HostPlatform, ServerEvent } from '@claudia/shared';
 import { WebSocket, WebSocketServer } from 'ws';
 import { runBulkOp } from './bulk-ops.js';
 import { buildHello, ownedSessionIds } from './hello-event.js';
-import type { DebateRunner } from './debate-runner.js';
+import type { Orchestrators } from './orchestrators.js';
 import { setHookMonitor } from './hook-commands.js';
 import { handleSavedSessionCommand } from './saved-session-commands.js';
 import { handleSessionSettingCommand } from './session-setting-commands.js';
@@ -29,7 +29,7 @@ export class Gateway {
   /** The hook monitor, and whether its global hook is currently installed. */
   private monitor!: HookMonitor;
   private monitoring = false;
-  private debates!: DebateRunner;
+  private orchestrators!: Orchestrators;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   /** Last time each socket proved a live page was behind it. */
   private lastSeen = new WeakMap<WebSocket, number>();
@@ -50,14 +50,14 @@ export class Gateway {
     usage: UsageService,
     settings: SettingsStore,
     monitor: HookMonitor,
-    debates: DebateRunner,
+    orchestrators: Orchestrators,
   ): void {
     this.manager = manager;
     this.trigger = trigger;
     this.usage = usage;
     this.settings = settings;
     this.monitor = monitor;
-    this.debates = debates;
+    this.orchestrators = orchestrators;
     // Re-evaluate periodically: a socket going stale produces no event of its own.
     this.sweepTimer = setInterval(() => this.onClientCountChanged(), 5_000);
     this.sweepTimer.unref?.();
@@ -73,7 +73,12 @@ export class Gateway {
         platform: this.platform,
         port: this.port,
       })
-        .then((hello) => this.sendTo(socket, hello))
+        .then((hello) => {
+          this.sendTo(socket, hello);
+          // After hello, never before: a run's status references sessions the
+          // board has to already know about.
+          this.orchestrators.replay((event) => this.sendTo(socket, event));
+        })
         .catch(() => undefined);
       this.lastSeen.set(socket, Date.now());
       this.onClientCountChanged();
@@ -136,10 +141,10 @@ export class Gateway {
 
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined;
-      const busy = this.debates.activeSessionIds();
+      const busy = this.orchestrators.activeSessionIds();
       const stopping = sessionsToStop(this.manager.summaries(), busy);
       if (stopping.length === 0) {
-        if (busy.size > 0) console.log(`[claudia] no browser, but ${busy.size} session(s) are mid-debate — kept`);
+        if (busy.size > 0) console.log(`[claudia] no browser, but ${busy.size} session(s) are mid-run — kept`);
         return;
       }
       console.log(`[claudia] no browser for ${graceSec}s — stopping ${stopping.length} session(s)`);
@@ -199,6 +204,7 @@ export class Gateway {
     // and each lives in its own module.
     if (handleSessionSettingCommand(cmd, this.manager)) return;
     if (handleSavedSessionCommand(cmd, { manager: this.manager, settings: this.settings, reply: (e) => this.sendTo(socket, e) })) return;
+    if (this.orchestrators.handle(cmd)) return;
     if (
       handleSettingsCommand(cmd, {
         settings: this.settings,
@@ -350,9 +356,6 @@ export class Gateway {
         return;
       case 'disarm_trigger':
         this.trigger.disarm();
-        return;
-      case 'start_debate':
-        this.debates.start(cmd);
         return;
       case 'set_hook_monitor':
         void this.setHookMonitor(cmd.enabled, socket);

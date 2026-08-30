@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { commitAndPush } from './commit-action.js';
-import { DebateRunner } from './debate-runner.js';
+import { Orchestrators } from './orchestrators.js';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
 import { createHookHandler } from './hook-endpoint.js';
@@ -97,10 +97,10 @@ trigger.setChain(saved.finishChain);
 
 const manager = new SessionManager({
   onUpdate: (session) => {
-    // Before the broadcast: a debate-owned session parked on an approval has
-    // no other signal, and an unattended exchange that waits for a human it
-    // does not have is deadlocked rather than slow.
-    debates.onSessionUpdate(session);
+    // Before the broadcast: a session owned by an unattended run and parked on
+    // an approval has no other signal, and a run that waits for a human it does
+    // not have is deadlocked rather than slow.
+    orchestrators.onSessionUpdate(session);
     gateway.broadcast({ type: 'session_upsert', session });
   },
   onFeed: (sessionId, step) => gateway.broadcast({ type: 'feed_append', sessionId, step }),
@@ -118,13 +118,13 @@ const manager = new SessionManager({
   onRemoved: (sessionId) => gateway.broadcast({ type: 'session_removed', sessionId }),
 });
 
-const debates = new DebateRunner(manager, (debate) => gateway.broadcast({ type: 'debate', debate }));
+const orchestrators = new Orchestrators(manager, (event) => gateway.broadcast(event));
 
 const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: usage.snapshot() }));
 usage.setTier(saved.planTier);
 if (saved.customCeilings) usage.setCustomCeilings(saved.customCeilings);
 
-gateway.attach(manager, trigger, usage, settings, monitor, debates);
+gateway.attach(manager, trigger, usage, settings, monitor, orchestrators);
 usage.start();
 
 // One clock drives the countdown; the engine decides whether anything happens.

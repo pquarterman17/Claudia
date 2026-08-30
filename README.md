@@ -151,6 +151,16 @@ Wrap-up script location: `~/bin/wrapup.sh` (macOS/Linux) or `C:\bin\wrapup.ps1` 
   objections), and the author is told explicitly *not* to change working code just because it
   was challenged. Sessions in a running exchange are exempt from the close-the-tab stop, since
   running unattended is the entire point.
+- **Split the work across several agents** — give Claudia the whole objective instead of
+  cutting it up yourself and feeding a piece to each window. One agent splits it into at most
+  five independent pieces, each piece gets its own agent (Claude, Codex, or alternating), and
+  they all work **at the same time**. You come back to one report in a fixed shape — DONE /
+  CONFLICTS / LEFT / NEEDS YOU.
+  Every piece runs in its **own git worktree on its own branch**, so parallel agents cannot
+  overwrite each other's edits or touch the files in front of you; the branch name is on each
+  row, because that is where the work actually is. Nothing is committed — you review the
+  branches. If the splitting agent answers in prose instead of a plan, one agent takes the
+  whole objective rather than the run failing after a turn you already paid for.
 - **Terminal sessions** — sessions you start in a terminal are invisible to Claudia by
   default: there is no attach path to a running CLI. Turn on **watch terminal sessions** and
   Claudia adds an `http` hook to your **global** `~/.claude/settings.json` that posts each
@@ -214,6 +224,9 @@ npm run build      # production UI bundle into web/dist
 | `server/src/agent-switch.ts` | Re-points a session at the other agent, conversation rules and all |
 | `server/src/relay.ts` | The prompts that make a cross-agent critique load-bearing |
 | `server/src/debate.ts` | Runs the exchange: rounds, early stop, verdict |
+| `server/src/crew-plan.ts` | Splitting the objective and reading the plan back |
+| `server/src/crew.ts` | Runs the pieces: own checkout each, in parallel, then one report |
+| `server/src/orchestrators.ts` | The runs Claudia drives itself, behind one door |
 | `server/src/hook-monitor.ts` | Terminal sessions rebuilt from hook events |
 | `server/src/hook-install.ts` | Writes/removes Claudia's hook in global settings, with a backup |
 | `server/src/touched-files.ts` | What each session wrote, so a commit can be scoped to it |

@@ -282,45 +282,6 @@ export interface OutputStyles {
   available: string[];
 }
 
-/** What two agents are arguing about. */
-export type DebateSubject = 'diff' | 'plan' | 'last';
-
-/** One turn in a cross-agent exchange. */
-export interface DebateEntry {
-  round: number;
-  speaker: AgentKind;
-  role: 'opening' | 'review' | 'rebuttal' | 'verdict';
-  text: string;
-}
-
-/**
- * A running or finished exchange between two agents.
- *
- * Streamed as it happens rather than delivered at the end: an exchange takes
- * minutes and costs real turns on both agents, so a human who cannot see it
- * progressing cannot tell it from a hang.
- */
-export interface DebateStatus {
-  id: string;
-  objective: string;
-  subject: DebateSubject;
-  state: 'running' | 'done' | 'failed';
-  authorSessionId: string;
-  reviewerSessionId?: string;
-  author: AgentKind;
-  reviewer: AgentKind;
-  startedAt: number;
-  /** Rounds actually run, once it has finished. */
-  rounds?: number;
-  entries: DebateEntry[];
-  verdict?: string;
-  /** Why it ended early, when it did. */
-  stoppedBecause?: string;
-  /** What the exchange is stuck on, when it needs a human to unblock it. */
-  blockedBy?: string;
-  error?: string;
-}
-
 /**
  * A session Claudia did NOT launch, seen only through Claude Code's hooks.
  *
@@ -389,6 +350,7 @@ export interface TokenCounts {
 // Re-exported so `@claudia/shared` keeps one entry point; also imported as
 // types because the protocol definitions below reference them directly.
 export * from './usage.js';
+export * from './orchestration.js';
 export * from './protocol.js';
 import type { PlanTier, UsageSnapshot } from './usage.js';
 

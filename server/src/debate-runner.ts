@@ -1,6 +1,6 @@
 import type { ClientCommand, DebateStatus, SessionSummary } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
-import { escalationReason, isRoutineForReview } from './debate-approvals.js';
+import { escalationReason, isRoutineUnattended } from './unattended-approvals.js';
 import { runDebate, DEFAULT_ROUNDS, type DebateDeps } from './debate.js';
 import { readDiff } from './git-info.js';
 import type { SessionManager } from './session-manager.js';
@@ -57,7 +57,7 @@ export class DebateRunner {
     const debate = this.owning(summary.id);
     if (!debate || debate.state !== 'running') return;
 
-    if (isRoutineForReview(pending.toolName)) {
+    if (isRoutineUnattended(pending.toolName)) {
       this.manager.get(summary.id)?.approve(pending.requestId);
       return;
     }

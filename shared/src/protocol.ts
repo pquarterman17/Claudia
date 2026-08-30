@@ -13,6 +13,7 @@ import type {
   ChainStep, ContextUsage, EffectiveSettings, EffortLevel, FeedStep, FeedStepPatch,
   FileCheckpoint, FinishActionKey, HostPlatform, McpServerInfo, ModelChoice,
   PermissionLaunchMode, PromptImage, SavedSession, SessionSummary, SessionTemplate,
+  CrewStatus,
   DebateStatus,
   DebateSubject,
   FileMatch,
@@ -69,6 +70,7 @@ export type ServerEvent =
   | { type: 'observed_sessions'; sessions: ObservedSession[]; monitoring: boolean }
   /** A cross-agent exchange, pushed on every turn so it can be watched live. */
   | { type: 'debate'; debate: DebateStatus }
+  | { type: 'crew'; crew: CrewStatus }
   | {
       type: 'settings';
       recentDirectories: string[];
@@ -196,6 +198,19 @@ export type ClientCommand =
       author: AgentKind;
       reviewer: AgentKind;
       rounds: number;
+    }
+  /** Split one objective into pieces and work them at the same time. Each
+   * member gets its own worktree, so parallel edits cannot overwrite one
+   * another; `maxTasks` is the human's cap on how much quota this may spend. */
+  | {
+      type: 'start_crew';
+      cwd: string;
+      objective: string;
+      /** Splits the objective and writes the closing report. */
+      planner: AgentKind;
+      /** Dealt round-robin to the pieces; one entry means one agent does all. */
+      workers: AgentKind[];
+      maxTasks: number;
     }
   | { type: 'save_toolkit_action'; action: ToolkitAction }
   | { type: 'delete_toolkit_action'; id: string }

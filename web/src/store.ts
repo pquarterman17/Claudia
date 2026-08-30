@@ -8,6 +8,7 @@ import {
   type EffectiveSettings,
   type McpServerInfo,
   type ModelChoice,
+  type CrewStatus,
   type DebateStatus,
   type ObservedSession,
   type PermissionLaunchMode,
@@ -73,6 +74,7 @@ export interface ClaudiaState {
   lastNotice?: string;
   /** Cross-agent exchanges, newest first. */
   debates: DebateStatus[];
+  crews: CrewStatus[];
   /** Terminal sessions Claudia did not launch, seen through the global hook. */
   observed: ObservedSession[];
   /** Whether that hook is installed in the owner's global settings. */
@@ -116,6 +118,7 @@ class Store {
     observed: [],
     monitoring: false,
     debates: [],
+    crews: [],
   };
   private listeners = new Set<Listener>();
   private ws: WebSocket | null = null;
@@ -243,6 +246,11 @@ class Store {
         // Replace in place so a running exchange updates rather than stacking.
         const rest = this.state.debates.filter((d) => d.id !== event.debate.id);
         this.set({ debates: [event.debate, ...rest].sort((a, b) => b.startedAt - a.startedAt) });
+        return;
+      }
+      case 'crew': {
+        const rest = this.state.crews.filter((c) => c.id !== event.crew.id);
+        this.set({ crews: [event.crew, ...rest].sort((a, b) => b.startedAt - a.startedAt) });
         return;
       }
       case 'observed_sessions':

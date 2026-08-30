@@ -34,6 +34,7 @@ function harness(opts: HarnessOpts = {}): Harness {
   // Transcripts GROW, as a real one does. A replacing map would hide the very
   // defect the turn-aware read exists to catch.
   const transcripts = new Map<string, Array<{ kind: string; text: string }>>();
+  const appended = new Map<string, number>();
   let next = 0;
   let openLaunches = 0;
 
@@ -69,7 +70,10 @@ function harness(opts: HarnessOpts = {}): Harness {
       h.sent.push({ session, text });
       const reply = replies.get(session)?.shift();
       const items = transcripts.get(session) ?? [];
-      if (reply !== undefined) items.push({ kind: 'assistant', text: reply });
+      if (reply !== undefined) {
+        items.push({ kind: 'assistant', text: reply });
+        appended.set(session, (appended.get(session) ?? 0) + 1);
+      }
       transcripts.set(session, items);
       h.inFlight.add(session);
       h.peakInFlight = Math.max(h.peakInFlight, h.inFlight.size);
@@ -83,6 +87,12 @@ function harness(opts: HarnessOpts = {}): Harness {
       return undefined;
     },
     transcript: (session) => transcripts.get(session) ?? [],
+    cursor: (session) => appended.get(session) ?? 0,
+    since: (session, cursor) => {
+      const items = transcripts.get(session) ?? [];
+      const total = appended.get(session) ?? 0;
+      return items.slice(Math.max(0, cursor - (total - items.length)));
+    },
     progress: (update) => h.progress.push(update),
     cancel: (id) => h.cancelled.push(id),
   };
@@ -104,6 +114,23 @@ function spec(over: Partial<Parameters<typeof runCrew>[0]> = {}) {
 }
 
 describe('runCrew', () => {
+  it('stops a member whose own turn times out, without failing the run', async () => {
+    // Found in review. The per-member catch returns normally, so Promise.all
+    // resolves and the run-level cleanup never fires — the planner writes a
+    // report while a timed-out member is still editing and still spending.
+    const h = harness({ replies: { 'session-1': [PLAN, 'the report'] } });
+    const settle = h.deps.awaitSettled;
+    h.deps.awaitSettled = (session, ms) =>
+      session === 'session-2' ? Promise.reject(new Error('member timed out')) : settle(session, ms);
+
+    const result = await runCrew(spec(), h.deps);
+    expect(h.cancelled).toEqual(['session-2']);
+    expect(result.members[0]).toMatchObject({ state: 'failed' });
+    // The other member and the report are unaffected: one failure is not the run's.
+    expect(result.members[1]?.state).toBe('done');
+    expect(result.report).toBe('the report');
+  });
+
   it('stops every session it started when the planner turn fails', async () => {
     // Found in review. The bookkeeping promise rejecting is not a reason to
     // leave several agents editing several worktrees with nobody reading it.

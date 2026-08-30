@@ -116,6 +116,8 @@ export class CrewRunner {
       cancel: (sessionId) => this.manager.get(sessionId)?.stop(),
       awaitSettled: (sessionId, timeoutMs) => this.manager.awaitSettled(sessionId, timeoutMs),
       transcript: (sessionId) => this.manager.get(sessionId)?.transcript.list() ?? [],
+      cursor: (sessionId) => this.manager.get(sessionId)?.transcript.cursor() ?? 0,
+      since: (sessionId, cursor) => this.manager.get(sessionId)?.transcript.since(cursor) ?? [],
       progress: (update) => {
         // Any progress means it is no longer stuck on the thing it was stuck on.
         delete status.blockedBy;

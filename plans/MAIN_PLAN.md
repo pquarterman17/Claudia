@@ -147,7 +147,21 @@ path — measure before building.
     mysterious context drop.
 
 11. **Tauri wrap** — native window/tray/notifications around the web UI
-12. **Diff peek + per-project auto-approve rules**
+12. **Per-project auto-approve rules — RESPECIFIED, do not build as written.** The diff-peek
+    half shipped (approvals render a before/after preview). The auto-approve half should not be
+    built the way it is worded, because Claude Code ALREADY has a permission system and Claudia
+    inherits it: `~/.claude/settings.json` and a project's `.claude/settings.json` are what
+    decide whether a tool call needs asking. A second, Claudia-owned rule set on top would be
+    two places to look, free to disagree, with no answer to "which one won".
+    - What is actually wanted is the same outcome through the existing system: from an approval
+      banner, "always allow this in this project" writes an allow rule into the project's
+      `.claude/settings.json`, and the effective-settings inspector (already built) explains why
+      something was auto-approved.
+    - Worth doing carefully rather than quickly: it writes a file that grants standing
+      permission, and `resolveSettings()` already resolves the same merge the CLI uses, so
+      Claudia can show the result rather than guess it.
+    - Related and worth the owner's eye first: the current global allowlist grants bare `Write`
+      and `Edit`, so file writes anywhere on the machine auto-approve in every session.
 
 ### Terminal features with no SDK path (documented, not planned)
 

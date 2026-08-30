@@ -2,8 +2,17 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { GitCache, readGitInfo } from '../src/git-info.js';
+
+/**
+ * Spawns real git per test, and a Windows runner charges far more for each
+ * spawn than a local machine does. The same 5s default put worktree.test.ts
+ * red on windows-24 while every other job passed the same commit; this file
+ * is the other one that shells out, so it gets the same headroom before it
+ * finds that out on somebody else’s branch.
+ */
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 /**
  * Driven against real repositories rather than a mocked `git`, because the

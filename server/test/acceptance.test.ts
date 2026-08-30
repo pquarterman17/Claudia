@@ -170,8 +170,17 @@ describe('blocksCleanup', () => {
     expect(reason).toContain('not merged');
   });
 
-  it('accepts a merged pull request as somewhere', () => {
-    expect(blocksCleanup(true, { ...GREEN, prState: 'merged' }, { dirty: false, merged: false })).toBeUndefined();
+  it('lets a merged pull request fill an unknown merge state', () => {
+    expect(blocksCleanup(true, { ...GREEN, prState: 'merged' }, { dirty: false })).toBeUndefined();
+  });
+
+  it('does not let a merged pull request overrule git saying otherwise', () => {
+    // This test previously asserted the opposite, and was wrong. `prState` is
+    // a snapshot: the PR merged, then the child pushed three more commits to
+    // the same branch. Git is the authority on whether those commits are
+    // anywhere else, and it said no.
+    const reason = blocksCleanup(true, { ...GREEN, prState: 'merged' }, { dirty: false, merged: false });
+    expect(reason).toContain('not merged');
   });
 
   it('refuses while the evidence is incomplete', () => {

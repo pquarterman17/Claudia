@@ -1,5 +1,5 @@
 import type { AgentKind, SessionSummary } from '@claudia/shared';
-import { assistantTextAfter, lastAssistantText, rebuttalPrompt, reviewPrompt, verdictPrompt, type DebateSubject } from './relay.js';
+import { lastAssistantText, rebuttalPrompt, reviewPrompt, verdictPrompt, type DebateSubject } from './relay.js';
 
 /**
  * Two agents working the same problem until the answer survives both.
@@ -46,6 +46,10 @@ export interface DebateDeps {
   awaitSettled: (sessionId: string, timeoutMs: number) => Promise<SessionSummary>;
   /** The session's transcript, for reading what it just said. */
   transcript: (sessionId: string) => ReadonlyArray<{ kind: string; text: string }>;
+  /** A marker for "everything said so far", stable under transcript eviction. */
+  cursor: (sessionId: string) => number;
+  /** Only what was appended after `cursor`. */
+  since: (sessionId: string, cursor: number) => ReadonlyArray<{ kind: string; text: string }>;
   readDiff: (cwd: string) => Promise<string | null>;
   /** Progress, for the record the human reads afterwards. */
   note: (entry: DebateEntry) => void;
@@ -98,6 +102,11 @@ export function reviewerIsSatisfied(critique: string): boolean {
  * The baseline is the whole point. `awaitSettled` is satisfied instantly by a
  * session that is already settled, so without a mark in the transcript a
  * stopped author "answers" every question with whatever it last said.
+ *
+ * The mark is the log's own append counter, not the array's length: a
+ * transcript at its eviction cap reports the same length before and after a
+ * reply, so a length cursor finds nothing on exactly the long-lived sessions a
+ * human has been working in.
  */
 async function ask(
   sessionId: string,
@@ -105,10 +114,10 @@ async function ask(
   deps: DebateDeps,
   timeoutMs = TURN_TIMEOUT_MS,
 ): Promise<string | undefined> {
-  const baseline = deps.transcript(sessionId).length;
+  const baseline = deps.cursor(sessionId);
   deps.send(sessionId, text);
   await deps.awaitSettled(sessionId, timeoutMs);
-  return assistantTextAfter(deps.transcript(sessionId), baseline);
+  return lastAssistantText(deps.since(sessionId, baseline));
 }
 
 /**

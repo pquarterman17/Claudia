@@ -138,6 +138,8 @@ export interface SessionSummary {
   agent?: AgentKind;
   /** Branch and dirty state of the working directory, when it is a repository. */
   git?: GitInfo;
+  /** Output style in force, and what this install offers. */
+  outputStyles?: OutputStyles;
   /** Display name — basename of cwd. */
   name: string;
   /** Auto-generated from the task (like terminal tab titles), or user-set. */
@@ -261,6 +263,18 @@ export type HostPlatform = 'win32' | 'darwin' | 'linux';
  * instructions into ones already open — run the tests, summarise the diff,
  * rebase onto main.
  */
+/** One file offered by @-mention completion. */
+export interface FileMatch {
+  /** Path relative to the session's working directory, using forward slashes. */
+  path: string;
+}
+
+/** Output styles this install offers, and the one in force. */
+export interface OutputStyles {
+  current: string;
+  available: string[];
+}
+
 /** The branch a session's directory is on, and whether it has uncommitted work. */
 export interface GitInfo {
   branch: string;

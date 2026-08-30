@@ -13,6 +13,7 @@ import type {
   ChainStep, ContextUsage, EffectiveSettings, EffortLevel, FeedStep, FeedStepPatch,
   FileCheckpoint, FinishActionKey, HostPlatform, McpServerInfo, ModelChoice,
   PermissionLaunchMode, PromptImage, SavedSession, SessionSummary, SessionTemplate,
+  FileMatch,
   SlashCommandInfo,
   ToolkitAction, ThinkingMode, TranscriptItem, TriggerStatus,
 } from './index.js';
@@ -48,6 +49,7 @@ export type ServerEvent =
   | { type: 'models'; sessionId: string; models: ModelChoice[] }
   /** Slash commands this session's CLI knows (from init; includes user skills). */
   | { type: 'session_commands'; sessionId: string; commands: SlashCommandInfo[] }
+  | { type: 'file_matches'; sessionId: string; query: string; matches: FileMatch[] }
   | { type: 'mcp_status'; sessionId: string; servers: McpServerInfo[] }
   | { type: 'effective_settings'; sessionId: string; settings: EffectiveSettings }
   /** Full transcript backfill, answering get_transcript. */
@@ -152,6 +154,10 @@ export type ClientCommand =
   | { type: 'set_stop_on_close'; seconds: number }
   /** Saves (or overwrites, by name) a reusable launch shape. */
   | { type: 'save_template'; template: SessionTemplate }
+  /** Fuzzy file search under a session's directory, for @-mention completion. */
+  | { type: 'search_files'; sessionId: string; query: string }
+  /** Switch the output style; takes effect on the next turn, like the model does. */
+  | { type: 'set_output_style'; sessionId: string; style: string }
   | { type: 'save_toolkit_action'; action: ToolkitAction }
   | { type: 'delete_toolkit_action'; id: string }
   | { type: 'delete_template'; name: string }

@@ -6,6 +6,7 @@ import { PromptHistory } from '../prompt-history';
 import { send, useClaudia } from '../store';
 import { COLORS, statusOf } from '../status';
 import { ImageStrip, MAX_IMAGES, readImageFiles, type PendingImage } from './ImageStrip';
+import { OutputStylePicker } from './OutputStylePicker';
 import { ReasoningControls } from './ReasoningControls';
 
 interface Props {
@@ -373,6 +374,7 @@ export function Composer({ session }: Props) {
           </div>
         )}
       </span>
+      <OutputStylePicker session={session} />
       <ReasoningControls session={session} />
     </div>
   );

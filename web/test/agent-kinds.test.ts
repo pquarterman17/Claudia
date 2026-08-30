@@ -51,6 +51,7 @@ describe('capabilitiesFor', () => {
       mcpPanel: false,
       effectiveSettings: false,
       fileCheckpoints: false,
+      outputStylePicker: false,
     });
   });
 });

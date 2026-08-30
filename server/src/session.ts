@@ -143,6 +143,7 @@ export class ClaudiaSession {
   private beginDriver(): void {
     if (this.driver) return;
     this.driver = this.makeDriver(this.opts.permissionMode, this.opts.resume, this.input);
+    this.controls.ensureOutputStyles(this.raw as RuntimeControlQuery | null, () => this.cb.onUpdate(this.summary()));
     void this.consume(this.queryGen);
   }
 
@@ -266,6 +267,12 @@ export class ClaudiaSession {
     this.cb.onUpdate(this.summary());
   }
 
+  async setOutputStyle(style: string): Promise<void> {
+    await this.controls.setOutputStyle(this.raw as RuntimeControlQuery | null, style).catch(() => undefined);
+    this.cb.onFeed(this.id, infoStep('Output style switched', `${style} — from the next turn`));
+    this.cb.onUpdate(this.summary());
+  }
+
   refreshContext(): void {
     if (this.controls.contextPending) return;
     if (!this.sendControlPrompt('/context')) return;
@@ -283,12 +290,7 @@ export class ClaudiaSession {
     this.cb.onFeed(this.id, infoStep('Files restored', detail));
   }
 
-  /**
-   * Whether `/context` or `/cost` has a live driver to reach. Required
-   * because a session with no query yet would otherwise SPAWN one, spending a
-   * real turn and permanently naming the session after the button rather
-   * than the work. Excludes Codex, which has no such slash commands.
-   */
+  /** Whether `/context` or `/cost` has a live driver to reach — a session with no query yet would otherwise SPAWN one just to answer this. Excludes Codex, which has no such slash commands. */
   canSendControlPrompt(): boolean {
     return this.driver !== null && this.opts.agent !== 'codex';
   }

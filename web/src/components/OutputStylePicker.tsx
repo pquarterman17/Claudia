@@ -19,6 +19,7 @@ export function OutputStylePicker({ session }: Props) {
   const [open, setOpen] = useState(false);
   const can = capabilitiesFor(session.agent).outputStylePicker;
   const styles = session.outputStyles;
+  const working = session.state === 'working' || session.state === 'awaiting_approval';
 
   return (
     <span style={{ position: 'relative', flex: 'none' }}>
@@ -51,7 +52,11 @@ export function OutputStylePicker({ session }: Props) {
         >
           {styles === undefined && (
             <div style={{ padding: '6px 9px', fontSize: 10.5, color: '#75798c' }}>
-              {can ? 'loading…' : 'not supported'}
+              {/* The list comes from the session's own init result, so it does not
+                  exist until a first prompt starts one. Saying "loading…" on a
+                  session that has never been prompted describes something that is
+                  not happening, and it never resolves. */}
+              {!can ? 'not supported' : working ? 'loading…' : 'available once the session starts'}
             </div>
           )}
           {styles?.available.length === 0 && (

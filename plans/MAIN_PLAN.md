@@ -146,7 +146,6 @@ path — measure before building.
     so the file was included before the model saw it. That settles #28: an autocomplete is
     worth building, and saves a Read round-trip every time it is used.
 
-11. **Tauri wrap** — native window/tray/notifications around the web UI
 
 ### Terminal features with no SDK path (documented, not planned)
 
@@ -164,6 +163,27 @@ Recording these so they are not rediscovered as bugs:
   construction; Claudia is not the Claude Code product.
 
 ## Completed
+
+- ~~**#11 Tauri wrap**~~ (2026-08-30) — a native shell over the same web UI: own window, tray,
+  and real OS notifications (registering the notification plugin injects a `window.Notification`
+  shim, so the existing `notifications.ts` was not touched). Two behaviours matter more than the
+  window itself, because sessions live INSIDE the server process: it ATTACHES to an
+  already-running Claudia rather than spawning a second one (a second server is a second,
+  disjoint board), and it only ever stops a child it spawned — `ServerProc` holds `None` for both
+  "nothing spawned" and "attached", so the two cases that must behave identically on Quit are one
+  state rather than a rule to remember. Window close hides to tray; only tray Quit stops a server.
+  Verified live against a running instance, including that killing the child leaves no orphaned
+  grandchild. Review then found the splash's error banner hand-escaped its message without
+  handling a carriage return — a Windows failure message is CRLF-terminated, so the generated JS
+  did not parse and the banner stayed blank at exactly the moment it exists for. serde_json now
+  builds the literal.
+- ~~**Rust arrived without a size guard**~~ (2026-08-30) — the ratchet only scanned TS/TSX, so a
+  new language entered the repo unguarded and its first file was 579 lines against a 400 ceiling.
+  The ratchet now scans `src-tauri/src/**/*.rs`, and `main.rs` was SPLIT by responsibility (81
+  lines of wiring + server/health/window modules) rather than pinned, per the rule that pins are
+  for legacy files only. The guard was proven to fail on an over-ceiling file before being
+  trusted. NOTE the sibling `quantized` has the same shape — a 501-line `src-tauri/src/main.rs`
+  with no Rust ratchet — and is a candidate for the same treatment.
 
 - ~~**#12 Per-project auto-allow rule, respecified**~~ (2026-08-29) — an approval banner offers
   a third action, "Always allow `<exact rule>` in this project", that writes into the project's

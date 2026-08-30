@@ -68,7 +68,8 @@ export const FINISH_ACTIONS: FinishActionSpec[] = [
     key: 'commit',
     label: 'Commit + push all',
     destructive: false,
-    command: () => null, // per-repo; handled by the caller, not one host command
+    command: () => null, // per-repo git work, not one host command
+    describe: () => "Commits each session's own files and pushes — never on main or master",
   },
   {
     key: 'sleep',
@@ -126,6 +127,9 @@ export interface ExecutionContext {
   cwd: string;
   /** Injected so the SDK-backed action stays out of this module. */
   runMemoryUpdate: (cwd: string) => Promise<string>;
+  /** Injected likewise: the commit spans every session's directory, which only
+   * the session registry knows about. */
+  runCommitPush: () => Promise<string>;
 }
 
 /**
@@ -137,6 +141,7 @@ export async function executeFinishAction(key: FinishActionKey, ctx: ExecutionCo
   const spec = specFor(key);
 
   if (key === 'memory') return ctx.runMemoryUpdate(ctx.cwd);
+  if (key === 'commit') return ctx.runCommitPush();
 
   const cmd = spec.command(ctx.platform);
   if (!cmd) throw new Error(`${spec.label} is not implemented yet`);

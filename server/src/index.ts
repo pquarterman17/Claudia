@@ -2,6 +2,7 @@ import { resolvePort } from './resolve-port.js';
 import { createServer, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
+import { commitAndPush } from './commit-action.js';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
 import { updateMemories } from './memory-action.js';
@@ -71,6 +72,7 @@ const trigger = new TriggerEngine({
       // Non-command actions run where the work happened.
       cwd: settings.get().recentDirectories[0] ?? process.cwd(),
       runMemoryUpdate: updateMemories,
+      runCommitPush: () => commitAndPush(manager.touchedByDirectory()),
     }),
   onChange: () => gateway.broadcast({ type: 'trigger_status', trigger: trigger.status() }),
   countdownSec: saved.countdownSec,

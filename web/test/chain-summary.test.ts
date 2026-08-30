@@ -46,6 +46,14 @@ describe('chainSentence', () => {
     expect(s).not.toContain('your displays turn off');
   });
 
+  it('says what a commit step will and will not do, before it is armed', () => {
+    // The branch rule is worth knowing while deciding whether to arm, not at
+    // 3am from a failed step.
+    const s = chainSentence({ labels: ['Commit + push', 'Shut down host'], keys: ['commit', 'shutdown'] });
+    expect(s).toContain('only stages what each session wrote');
+    expect(s).toContain('refuses on main or master');
+  });
+
   it('stays silent about consequences for a harmless chain', () => {
     const s = chainSentence({ labels: ['Notify me'], keys: ['notify'] });
     expect(s).not.toContain('The last step means');

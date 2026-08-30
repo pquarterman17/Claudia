@@ -110,9 +110,20 @@ Wrap-up script location: `~/bin/wrapup.sh` (macOS/Linux) or `C:\bin\wrapup.ps1` 
 - **Compaction is visible** — when a session summarizes its context, the feed says so and
   whether it was automatic or a `/compact` you ran, rather than the context silently dropping.
 - **Finish chain** — stack actions that run in order once every session settles:
-  Notify → Save learnings (Claude updates its memory files) → wrap-up script → sleep → shutdown.
+  Notify → Save learnings (Claude updates its memory files) → Commit + push → wrap-up script →
+  sleep → shutdown.
   A failed step stops the chain; anything after it is skipped. Editing the chain disarms it.
   Destructive steps need a second confirming click, re-checked server-side.
+- **Commit + push** — as a finish step, commits the work and pushes it, per repository.
+  It stages **only the files the sessions themselves wrote**, so a half-finished edit of yours
+  sitting in the same tree is left alone (and the step says how many it left). It **refuses
+  outright on `main`/`master`**, and refuses before committing anything anywhere, so one
+  repository on main cannot leave another half-pushed. Sessions sharing a repository become
+  one commit, subject line taken from the session's own auto-generated title. A repository
+  with no remote is committed and reported as unpushed rather than failed; a push that is
+  attempted and fails stops the chain, so a shutdown never follows one.
+  Files changed by a `Bash` command are *not* claimed — a command's effect on the filesystem
+  is not knowable from its text — so those stay in the tree for you.
 - **Usage** — read from Claude Code's own local logs (covers your terminal sessions too).
   No API exposes real plan limits, so bars compare against a **typical day of your own history**
   by default, or ceilings you enter yourself under the Custom tier. Past the reference it shows
@@ -160,6 +171,8 @@ npm run build      # production UI bundle into web/dist
 | `server/src/sub-agent-tracker.ts` | Merges sub-agent progress into its parent step |
 | `server/src/trigger-engine.ts` | The finish chain: arm → countdown → run in order |
 | `server/src/finish-actions.ts` | Per-OS command table |
+| `server/src/commit-action.ts` | The commit + push step: per-repo planning, branch rules, git |
+| `server/src/touched-files.ts` | What each session wrote, so a commit can be scoped to it |
 | `server/src/usage-reader.ts` | Incremental streaming reader for `~/.claude` JSONL logs |
 | `server/src/plan-limits.ts` | Token weighting + the self-derived usage baseline |
 | `server/src/settings-store.ts` | Preferences, atomically written to `~/.claudia/settings.json` |

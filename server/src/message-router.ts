@@ -9,6 +9,7 @@ import type {
 } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import { errorStep, infoStep, resultStep, stepFromText, stepFromToolUse } from './feed.js';
+import type { FileWrite } from './touched-files.js';
 import { mergeCommands } from './parity-controls.js';
 
 /**
@@ -34,6 +35,8 @@ export interface RoutedMessage {
   toolStarts?: Array<{ toolUseId: string; stepId: string }>;
   /** Tool results carried by this message, to be matched back by id. */
   toolEnds?: Array<{ toolUseId: string; isError: boolean }>;
+  /** Files this message's tool calls set out to write, pending their results. */
+  fileWrites?: FileWrite[];
   /** Claude ended the turn waiting on the user. `null` clears a previous one. */
   needsAction?: NeedsAction | null;
   /** Live sub-agent state, to be merged into the parent Task step. */
@@ -180,6 +183,7 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
     const inner = message['message'] as Record<string, unknown> | undefined;
     const steps: FeedStep[] = [];
     const toolStarts: Array<{ toolUseId: string; stepId: string }> = [];
+    const fileWrites: FileWrite[] = [];
     const transcriptItems: TranscriptItem[] = [];
     const content = inner?.['content'];
     if (Array.isArray(content)) {
@@ -191,7 +195,11 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
           step.status = 'running';
           steps.push(step);
           const id = block['id'];
-          if (typeof id === 'string') toolStarts.push({ toolUseId: id, stepId: step.id });
+          if (typeof id === 'string') {
+            toolStarts.push({ toolUseId: id, stepId: step.id });
+            const written = writtenPath(name, input);
+            if (written) fileWrites.push({ toolUseId: id, path: written });
+          }
           transcriptItems.push({ ts: Date.now(), kind: 'tool_use', toolName: name, text: JSON.stringify(input, null, 2) });
         } else if (block['type'] === 'text' && typeof block['text'] === 'string') {
           const step = stepFromText(block['text']);
@@ -206,6 +214,7 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
       steps,
       state: 'working',
       ...(toolStarts.length ? { toolStarts } : {}),
+      ...(fileWrites.length ? { fileWrites } : {}),
       ...(transcriptItems.length ? { transcriptItems } : {}),
     };
   }
@@ -244,6 +253,29 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
   }
 
   return EMPTY;
+}
+
+/**
+ * Tools that write a file, and where each keeps the path.
+ *
+ * Deliberately a closed list rather than a guess from the input shape: Read and
+ * Glob also carry a `file_path`/`path`, and counting those as writes would
+ * scope a commit to every file the session so much as looked at. Bash is absent
+ * on purpose — a command's effect on the filesystem is not knowable from its
+ * text, so anything it changes is left for the operator, and reported as such.
+ */
+const WRITE_TOOL_PATHS: Record<string, string> = {
+  Edit: 'file_path',
+  Write: 'file_path',
+  MultiEdit: 'file_path',
+  NotebookEdit: 'notebook_path',
+};
+
+function writtenPath(toolName: string, input: Record<string, unknown>): string | undefined {
+  const key = WRITE_TOOL_PATHS[toolName];
+  if (!key) return undefined;
+  const value = input[key];
+  return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
 /** `modelUsage` is an object keyed by model id; flatten it to a stable array. */

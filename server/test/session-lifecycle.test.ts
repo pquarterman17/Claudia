@@ -1,6 +1,6 @@
 import type { FeedStep, FeedStepPatch, SessionSummary, TranscriptItem } from '@claudia/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FakeQuery, assistantText, initMsg, resultMsg, streamDelta, tick } from './fake-query.js';
+import { FakeQuery, assistantText, initMsg, resultMsg, streamDelta, tick, toolResultMsg, toolUseMsg } from './fake-query.js';
 
 /**
  * Lifecycle vectors for ClaudiaSession, driven through a fake SDK query.
@@ -378,5 +378,59 @@ describe('context and reasoning controls', () => {
     await tick();
     expect(rec.session.summary().contextPending).toBe(false);
     expect(rec.session.summary().contextUsage).toMatchObject({ usedTokens: 80_000, maxTokens: 200_000, usedPct: 40 });
+  });
+});
+
+describe('touched-file vectors', () => {
+  /**
+   * What the "commit + push" finish action stages. These run through the whole
+   * chain — router, step patcher, tracker — because that is where the answer
+   * is assembled; the tracker being right on its own says nothing about
+   * whether a real Edit ever reaches it.
+   */
+  it('V24: an Edit that completes counts as a file the session wrote', async () => {
+    const rec = launch({ prompt: 'x' });
+    await tick();
+    current().emit(toolUseMsg('Edit', { file_path: 'C:/x/one.ts', old_string: 'a', new_string: 'b' }));
+    current().emit(toolResultMsg());
+    await tick();
+    expect(rec.session.touchedFiles).toEqual(['C:/x/one.ts']);
+  });
+
+  it('V25: a write whose call failed is not claimed', async () => {
+    const rec = launch({ prompt: 'x' });
+    await tick();
+    current().emit(toolUseMsg('Write', { file_path: 'C:/x/denied.ts', content: 'x' }));
+    current().emit(toolResultMsg('tool-1', true));
+    await tick();
+    expect(rec.session.touchedFiles).toEqual([]);
+  });
+
+  it('V26: reading a file is not writing it', async () => {
+    // Read and Glob carry a path too, and counting them would scope a commit
+    // to every file the session so much as looked at.
+    const rec = launch({ prompt: 'x' });
+    await tick();
+    current().emit(toolUseMsg('Read', { file_path: 'C:/x/seen.ts' }, 'r1'));
+    current().emit(toolResultMsg('r1'));
+    current().emit(toolUseMsg('Bash', { command: 'npm run build' }, 'b1'));
+    current().emit(toolResultMsg('b1'));
+    await tick();
+    expect(rec.session.touchedFiles).toEqual([]);
+  });
+
+  it('V27: writes survive the relaunch a permission loosen forces', async () => {
+    // The relaunch abandons in-flight steps and starts a new query. Work the
+    // session already did is still its work, so it must not be forgotten.
+    const rec = launch({ prompt: 'x' });
+    await tick();
+    current().emit(toolUseMsg('Edit', { file_path: 'C:/x/one.ts' }));
+    current().emit(toolResultMsg());
+    await tick();
+    const queriesBefore = fakes.length;
+    expect(await rec.session.setPermissionMode('bypassPermissions')).toBe('relaunched');
+    await tick();
+    expect(fakes.length).toBe(queriesBefore + 1);
+    expect(rec.session.touchedFiles).toEqual(['C:/x/one.ts']);
   });
 });

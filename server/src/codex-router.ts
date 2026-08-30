@@ -47,6 +47,8 @@ function statusOf(raw: unknown): FeedStep['status'] {
 interface MappedItem {
   step: FeedStep;
   transcript?: TranscriptItem;
+  /** Paths this item changed, for scoping a commit to the session's own work. */
+  writes?: string[];
 }
 
 /** One Codex thread item becomes one feed step, and sometimes a transcript entry. */
@@ -88,7 +90,7 @@ function stepForItem(item: Record<string, unknown>): MappedItem | null {
     const changes = Array.isArray(item['changes']) ? (item['changes'] as Array<Record<string, unknown>>) : [];
     const paths = changes.map((c) => str(c['path'])).filter((p): p is string => Boolean(p));
     const meta = paths.length > 1 ? `${paths.length} files: ${paths.slice(0, 2).join(', ')}` : paths[0];
-    return { step: step('edit', 'Edit', meta, status) };
+    return { step: step('edit', 'Edit', meta, status), ...(paths.length ? { writes: paths } : {}) };
   }
 
   if (type === 'mcpToolCall') {
@@ -211,11 +213,20 @@ export function routeCodexMessage(
       };
     }
 
+    // Codex reports a file change as already applied and gives no id to confirm
+    // it against later, so a completed change is recorded straight away. A
+    // failed or declined one wrote nothing and is left out.
+    const written =
+      method === 'item/completed' && mapped.step.status !== 'error'
+        ? (mapped.writes ?? []).map((path) => ({ path }))
+        : [];
+
     if (method === 'item/completed' && id && mapped.step.status !== undefined) {
       // Closes the step that item/started opened, so the call is not shown twice.
       return {
         steps: [],
         toolEnds: [{ toolUseId: id, isError: mapped.step.status === 'error' }],
+        ...(written.length ? { fileWrites: written } : {}),
         ...(mapped.transcript ? { transcriptItems: [mapped.transcript] } : {}),
       };
     }
@@ -223,6 +234,7 @@ export function routeCodexMessage(
     if (method === 'item/completed') {
       return {
         steps: [mapped.step],
+        ...(written.length ? { fileWrites: written } : {}),
         ...(mapped.transcript ? { transcriptItems: [mapped.transcript] } : {}),
       };
     }

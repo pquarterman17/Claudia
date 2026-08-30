@@ -17,6 +17,17 @@ const DESTRUCTIVE_HINT: Record<string, string> = {
   shutdown: 'this machine powers off',
 };
 
+/**
+ * Steps that touch something outside this machine, or that decline to.
+ *
+ * A push is not destructive — nothing is lost — but it is visible to other
+ * people, and the branch rule is the thing worth knowing BEFORE arming rather
+ * than discovering in a failed step at 3am.
+ */
+const OUTWARD_HINT: Record<string, string> = {
+  commit: 'Commit + push only stages what each session wrote, and refuses on main or master.',
+};
+
 export interface ChainSentenceInput {
   /** Ordered step labels, already resolved to human wording. */
   labels: string[];
@@ -41,8 +52,9 @@ export function chainSentence({ labels, keys, countdownSec }: ChainSentenceInput
 
   const finale = keys.map((k) => DESTRUCTIVE_HINT[k]).filter(Boolean).pop();
   const consequence = finale ? ` The last step means ${finale}.` : '';
+  const outward = keys.map((k) => OUTWARD_HINT[k]).filter(Boolean).join(' ');
 
-  return `When every session settles, Claudia will ${sequence}.${grace}${consequence}`;
+  return `When every session settles, Claudia will ${sequence}.${grace}${consequence}${outward ? ` ${outward}` : ''}`;
 }
 
 /** "a", "a, then b", "a, then b, then c" — the order is the point, so no "and". */

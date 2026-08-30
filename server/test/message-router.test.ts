@@ -256,6 +256,49 @@ describe('routeMessage', () => {
     expect(read.steps[0]?.kind).toBe('read');
   });
 
+  it('reports a write tool as a file the session set out to change', () => {
+    const r = routeMessage(
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: '/a.ts' } }] } },
+      T0,
+    );
+    expect(r.fileWrites).toEqual([{ toolUseId: 't1', path: '/a.ts' }]);
+  });
+
+  it("reads NotebookEdit's path from notebook_path, where it keeps it", () => {
+    const r = routeMessage(
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 't1', name: 'NotebookEdit', input: { notebook_path: '/a.ipynb' } }] },
+      },
+      T0,
+    );
+    expect(r.fileWrites).toEqual([{ toolUseId: 't1', path: '/a.ipynb' }]);
+  });
+
+  it('does not treat reading, searching or running a command as a write', () => {
+    // Read and Glob carry a path of their own; a commit scoped to those would
+    // cover every file the session merely looked at.
+    for (const [name, input] of [
+      ['Read', { file_path: '/a.ts' }],
+      ['Glob', { pattern: '**/*.ts', path: '/src' }],
+      ['Bash', { command: 'npm run build' }],
+    ] as Array<[string, Record<string, unknown>]>) {
+      const r = routeMessage(
+        { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name, input }] } },
+        T0,
+      );
+      expect(r.fileWrites, name).toBeUndefined();
+    }
+  });
+
+  it('ignores a write tool call with no id to confirm it later', () => {
+    const r = routeMessage(
+      { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Write', input: { file_path: '/a.ts' } }] } },
+      T0,
+    );
+    expect(r.fileWrites).toBeUndefined();
+  });
+
   it('drops whitespace-only assistant text', () => {
     const r = routeMessage({ type: 'assistant', message: { content: [{ type: 'text', text: '   \n ' }] } }, T0);
     expect(r.steps).toHaveLength(0);

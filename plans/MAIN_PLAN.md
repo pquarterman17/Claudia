@@ -8,10 +8,10 @@ architecture does not. The Claude Design export that started this is deliberatel
 
 **Status:** Active
 **Created:** 2026-07-25
-**Updated:** 2026-08-29
+**Updated:** 2026-08-30
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
-genuinely new work or was deliberately deferred for a decision. 624 tests, clean typecheck.
+genuinely new work or was deliberately deferred for a decision. 726 tests, clean typecheck.
 Everything so far was built and verified on Windows only — see #13.
 
 ---
@@ -128,10 +128,6 @@ path — measure before building.
       an earlier assumption that it was had disabled the picker for no reason.
 
 
-7. **"Commit + push" finish action** — deliberately disabled in the UI rather than shipped
-   as a silent no-op. Needs per-repo rules before it pushes unreviewed work: which repos are
-   eligible, what to do with a dirty tree, whether to open a PR instead of pushing. Now more
-   wanted than before, since it is the natural first link of a chain.
 16. **"Make a release" finish action** — mentioned as a chain example. Not built: a release
     means different things per repo (tag? changelog? `gh release`? npm publish?). The wrap-up
     script action covers it today; a first-class version needs the owner's actual process.
@@ -163,6 +159,50 @@ Recording these so they are not rediscovered as bugs:
   construction; Claudia is not the Claude Code product.
 
 ## Completed
+
+- ~~**#7 "Commit + push" finish action**~~ (2026-08-30) — the chain's natural first link, shipped
+  against the 2026-08-29 decision: commit and push, but refuse outright on `main`/`master`, and
+  scope the commit to what the session touched.
+  Attribution is the whole feature. git cannot say who changed a file, so the session records it:
+  `touched-files.ts` holds a write from the moment a write TOOL is called and confirms it only
+  when the result lands without an error — a denied approval and a failed edit both come back as
+  an error result and neither wrote anything. The tool list is closed (`Edit`, `Write`,
+  `MultiEdit`, `NotebookEdit` + Codex's `fileChange`), NOT inferred from the input shape: `Read`
+  and `Glob` also carry a `file_path`/`path`, and treating those as writes would scope a commit
+  to every file the session merely looked at. **Bash is deliberately absent** — what a command
+  does to the filesystem is not knowable from its text — so a build artefact or a generated
+  lockfile stays in the tree and the step reports how many changed files it left alone. That is
+  the accepted cost of never sweeping in an unrelated dirty tree.
+  Three things only real git exposed, each now pinned by a test:
+  **(1)** `rev-parse --abbrev-ref HEAD` FAILS on a repository with no commits yet, while a
+  partial commit onto that unborn branch works perfectly well — refusing there would have been
+  refusing over the wrong question, so the branch comes from `branch --show-current` (whose
+  empty answer is exactly the detached-HEAD case that must be refused).
+  **(2)** `rev-parse --show-toplevel` reports the PHYSICAL path while a session's cwd is
+  whatever the user typed. On macOS that is routinely a symlink, and comparing the two directly
+  makes every file look as though it lived outside the repository — the action would have
+  committed nothing while reporting nothing wrong. Both sides are realpath'd now.
+  **(3)** `status --porcelain` reports a new file inside a new directory as the DIRECTORY unless
+  asked for `-uall`, and no candidate path would ever match that.
+  Two ordering properties are the safety of the thing and are tested as such: every repository
+  is planned and branch-checked BEFORE any of them is committed (otherwise repo A is pushed and
+  then repo B turns out to be on main), and the commit names its paths again after `git add`, so
+  the partial-commit form leaves anything the operator had staged by hand staged and uncommitted
+  rather than riding along. Work is grouped by repository ROOT, not by working directory: two
+  sessions in different subdirectories of one repo are one commit, not two that each report the
+  other's files as somebody else's mess. A no-remote repository is committed and reported as
+  unpushed rather than failed — the commit already made the work durable, which is what the
+  chain's ordering protects; an attempted push that fails does throw, so a shutdown cannot
+  follow one. Over 100 changed files it refuses and asks for a human.
+  Verified live end to end on 2026-08-30, both halves: a real session wrote `hello.txt`, the
+  chain fired and committed exactly that file with the session's own auto-title as the subject,
+  pushed it to a bare origin setting the upstream, and left the human's `unrelated.txt`
+  untouched; then the same repository renamed to `main` produced
+  "0 of 1 steps — stopped at Commit + push all" with nothing committed.
+  `session.ts` was at the ratchet ceiling again with no room for the tracker. Four
+  near-identical "apply a setting to the live session, announce it, refresh the tile" methods
+  (model / effort / thinking / output style) became `live-settings.ts` — a real de-duplication
+  rather than a line-count trade, which is the same move `settings-event.ts` was in #12.
 
 - ~~**#11 Tauri wrap**~~ (2026-08-30) — a native shell over the same web UI: own window, tray,
   and real OS notifications (registering the notification plugin injects a `window.Notification`

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeCommand, FINISH_ACTIONS, hostPlatform, specFor } from '../src/finish-actions.js';
+import { describeCommand, executeFinishAction, FINISH_ACTIONS, hostPlatform, specFor } from '../src/finish-actions.js';
 
 describe('per-OS command table', () => {
   it('never runs a Windows command on Linux', () => {
@@ -35,7 +35,32 @@ describe('per-OS command table', () => {
 
   it('describes actions that have no single host command', () => {
     expect(describeCommand('memory', 'linux')).toMatch(/memory files/i);
+    // Per-repo git work, so there is no one command to show — but the chain row
+    // must still say what it will do, and that it will not touch main.
     expect(specFor('commit').command('linux')).toBeNull();
+    expect(describeCommand('commit', 'linux')).toMatch(/never on main or master/i);
+  });
+
+  it('routes commit to the injected git action rather than a host command', async () => {
+    const ctx = {
+      platform: 'linux' as const,
+      cwd: '/repo',
+      runMemoryUpdate: () => Promise.reject(new Error('wrong action')),
+      runCommitPush: () => Promise.resolve('committed 1 file'),
+    };
+    expect(await executeFinishAction('commit', ctx)).toBe('committed 1 file');
+  });
+
+  it('lets a commit failure reject, so the chain stops before anything after it', async () => {
+    // The ordering safety property: a refused commit must not be followed by a
+    // shutdown that leaves the work unpushed on a sleeping machine.
+    const ctx = {
+      platform: 'linux' as const,
+      cwd: '/repo',
+      runMemoryUpdate: () => Promise.resolve(''),
+      runCommitPush: () => Promise.reject(new Error('Refused: Claudia is on main')),
+    };
+    await expect(executeFinishAction('commit', ctx)).rejects.toThrow(/on main/);
   });
 
   it('maps unknown platforms to linux rather than windows', () => {

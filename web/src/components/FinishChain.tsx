@@ -5,13 +5,13 @@ import { send } from '../store';
 import { COLORS } from '../status';
 
 /** Offered in a fixed order; the chain itself follows the order you click. */
-const ACTIONS: Array<{ key: FinishActionKey; label: string; unavailable?: string }> = [
+const ACTIONS: Array<{ key: FinishActionKey; label: string; note?: string; unavailable?: string }> = [
   { key: 'notify', label: 'Notify me' },
   { key: 'memory', label: 'Save learnings' },
   {
     key: 'commit',
     label: 'Commit + push',
-    unavailable: 'Not implemented yet — needs rules about which repos and what to do with a dirty tree',
+    note: 'Commits only the files each session wrote, on its own branch. Refuses on main or master.',
   },
   { key: 'script', label: 'Wrap-up script' },
   { key: 'sleep', label: 'Sleep displays' },
@@ -80,7 +80,7 @@ export function FinishChain({ trigger, graceSec }: Props) {
             <button
               key={a.key}
               disabled={!!a.unavailable}
-              title={a.unavailable ?? (on ? 'Click to remove from the chain' : 'Click to add to the end')}
+              title={a.unavailable ?? a.note ?? (on ? 'Click to remove from the chain' : 'Click to add to the end')}
               onClick={() => send({ type: 'toggle_finish_action', action: a.key })}
               style={{
                 cursor: a.unavailable ? 'not-allowed' : 'pointer',

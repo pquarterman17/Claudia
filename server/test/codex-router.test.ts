@@ -113,6 +113,28 @@ describe('items', () => {
     expect(r.steps[0]?.meta).toContain('3 files');
   });
 
+  it('records a completed file change as work the session did', () => {
+    // Codex reports the change as already applied and gives nothing to confirm
+    // it against later, so it counts at completion rather than at start.
+    const r = completed({
+      id: 'item_3',
+      type: 'fileChange',
+      status: 'completed',
+      changes: [{ path: '/repo/a.ts' }, { path: '/repo/b.ts' }],
+    });
+    expect(r.fileWrites).toEqual([{ path: '/repo/a.ts' }, { path: '/repo/b.ts' }]);
+  });
+
+  it('claims nothing from a file change that started but has not landed', () => {
+    const r = started({ id: 'item_3', type: 'fileChange', status: 'inProgress', changes: [{ path: '/repo/a.ts' }] });
+    expect(r.fileWrites).toBeUndefined();
+  });
+
+  it('claims nothing from a declined file change', () => {
+    const r = completed({ id: 'item_3', type: 'fileChange', status: 'declined', changes: [{ path: '/repo/a.ts' }] });
+    expect(r.fileWrites).toBeUndefined();
+  });
+
   it('records an agent message in the transcript, not just the feed', () => {
     const r = completed({ id: 'item_4', type: 'agentMessage', text: 'Done. Two files changed.' });
     expect(r.transcriptItems?.[0]).toMatchObject({ kind: 'assistant', text: 'Done. Two files changed.' });

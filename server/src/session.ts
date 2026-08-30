@@ -29,6 +29,8 @@ import { buildSessionSummary } from './session-summary.js';
 import { ToolTracker } from './tool-tracker.js';
 import { TodoTracker } from './todo-tracker.js';
 import { SessionRuntimeControls, type RuntimeControlQuery } from './session-runtime-controls.js';
+import { applyEffort, applyModel, applyOutputStyle, applyThinking, type LiveSettingsCtx } from './live-settings.js';
+import { TouchedFiles } from './touched-files.js';
 import { rewindFiles, type RewindResult } from './file-checkpoints.js';
 import * as operations from './session-operations.js';
 import { createDriver, type SessionDriver } from './session-driver.js';
@@ -39,6 +41,7 @@ export class ClaudiaSession {
   readonly id = randomUUID();
   private readonly gate = new ApprovalGate();
   private readonly tools = new ToolTracker();
+  private readonly touched = new TouchedFiles();
   private readonly todos = new TodoTracker();
   private input = new AsyncQueue<unknown>();
   private queryGen = 0; // Bumped on relaunch so outdated consume loops cannot mutate current state.
@@ -100,6 +103,8 @@ export class ClaudiaSession {
 
   /** For file-search.ts, which walks a plain directory and knows nothing about sessions. */
   get cwd(): string { return this.opts.cwd; }
+  /** Files this session wrote, so a commit can be scoped to its own work. */
+  get touchedFiles(): string[] { return this.touched.paths; }
   mcpStatus() { return operations.mcpStatus(this.raw as operations.OperationalQuery | null); }
   reconnectMcp(name: string) { return (this.raw as operations.OperationalQuery | null)?.reconnectMcpServer?.(name); }
   toggleMcp(name: string, enabled: boolean) { return (this.raw as operations.OperationalQuery | null)?.toggleMcpServer?.(name, enabled); }
@@ -181,7 +186,7 @@ export class ClaudiaSession {
       this.todos.capture(item);
     }
 
-    applyToolEvents(this.tools, routed, (stepId, patch) => this.cb.onFeedPatch(this.id, stepId, patch));
+    applyToolEvents(this.tools, routed, (stepId, patch) => this.cb.onFeedPatch(this.id, stepId, patch), this.touched);
 
     if (routed.claudeSessionId) this.claudeSessionId = routed.claudeSessionId;
     if (routed.model) {
@@ -250,31 +255,24 @@ export class ClaudiaSession {
     this.cb.onUpdate(this.summary());
   }
 
-  async switchModel(model: string): Promise<void> {
-    const q = this.raw as ParityQuery | null;
-    await q?.setModel?.(model).catch(() => undefined);
+  private liveCtx(): LiveSettingsCtx {
+    return {
+      raw: this.raw,
+      controls: this.controls,
+      announce: (title, meta) => this.cb.onFeed(this.id, infoStep(title, meta)),
+      updated: () => this.cb.onUpdate(this.summary()),
+    };
+  }
+
+  switchModel(model: string): Promise<void> {
+    // Set before applying: a message landing mid-apply may report this very
+    // model, and clearing the pending choice is that message's job, not ours.
     this.selectedModel = model;
-    this.cb.onFeed(this.id, infoStep('Model switched', `${model} — from the next turn`));
-    this.cb.onUpdate(this.summary());
+    return applyModel(this.liveCtx(), model);
   }
-
-  async setEffort(effortLevel: EffortLevel): Promise<void> {
-    await this.controls.setEffort(this.raw as RuntimeControlQuery | null, effortLevel).catch(() => undefined);
-    this.cb.onFeed(this.id, infoStep('Effort changed', effortLevel));
-    this.cb.onUpdate(this.summary());
-  }
-
-  async setThinking(thinkingMode: ThinkingMode): Promise<void> {
-    await this.controls.setThinking(this.raw as RuntimeControlQuery | null, thinkingMode).catch(() => undefined);
-    this.cb.onFeed(this.id, infoStep('Thinking changed', thinkingMode));
-    this.cb.onUpdate(this.summary());
-  }
-
-  async setOutputStyle(style: string): Promise<void> {
-    await this.controls.setOutputStyle(this.raw as RuntimeControlQuery | null, style).catch(() => undefined);
-    this.cb.onFeed(this.id, infoStep('Output style switched', `${style} — from the next turn`));
-    this.cb.onUpdate(this.summary());
-  }
+  setEffort(effortLevel: EffortLevel) { return applyEffort(this.liveCtx(), effortLevel); }
+  setThinking(thinkingMode: ThinkingMode) { return applyThinking(this.liveCtx(), thinkingMode); }
+  setOutputStyle(style: string) { return applyOutputStyle(this.liveCtx(), style); }
 
   refreshContext(): void {
     if (this.controls.contextPending) return;

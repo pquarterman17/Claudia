@@ -1,3 +1,4 @@
+import type { RepoWork } from './commit-action.js';
 import { GitCache } from './git-info.js';
 import type { FeedStep, FeedStepPatch, FileMatch, McpServerInfo, SessionSummary, SlashCommandInfo, TranscriptItem } from '@claudia/shared';
 import { searchFiles as searchWorkingDir } from './file-search.js';
@@ -96,6 +97,30 @@ export class SessionManager {
     const after = JSON.stringify([...this.sessions.values()].map((s) => this.git.get(s.summary().cwd)));
     if (before === after) return;
     for (const summary of this.summaries()) this.events.onUpdate(summary);
+  }
+
+  /**
+   * What each working directory has to offer a commit: the files its sessions
+   * wrote, and what those sessions were called.
+   *
+   * Grouped by directory because that is the unit git works in — the owner
+   * routinely runs several sessions in one repository, and they belong in one
+   * commit rather than one each. Sessions that wrote nothing are left out
+   * entirely, so a read-only session cannot put its title on someone else's
+   * commit or drag a repository into the branch check for no reason.
+   */
+  touchedByDirectory(): RepoWork[] {
+    const byDir = new Map<string, { files: Set<string>; titles: Set<string> }>();
+    for (const session of this.sessions.values()) {
+      const files = session.touchedFiles;
+      if (files.length === 0) continue;
+      const entry = byDir.get(session.cwd) ?? { files: new Set<string>(), titles: new Set<string>() };
+      for (const file of files) entry.files.add(file);
+      const { title } = session.summary();
+      if (title) entry.titles.add(title);
+      byDir.set(session.cwd, entry);
+    }
+    return [...byDir].map(([cwd, e]) => ({ cwd, files: [...e.files], titles: [...e.titles] }));
   }
 
   feedSnapshot(): Record<string, FeedStep[]> {

@@ -120,6 +120,21 @@ export const streamDelta = (text: string): Record<string, unknown> => ({
   event: { type: 'content_block_delta', delta: { type: 'text_delta', text } },
 });
 
+export const toolUseMsg = (
+  name: string,
+  input: Record<string, unknown>,
+  id = 'tool-1',
+): Record<string, unknown> => ({
+  type: 'assistant',
+  message: { content: [{ type: 'tool_use', id, name, input }] },
+});
+
+/** The other half of a tool call: `is_error` is absent on success, as the SDK sends it. */
+export const toolResultMsg = (id = 'tool-1', isError = false): Record<string, unknown> => ({
+  type: 'user',
+  message: { content: [{ type: 'tool_result', tool_use_id: id, ...(isError ? { is_error: true } : {}) }] },
+});
+
 /** Waits for queued microtasks/timers so the consume loop can observe events. */
 export const tick = async (times = 3): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => setTimeout(r, 0));

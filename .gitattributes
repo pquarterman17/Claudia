@@ -1,0 +1,17 @@
+# Line endings, decided here rather than by each clone's core.autocrlf.
+#
+# A .bat file is the one place this is not cosmetic: cmd.exe parses batch files
+# line by line and is unreliable with LF-only endings, particularly inside the
+# parenthesised `if (...)` blocks this launcher uses. Development happens on
+# Windows but the repo is edited from Linux too, so without this the launcher's
+# endings depend on who last touched it.
+* text=auto
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# The double-clickable macOS/Linux launcher must stay LF: a CR would end up in
+# the shebang line and the kernel would look for an interpreter named "bash\r".
+*.command text eol=lf
+*.sh text eol=lf

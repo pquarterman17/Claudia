@@ -11,7 +11,7 @@ architecture does not. The Claude Design export that started this is deliberatel
 **Updated:** 2026-08-30
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
-genuinely new work or was deliberately deferred for a decision. 796 tests, clean typecheck.
+genuinely new work or was deliberately deferred for a decision. 805 tests, clean typecheck.
 Everything so far was built and verified on Windows only — see #13.
 
 ---
@@ -156,6 +156,28 @@ Recording these so they are not rediscovered as bugs:
   construction; Claudia is not the Claude Code product.
 
 ## Completed
+
+- ~~**The .bat launcher never opened the browser**~~ (2026-08-30, owner report) — reported as
+  "requires me to copy/paste the URL", and the cause was two Windows-only faults stacked.
+  The launcher polled `http://localhost:4317` from a PowerShell loop, but the server binds
+  **127.0.0.1 only** and Windows resolves `localhost` to `::1` FIRST — so nothing was listening
+  at the address being polled, every attempt burned its full one-second timeout, and 120 of
+  those is over two minutes. The browser did eventually open; long after the URL had been
+  copied by hand. Second fault, found while reading the file: `start-claudia.bat` was stored
+  with **LF line endings** and there was no `.gitattributes`, so every Windows checkout got an
+  LF-only batch file — which cmd.exe parses unreliably, especially inside the parenthesised
+  `if (...)` blocks this launcher uses.
+  Fixed by deleting the guess rather than repairing it: the SERVER opens the browser from its
+  own `listen` callback, at the port it actually bound. That removes three per-platform
+  implementations of the same wait (PowerShell, curl, and a port probe), and it is the only
+  version that can be right when `CLAUDIA_PORT=0` and the port is not knowable in advance —
+  verified live, binding a random 39403 and opening exactly that. Opening is opt-in via
+  `CLAUDIA_OPEN=1` set by the launchers, because `npm start` is also how a server is run over
+  SSH. `.gitattributes` now pins `*.bat` to CRLF and `*.command` to LF (a CR in a shebang makes
+  the kernel look for an interpreter named `bash\r`), proven by re-checking the file out.
+  LESSON, and it is the same one the commit-path bug taught: when the launcher polls for
+  something the server knows exactly, the launcher will eventually be wrong about it — and it
+  will be wrong per platform, where only one of the three gets tested.
 
 - ~~**Agent per window**~~ (2026-08-30, owner ask) — the agent was chosen once in the launch bar,
   which decides what the NEXT session starts as; the owner wanted the choice to belong to each

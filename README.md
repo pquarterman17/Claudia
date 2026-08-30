@@ -39,6 +39,12 @@ Each launcher installs dependencies on first run, rebuilds the UI only if source
 opens the browser the moment the app answers — about **2 seconds** when the build is current.
 If Claudia is already running it opens the existing instance instead of failing on the port.
 
+The browser is opened by the **server**, from the callback where it starts listening, so it
+cannot open early or wait on a port that is not the one in use. The launchers ask for it by
+setting `CLAUDIA_OPEN=1`; plain `npm start` deliberately does not open anything, since that is
+also how a server gets run from a terminal or over SSH. Set `CLAUDIA_OPEN=1` yourself if you
+want that behaviour by hand.
+
 Everything is served by **one process on `http://127.0.0.1:4317`**.
 
 By hand, equivalently:

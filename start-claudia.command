@@ -15,9 +15,9 @@ port_busy() {
 
 open_ui() {
   if command -v open >/dev/null 2>&1; then
-    open "http://localhost:4317"
+    open "http://127.0.0.1:4317"
   elif command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "http://localhost:4317"
+    xdg-open "http://127.0.0.1:4317"
   fi
 }
 
@@ -51,20 +51,15 @@ if [ ! -d node_modules ]; then
   fi
 fi
 
-# Open the browser the moment the UI answers, rather than after a fixed wait.
-# A flat sleep here made every start feel four seconds slower than it was.
-(
-  for _ in $(seq 1 120); do
-    if curl -fsS -o /dev/null --max-time 1 "http://localhost:4317" 2>/dev/null; then break; fi
-    sleep 0.25
-  done
-  open_ui
-) &
+# The SERVER opens the browser, from the callback where it starts listening.
+# This was a curl loop polling the port from out here — a guess about something
+# the server knows exactly, duplicated once per platform, and wrong on Windows.
+export CLAUDIA_OPEN=1
 
 cat <<'BANNER'
 
   Claudia is starting.
-  http://localhost:4317
+  http://127.0.0.1:4317
 
   Press Ctrl+C to stop it.
 

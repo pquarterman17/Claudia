@@ -9,7 +9,9 @@ rem Already running? Just show it rather than failing on a port clash.
 netstat -ano | findstr "LISTENING" | findstr "127.0.0.1:4317" >nul 2>&1
 if %errorlevel%==0 (
   echo Claudia is already running - opening it.
-  start "" "http://localhost:4317"
+  rem 127.0.0.1 rather than localhost: the server binds IPv4 only, and on
+  rem Windows localhost resolves to ::1 first.
+  start "" "http://127.0.0.1:4317"
   timeout /t 2 /nobreak >nul
   exit /b 0
 )
@@ -38,13 +40,16 @@ if not exist "node_modules\" (
   )
 )
 
-rem Open the browser the moment the UI answers, rather than after a fixed wait.
-rem A flat sleep here made every start feel four seconds slower than it was.
-start "" powershell -NoProfile -WindowStyle Hidden -Command "$u='http://localhost:4317'; for ($i=0; $i -lt 120; $i++) { try { Invoke-WebRequest -UseBasicParsing $u -TimeoutSec 1 | Out-Null; break } catch { Start-Sleep -Milliseconds 250 } }; Start-Process $u"
+rem The SERVER opens the browser, in the callback where it starts listening.
+rem This used to be a PowerShell loop polling the port from out here, which is
+rem a guess about something the server knows exactly - and it guessed wrong:
+rem it polled localhost while the server binds 127.0.0.1 only, so on Windows
+rem it waited out its whole timeout instead of opening anything.
+set CLAUDIA_OPEN=1
 
 echo.
 echo   Claudia is starting.
-echo   http://localhost:4317
+echo   http://127.0.0.1:4317
 echo.
 echo   Close this window, or press Ctrl+C, to stop it.
 echo.

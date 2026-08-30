@@ -7,6 +7,7 @@ import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
 import { createHookHandler } from './hook-endpoint.js';
 import { isInstalled } from './hook-install.js';
+import { openBrowser, shouldOpenBrowser } from './open-browser.js';
 import { HookMonitor } from './hook-monitor.js';
 import { updateMemories } from './memory-action.js';
 import { isAllowedHost, isAllowedOrigin } from './origin-guard.js';
@@ -161,6 +162,10 @@ httpServer.listen(requested.port, '127.0.0.1', () => {
   const bound = httpServer.address();
   const port = typeof bound === 'object' && bound !== null ? bound.port : requested.port;
   gateway.setPort(port);
+  // 127.0.0.1, not localhost: this server binds IPv4 only, and on Windows
+  // localhost resolves to ::1 first — the mismatch that made the launcher's
+  // old browser-open wait out its whole timeout instead of opening anything.
+  if (shouldOpenBrowser(process.env)) openBrowser(`http://127.0.0.1:${port}`, platform);
   // Establish whether the global hook is already installed, so a later
   // broadcast cannot flip the UI toggle off just because nobody had asked yet.
   void isInstalled(port).then((on) => gateway.broadcastObserved(on)).catch(() => undefined);

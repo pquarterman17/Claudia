@@ -2,8 +2,21 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ensureWorktree, worktreeDirName, worktreePath } from '../src/worktree.js';
+
+/**
+ * Every test here spawns real git several times — init, commit, branch,
+ * worktree add — and on a Windows runner each spawn costs far more than it
+ * does locally. Vitest's 5s default is a stopwatch on the runner's process
+ * creation, not on anything this code does, and it went red on windows-24
+ * while windows-22 and both Ubuntu jobs passed the same commit.
+ *
+ * Same treatment commit-action.test.ts already needed for the same reason.
+ * Sizing the timeout for the slowest platform, rather than skipping the test,
+ * is the only honest option: the assertion is still the assertion.
+ */
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 /** A real repository with one commit, so `git worktree` has something to branch from. */
 function repo(): string {

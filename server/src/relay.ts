@@ -151,7 +151,28 @@ export function verdictPrompt(rounds: number): string {
 
 /** The last thing an agent actually said, which is what gets critiqued. */
 export function lastAssistantText(items: ReadonlyArray<{ kind: string; text: string }>): string | undefined {
-  for (let i = items.length - 1; i >= 0; i--) {
+  return assistantTextAfter(items, 0);
+}
+
+/**
+ * The last thing an agent said AFTER a given point in its transcript.
+ *
+ * The point being guarded is that a settled session answers instantly. A
+ * session that was stopped, errored, or was already idle satisfies "wait for
+ * the turn to end" the moment it is asked, and reading "the last thing it
+ * said" then returns a reply to some EARLIER question — which the exchange
+ * presents as an answer to this one. Nothing about that failure looks wrong:
+ * the text is real, fluent, and about the right repository.
+ *
+ * So every ask records where the transcript stood first, and anything at or
+ * before that mark is somebody else's answer. Silence is the honest result,
+ * and the callers already know how to report it.
+ */
+export function assistantTextAfter(
+  items: ReadonlyArray<{ kind: string; text: string }>,
+  sinceIndex: number,
+): string | undefined {
+  for (let i = items.length - 1; i >= Math.max(0, sinceIndex); i--) {
     const item = items[i];
     if (item && item.kind === 'assistant' && item.text.trim()) return item.text;
   }

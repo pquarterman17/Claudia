@@ -1,6 +1,6 @@
 import type { ChildRun, Mission, Task } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
-import { reconcile, type Decision, type FleetPolicy } from '../src/fleet/reconcile.js';
+import { dispatchKey, reconcile, type Decision, type FleetPolicy } from '../src/fleet/reconcile.js';
 
 /**
  * The property this file exists for is the plan's PR 5 gate: repeated pulses
@@ -230,5 +230,74 @@ describe('reconcile', () => {
   it('says why nothing happened when there is nothing to do', () => {
     const d = reconcile({ mission: mission(), tasks: [], runs: [], policy: POLICY });
     expect(d).toEqual([{ kind: 'hold', reason: 'no task is ready' }]);
+  });
+});
+
+describe('idempotent execution, which determinism alone is not', () => {
+  it('gives the same task and attempt the same reservation key on every pulse', () => {
+    // Found in review. Two pulses reading the same snapshot before either run
+    // is recorded both dispatch — correctly, nothing changed. The key is what
+    // lets the store reject the second inside the transaction that writes the
+    // run, so only one session is ever launched.
+    const t = task();
+    const first = reconcile({ mission: mission(), tasks: [t], runs: [], policy: POLICY });
+    const second = reconcile({ mission: mission(), tasks: [t], runs: [], policy: POLICY });
+    const keyOf = (d: Decision[]) => d.find((x) => x.kind === 'dispatch')?.key;
+    expect(keyOf(first)).toBe(keyOf(second));
+    expect(keyOf(first)).toBe(dispatchKey('m1', t.id, 1));
+  });
+
+  it('gives a retry a different key from the attempt it replaces', () => {
+    const t = task();
+    const fresh = reconcile({ mission: mission(), tasks: [t], runs: [], policy: POLICY });
+    const retry = reconcile({
+      mission: mission(),
+      tasks: [t],
+      runs: [run({ taskId: t.id, attempt: 1, state: 'failed' })],
+      policy: POLICY,
+    });
+    const keyOf = (d: Decision[]) => d.find((x) => x.kind === 'dispatch')?.key;
+    expect(keyOf(retry)).not.toBe(keyOf(fresh));
+  });
+
+  it('never reuses a key across missions', () => {
+    expect(dispatchKey('m1', 't1', 1)).not.toBe(dispatchKey('m2', 't1', 1));
+  });
+});
+
+describe('counting', () => {
+  it('proposes the attempt after the highest one spent, not after the row count', () => {
+    // Found in review: a history of attempts 1 and 3 is two rows, so counting
+    // them proposed attempt 3 — already spent, colliding with the run that
+    // spent it. Rows go missing; the number on the run does not.
+    const t = task();
+    const runs = [
+      run({ taskId: t.id, attempt: 1, state: 'failed' }),
+      run({ taskId: t.id, attempt: 3, state: 'failed' }),
+    ];
+    const d = reconcile({ mission: mission(), tasks: [t], runs, policy: { maxChildren: 2, maxAttempts: 5 } });
+    expect(d.find((x) => x.kind === 'dispatch')).toMatchObject({ attempt: 4 });
+  });
+
+  it('stops at the limit by the highest attempt, not the row count', () => {
+    const t = task();
+    const runs = [run({ taskId: t.id, attempt: 3, state: 'failed' })];
+    const d = reconcile({ mission: mission(), tasks: [t], runs, policy: POLICY });
+    expect(d.some((x) => x.kind === 'dispatch')).toBe(false);
+  });
+
+  it('counts capacity in runs, so two runs on one task occupy two slots', () => {
+    // Found in review: duplicate active runs collapsed to one busy slot, so
+    // the fleet believed it had room it did not have — and duplicates are
+    // exactly the state a half-recovered mission is in.
+    const busy = task();
+    const waiting = task();
+    const runs = [
+      run({ taskId: busy.id, attempt: 1 }),
+      run({ taskId: busy.id, attempt: 2 }),
+    ];
+    const d = reconcile({ mission: mission(), tasks: [busy, waiting], runs, policy: POLICY });
+    expect(d.some((x) => x.kind === 'dispatch')).toBe(false);
+    expect(d.some((x) => x.kind === 'hold' && x.reason.includes('2 of 2'))).toBe(true);
   });
 });

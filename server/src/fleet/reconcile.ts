@@ -35,7 +35,14 @@ export interface ReconcileInput {
 }
 
 export type Decision =
-  | { kind: 'dispatch'; taskId: string; attempt: number; reason: string }
+  /**
+   * `key` is what makes execution idempotent, which determinism alone is not.
+   * Two pulses reading the same snapshot before either run is recorded both
+   * return this same decision — correctly, since nothing has changed. The
+   * executor must reserve on this key inside the transaction that writes the
+   * run, so the second reservation loses and no second session is launched.
+   */
+  | { kind: 'dispatch'; taskId: string; attempt: number; reason: string; key: string }
   | { kind: 'block'; taskId: string; reason: string }
   | { kind: 'unblock'; taskId: string; reason: string }
   | { kind: 'hold'; reason: string };
@@ -58,11 +65,17 @@ export function reconcile(input: ReconcileInput): Decision[] {
 
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const cyclic = tasksInCycles(tasks);
-  const activeByTask = new Set(
-    runs.filter((r) => ACTIVE_RUN_STATES.has(r.state)).map((r) => r.taskId),
-  );
+  const activeRuns = runs.filter((r) => ACTIVE_RUN_STATES.has(r.state));
+  const activeByTask = new Set(activeRuns.map((r) => r.taskId));
+  // The HIGHEST attempt, not how many rows there are. Found in review: a task
+  // whose history is attempts 1 and 3 has two rows, so counting them proposed
+  // attempt 3 — a number already spent, which collides with the run that
+  // spent it. Rows go missing (pruning, a failed write); the number on the run
+  // is the one that means something.
   const attemptsByTask = new Map<string, number>();
-  for (const run of runs) attemptsByTask.set(run.taskId, (attemptsByTask.get(run.taskId) ?? 0) + 1);
+  for (const run of runs) {
+    attemptsByTask.set(run.taskId, Math.max(attemptsByTask.get(run.taskId) ?? 0, run.attempt));
+  }
 
   const decisions: Decision[] = [];
   const candidates: Task[] = [];
@@ -102,7 +115,11 @@ export function reconcile(input: ReconcileInput): Decision[] {
     candidates.push(task);
   }
 
-  const capacity = policy.maxChildren - activeByTask.size;
+  // Counted in RUNS, not tasks. Found in review: two active runs against one
+  // task collapsed to a single busy slot, so the fleet believed it had room it
+  // did not have — and duplicate runs are exactly the state a wedged or
+  // half-recovered mission is in.
+  const capacity = policy.maxChildren - activeRuns.length;
   if (candidates.length === 0) {
     // Only worth a hold when there was nothing to say at all; a list of blocks
     // already explains itself.
@@ -112,7 +129,7 @@ export function reconcile(input: ReconcileInput): Decision[] {
   if (capacity <= 0) {
     decisions.push({
       kind: 'hold',
-      reason: `${activeByTask.size} of ${policy.maxChildren} children busy; ${candidates.length} task(s) waiting`,
+      reason: `${activeRuns.length} of ${policy.maxChildren} children busy; ${candidates.length} task(s) waiting`,
     });
     return decisions;
   }
@@ -129,6 +146,7 @@ export function reconcile(input: ReconcileInput): Decision[] {
       taskId: task.id,
       attempt,
       reason: attempt === 1 ? 'dependencies satisfied' : `retry ${attempt} of ${policy.maxAttempts}`,
+      key: dispatchKey(mission.id, task.id, attempt),
     });
   }
   if (candidates.length > capacity) {
@@ -138,6 +156,18 @@ export function reconcile(input: ReconcileInput): Decision[] {
     });
   }
   return decisions;
+}
+
+/**
+ * The reservation key for one attempt at one task.
+ *
+ * Deliberately not random: two pulses that reach the same conclusion must
+ * produce the SAME key, so the store can reject the duplicate. A random id
+ * would make every pulse look like new work, which is the bug it exists to
+ * prevent.
+ */
+export function dispatchKey(missionId: string, taskId: string, attempt: number): string {
+  return `dispatch:${missionId}:${taskId}:${attempt}`;
 }
 
 /**

@@ -85,6 +85,12 @@ Wrap-up script location: `~/bin/wrapup.sh` (macOS/Linux) or `C:\bin\wrapup.ps1` 
   `AskUserQuestion` renders as a step-through wizard, one question at a time like the
   terminal — picking an option advances, the last pick answers, free text works per question.
   A session that asked and is waiting counts as "needs you", not idle.
+- **Composer** — slash-command completion, `@file` completion (type `@` and a few letters;
+  the mentioned file is included with the prompt, saving a Read round-trip), shell-style
+  history recall with Up/Down, pasted or dropped images, a model picker, and an output-style
+  picker per session.
+- **Compaction is visible** — when a session summarizes its context, the feed says so and
+  whether it was automatic or a `/compact` you ran, rather than the context silently dropping.
 - **Finish chain** — stack actions that run in order once every session settles:
   Notify → Save learnings (Claude updates its memory files) → wrap-up script → sleep → shutdown.
   A failed step stops the chain; anything after it is skipped. Editing the chain disarms it.

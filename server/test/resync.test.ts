@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { coalesce, isOverwhelmed, planResync, type ResyncBounds } from '../src/fleet/resync.js';
+import {
+  coalesceSnapshots,
+  isOverwhelmed,
+  planResync,
+  replayIsUsable,
+  type ResyncBounds,
+} from '../src/fleet/resync.js';
 
 /**
  * The cases worth pinning are the ones where a partial answer would look
@@ -65,14 +71,14 @@ describe('planResync', () => {
   });
 });
 
-describe('coalesce', () => {
+describe('coalesceSnapshots', () => {
   it('keeps only the newest update per key', () => {
     const updates = [
       { id: 'a', v: 1 },
       { id: 'b', v: 1 },
       { id: 'a', v: 2 },
     ];
-    expect(coalesce(updates, (u) => u.id)).toEqual([
+    expect(coalesceSnapshots(updates, (u) => u.id)).toEqual([
       { id: 'b', v: 1 },
       { id: 'a', v: 2 },
     ]);
@@ -92,16 +98,16 @@ describe('coalesce', () => {
       for (const u of list) state.set(u.id, u.v);
       return [...state.entries()].sort();
     };
-    expect(apply(coalesce(updates, (u) => u.id))).toEqual(apply(updates));
+    expect(apply(coalesceSnapshots(updates, (u) => u.id))).toEqual(apply(updates));
   });
 
   it('changes nothing when every update is about a different thing', () => {
     const updates = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
-    expect(coalesce(updates, (u) => u.id)).toEqual(updates);
+    expect(coalesceSnapshots(updates, (u) => u.id)).toEqual(updates);
   });
 
   it('handles an empty burst', () => {
-    expect(coalesce([], () => 'k')).toEqual([]);
+    expect(coalesceSnapshots([], () => 'k')).toEqual([]);
   });
 });
 
@@ -114,5 +120,45 @@ describe('isOverwhelmed', () => {
 
   it('leaves a socket exactly at its limit alone', () => {
     expect(isOverwhelmed(1_000_000, 1_000_000)).toBe(false);
+  });
+});
+
+describe('unusable bounds', () => {
+  it.each([0, -1, 1.5, Number.NaN])('sends a snapshot rather than replaying with maxBatch %s', (maxBatch) => {
+    // Found in review: a batch size below one produced toSeq = fromSeq - 1, an
+    // empty range that looks valid and never advances.
+    expect(planResync({ lastSeq: 100 }, { ...BOUNDS, maxBatch }).kind).toBe('snapshot');
+  });
+
+  it('sends a snapshot when the log bounds are inverted', () => {
+    expect(planResync({ lastSeq: 5 }, { oldestSeq: 200, newestSeq: 100, maxBatch: 50 }).kind).toBe('snapshot');
+  });
+
+  it('sends a snapshot for a non-integer client sequence', () => {
+    expect(planResync({ lastSeq: 1.5 }, BOUNDS).kind).toBe('snapshot');
+  });
+});
+
+describe('replayIsUsable', () => {
+  it('accepts exactly the range that was planned', () => {
+    expect(replayIsUsable([101, 102, 103], 101, 103)).toBe(true);
+  });
+
+  it('rejects a batch with a hole in it', () => {
+    // Pruning between planning and fetching. Handing this over as contiguous
+    // is the same silent gap the snapshot path exists to avoid.
+    expect(replayIsUsable([101, 103], 101, 103)).toBe(false);
+  });
+
+  it('rejects a short batch', () => {
+    expect(replayIsUsable([101, 102], 101, 103)).toBe(false);
+  });
+
+  it('rejects a batch that starts somewhere else', () => {
+    expect(replayIsUsable([102, 103, 104], 101, 103)).toBe(false);
+  });
+
+  it('rejects an inverted range', () => {
+    expect(replayIsUsable([], 103, 101)).toBe(false);
   });
 });

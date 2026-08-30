@@ -46,7 +46,16 @@ export function planResync(request: ResyncRequest, bounds: ResyncBounds): Resync
   const { lastSeq } = request;
   const { oldestSeq, newestSeq, maxBatch } = bounds;
 
-  if (lastSeq < 0 || !Number.isFinite(lastSeq)) {
+  // The server's own numbers first. Found in review: a maxBatch of zero or
+  // less produced `toSeq = fromSeq - 1`, an empty-but-valid-looking range that
+  // a caller would happily "replay" forever without advancing.
+  if (!Number.isSafeInteger(maxBatch) || maxBatch < 1) {
+    return { kind: 'snapshot', reason: 'the replay batch size is not usable' };
+  }
+  if (!Number.isSafeInteger(oldestSeq) || !Number.isSafeInteger(newestSeq) || newestSeq < oldestSeq) {
+    return { kind: 'snapshot', reason: 'the log bounds are not usable' };
+  }
+  if (!Number.isSafeInteger(lastSeq) || lastSeq < 0) {
     return { kind: 'snapshot', reason: 'the client sent a sequence that cannot exist' };
   }
   // Ahead of the log. Either the store was rebuilt underneath it or the client
@@ -68,7 +77,27 @@ export function planResync(request: ResyncRequest, bounds: ResyncBounds): Resync
 }
 
 /**
+ * Whether a batch the store actually returned can be sent as a replay.
+ *
+ * Planning reads the bounds and fetching reads the events, and between those
+ * two reads the log can be pruned or extended. Found in review: without this
+ * the client is handed a batch with a hole in it and told it is contiguous,
+ * which is the same silent gap the snapshot path exists to avoid. Cheap to
+ * check, and the fallback is already built.
+ */
+export function replayIsUsable(seqs: readonly number[], fromSeq: number, toSeq: number): boolean {
+  if (toSeq < fromSeq) return false;
+  if (seqs.length !== toSeq - fromSeq + 1) return false;
+  return seqs.every((seq, i) => seq === fromSeq + i);
+}
+
+/**
  * Collapses a burst of updates about the same thing into the last one.
+ *
+ * ONLY safe for complete replacement snapshots. Found in review: given
+ * patches, dropping all but the last one drops the fields the earlier ones
+ * carried, and the client ends up missing changes it was told it had. The
+ * name says snapshots because the constraint is not enforceable in the type.
  *
  * A single mission pulse can touch a task, its run and its worktree several
  * times in a few milliseconds, and a browser that renders each one is doing
@@ -80,7 +109,7 @@ export function planResync(request: ResyncRequest, bounds: ResyncBounds): Resync
  * client applying the result in order ends up in the same place as one that
  * applied every update.
  */
-export function coalesce<T>(updates: readonly T[], keyOf: (update: T) => string): T[] {
+export function coalesceSnapshots<T>(updates: readonly T[], keyOf: (update: T) => string): T[] {
   const lastIndex = new Map<string, number>();
   updates.forEach((update, index) => lastIndex.set(keyOf(update), index));
   const keep = new Set(lastIndex.values());

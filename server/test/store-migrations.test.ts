@@ -8,14 +8,23 @@ import { isSqliteExperimentalWarning } from '../src/store/experimental-warning.j
 import { applyMigrations, latestVersion, MIGRATIONS, schemaVersion, type Migration } from '../src/store/migrations.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'claudia-store-mig-'));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+/** Closed before the directory goes. An open handle makes unlink fail with
+ * EBUSY on Windows, failing the whole file in teardown while every test
+ * reports as passing — invisible on Linux, which unlinks open files. */
+const opened: DatabaseSync[] = [];
+afterAll(() => {
+  for (const db of opened) closeFleetDb(db);
+  rmSync(dir, { recursive: true, force: true });
+});
 
 let counter = 0;
 /** A fresh, migrated database per test, in this file's temp directory. */
 function fresh(): DatabaseSync {
-  const opened = openFleetDb(join(dir, `db-${counter++}`, 'fleet.db'));
-  if (!opened.ok) throw new Error(opened.message);
-  return opened.value;
+  const result = openFleetDb(join(dir, `db-${counter++}`, 'fleet.db'));
+  if (!result.ok) throw new Error(result.message);
+  opened.push(result.value);
+  return result.value;
 }
 
 function tables(db: DatabaseSync): string[] {
@@ -44,9 +53,9 @@ describe('opening the fleet database', () => {
   });
 
   it('creates the directory rather than requiring one', () => {
-    const opened = openFleetDb(join(dir, 'not', 'there', 'yet', 'fleet.db'));
-    expect(opened.ok).toBe(true);
-    if (opened.ok) closeFleetDb(opened.value);
+    const result = openFleetDb(join(dir, 'not', 'there', 'yet', 'fleet.db'));
+    expect(result.ok).toBe(true);
+    if (result.ok) opened.push(result.value);
   });
 
   it('reports an unopenable path as a value, not a throw', () => {
@@ -54,9 +63,9 @@ describe('opening the fleet database', () => {
     // still get a result it can show rather than an exception in a handler.
     const blocker = join(dir, 'blocker');
     writeFileSync(blocker, 'not a directory');
-    const opened = openFleetDb(join(blocker, 'fleet.db'));
-    expect(opened.ok).toBe(false);
-    if (!opened.ok) expect(opened.message).toContain('open the fleet database');
+    const result = openFleetDb(join(blocker, 'fleet.db'));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain('open the fleet database');
   });
 
   it('is idempotent: reopening applies nothing', () => {
@@ -67,6 +76,7 @@ describe('opening the fleet database', () => {
 
     const second = openFleetDb(path);
     if (!second.ok) throw new Error(second.message);
+    opened.push(second.value);
     expect(applyMigrations(second.value)).toBe(0);
     expect(schemaVersion(second.value)).toBe(latestVersion(MIGRATIONS));
     closeFleetDb(second.value);
@@ -168,9 +178,10 @@ describe('the escalation-idempotency migration', () => {
     const path = join(dir, 'v1-upgrade', 'fleet.db');
     const only = MIGRATIONS.filter((m) => m.version === 1);
 
-    const opened = openFleetDb(path, only);
-    if (!opened.ok) throw new Error(opened.message);
-    const db = opened.value;
+    const result = openFleetDb(path, only);
+    if (!result.ok) throw new Error(result.message);
+    const db = result.value;
+    opened.push(db);
     expect(schemaVersion(db)).toBe(1);
     db.prepare(
       `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)

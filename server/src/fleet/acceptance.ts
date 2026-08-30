@@ -34,6 +34,9 @@ export interface Evidence {
   tests?: TestResult[];
   prUrl?: string;
   prState?: 'draft' | 'open' | 'merged' | 'closed';
+  /** Whether `headSha` provably descends from `baseSha`, observed server-side.
+   * Absent means nobody checked, which is not the same as yes. */
+  descendsFromBase?: boolean;
   /** Things the child itself flagged as unresolved. Never blocks on its own —
    * a child that admits a risk is behaving better than one that does not. */
   risks?: string[];
@@ -41,6 +44,10 @@ export interface Evidence {
 }
 
 export interface AcceptancePolicy {
+  /** Accept without the head provably descending from the recorded base. Off
+   * by default: a diff that does not build on the base is not this task's
+   * work, however green its tests are. */
+  allowUnverifiedAncestry?: boolean;
   /** Accept without asking when every check is green. Off by default: the
    * plan requires an auditable decision, and "nobody looked" is not one
    * unless the human has explicitly said it may be. */
@@ -109,6 +116,14 @@ export function judge(evidence: Evidence, policy: AcceptancePolicy = DEFAULT_ACC
     return { kind: 'reject', reason: 'its pull request was closed without merging' };
   }
 
+  // Ancestry, when it can be established. A green test run over a diff that
+  // does not build on the recorded base is evidence about some other tree.
+  if (!policy.allowUnverifiedAncestry && evidence.descendsFromBase !== true) {
+    return evidence.descendsFromBase === false
+      ? { kind: 'reject', reason: `${evidence.headSha ?? 'the head'} does not descend from ${evidence.baseSha ?? 'the base'}` }
+      : { kind: 'needs_human', reason: 'cannot confirm the work builds on its base', missing: ['ancestry'] };
+  }
+
   if (!policy.autoAcceptWhenGreen) {
     return { kind: 'needs_human', reason: 'every check passed; acceptance is yours to give', missing: [] };
   }
@@ -136,13 +151,25 @@ export function blocksCleanup(
   accepted: boolean,
   evidence: Evidence,
   observed: { dirty?: boolean; merged?: boolean },
+  policy: AcceptancePolicy = DEFAULT_ACCEPTANCE,
 ): string | undefined {
-  if (observed.dirty) return 'it has uncommitted work';
-  if (!accepted) return 'the task has not been accepted';
-  if (observed.merged === false && evidence.prState !== 'merged') {
-    return `${evidence.branch ?? 'the branch'} is not merged anywhere`;
+  // Every unknown blocks. Found in review: this only refused when `merged` was
+  // explicitly false, so an observation that could not answer — a git call
+  // that failed, a field nobody filled in — read as permission to delete.
+  if (observed.dirty !== false) {
+    return observed.dirty ? 'it has uncommitted work' : 'cannot confirm it is clean';
   }
-  const missing = missingEvidence(evidence);
+  if (!accepted) return 'the task has not been accepted';
+  if (observed.merged !== true && evidence.prState !== 'merged') {
+    return observed.merged === false
+      ? `${evidence.branch ?? 'the branch'} is not merged anywhere`
+      : `cannot confirm ${evidence.branch ?? 'the branch'} is merged anywhere`;
+  }
+  // The SAME policy the acceptance was made under. Found in review: this
+  // recomputed with the default, so a task accepted under `allowMissingTests`
+  // was then permanently uncleanable — accepted and undeletable at once, with
+  // no way for the human to resolve it.
+  const missing = missingEvidence(evidence, policy);
   if (missing.length > 0) return `evidence is incomplete: no ${missing.join(', no ')}`;
   return undefined;
 }

@@ -19,8 +19,12 @@ const GREEN: Evidence = {
   baseSha: 'aaa',
   headSha: 'bbb',
   filesChanged: 3,
+  descendsFromBase: true,
   tests: [{ command: 'npm test', exitCode: 0 }],
 };
+
+/** A clean, merged worktree — every fact positively observed. */
+const SETTLED = { dirty: false, merged: true };
 
 describe('judge', () => {
   it('rejects a failing check', () => {
@@ -105,10 +109,24 @@ describe('judge', () => {
 
   it('can be told tests are not required', () => {
     const verdict = judge(
-      { branch: 'b', headSha: 'c', filesChanged: 1 },
+      { branch: 'b', headSha: 'c', filesChanged: 1, descendsFromBase: true },
       { autoAcceptWhenGreen: true, allowMissingTests: true },
     );
     expect(verdict.kind).toBe('accept');
+  });
+
+  it('will not accept work that does not build on its base', () => {
+    // A green test run over a diff that does not descend from the recorded
+    // base is evidence about some other tree.
+    const verdict = judge({ ...GREEN, descendsFromBase: false }, { ...DEFAULT_ACCEPTANCE, autoAcceptWhenGreen: true });
+    expect(verdict.kind).toBe('reject');
+  });
+
+  it('asks rather than assumes when ancestry was never checked', () => {
+    const evidence = { ...GREEN };
+    delete evidence.descendsFromBase;
+    const verdict = judge(evidence, { ...DEFAULT_ACCEPTANCE, autoAcceptWhenGreen: true });
+    expect(verdict).toMatchObject({ kind: 'needs_human', missing: ['ancestry'] });
   });
 });
 
@@ -133,24 +151,46 @@ describe('blocksCleanup', () => {
   });
 
   it('refuses to clean up a task nobody accepted', () => {
-    expect(blocksCleanup(false, GREEN, { merged: true })).toBe('the task has not been accepted');
+    expect(blocksCleanup(false, GREEN, SETTLED)).toBe('the task has not been accepted');
+  });
+
+  it('refuses when cleanliness was never observed', () => {
+    // Found in review: an unknown used to read as permission to delete.
+    expect(blocksCleanup(true, GREEN, { merged: true })).toBe('cannot confirm it is clean');
+  });
+
+  it('refuses when the merge state was never observed', () => {
+    const reason = blocksCleanup(true, GREEN, { dirty: false });
+    expect(reason).toContain('cannot confirm');
   });
 
   it('refuses while the branch is merged nowhere', () => {
-    const reason = blocksCleanup(true, GREEN, { merged: false });
+    const reason = blocksCleanup(true, GREEN, { dirty: false, merged: false });
     expect(reason).toContain('not merged');
   });
 
   it('accepts a merged pull request as somewhere', () => {
-    expect(blocksCleanup(true, { ...GREEN, prState: 'merged' }, { merged: false })).toBeUndefined();
+    expect(blocksCleanup(true, { ...GREEN, prState: 'merged' }, { dirty: false, merged: false })).toBeUndefined();
   });
 
   it('refuses while the evidence is incomplete', () => {
-    const reason = blocksCleanup(true, { branch: 'b', headSha: 'c', filesChanged: 1 }, { merged: true });
+    const reason = blocksCleanup(true, { branch: 'b', headSha: 'c', filesChanged: 1 }, SETTLED);
     expect(reason).toContain('no test results');
   });
 
+  it('judges cleanup under the policy the acceptance was made under', () => {
+    // Found in review: this recomputed with the default policy, so a task
+    // accepted under `allowMissingTests` became permanently uncleanable —
+    // accepted and undeletable at once, with nothing the human could do.
+    const lenient = { autoAcceptWhenGreen: true, allowMissingTests: true };
+    const evidence = { branch: 'b', headSha: 'c', filesChanged: 1, descendsFromBase: true };
+    expect(judge(evidence, lenient).kind).toBe('accept');
+    expect(blocksCleanup(true, evidence, SETTLED, lenient)).toBeUndefined();
+    // And the default policy still refuses it, which is why passing it matters.
+    expect(blocksCleanup(true, evidence, SETTLED)).toContain('no test results');
+  });
+
   it('allows cleanup of accepted, merged, clean, fully evidenced work', () => {
-    expect(blocksCleanup(true, GREEN, { dirty: false, merged: true })).toBeUndefined();
+    expect(blocksCleanup(true, GREEN, SETTLED)).toBeUndefined();
   });
 });

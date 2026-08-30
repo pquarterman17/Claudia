@@ -6,9 +6,9 @@ import {
   DEFAULT_WATCHDOG,
   nextAction,
   retryAnchor,
-  retryKey,
   type RunObservation,
 } from '../src/fleet/watchdog.js';
+import { dispatchKey } from '../src/fleet/reconcile.js';
 
 /**
  * The watchdog guards a retry loop, which is the one place in the fleet where
@@ -156,7 +156,10 @@ describe('a tick is not a launch', () => {
     const first = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: r }));
     const second = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: r }));
     expect(first).toEqual(second);
-    expect(first.kind === 'retry' && first.key).toBe(retryKey('r1', 2));
+    // The reconciler's namespace, not a private one: a watchdog retry and a
+    // reconciler dispatch of the same task attempt must collide on one
+    // reservation, or the keys guarantee nothing.
+    expect(first.kind === 'retry' && first.key).toBe(dispatchKey('m1', 't1', 2));
   });
 
   it('says when the backoff actually expires, not just how long it is', () => {
@@ -164,7 +167,12 @@ describe('a tick is not a launch', () => {
     // makes a fast pulse safe.
     const r = run({ attempt: 1, endedAt: 5_000 });
     const action = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: r }));
-    expect(action.kind === 'retry' && action.notBefore).toBe(5_000 + DEFAULT_WATCHDOG.retryBaseMs);
+    // Silence is only DECLARED after silentAfterMs, so the backoff counts from
+    // there. Counting from last activity made every silent deadline already
+    // expired, since the backoff caps below that threshold.
+    expect(action.kind === 'retry' && action.notBefore).toBe(
+      5_000 + DEFAULT_WATCHDOG.silentAfterMs + DEFAULT_WATCHDOG.retryBaseMs,
+    );
   });
 
   it('holds the deadline still as the clock advances', () => {
@@ -175,7 +183,9 @@ describe('a tick is not a launch', () => {
     const at = (now: number) => nextAction({ kind: 'silent', reason: 'x' }, observe({ run: r, lastActivityAt: 2_000, now }));
     const first = at(NOW);
     const later = at(NOW + 10 * 60_000);
-    expect(first.kind === 'retry' && first.notBefore).toBe(2_000 + DEFAULT_WATCHDOG.retryBaseMs);
+    expect(first.kind === 'retry' && first.notBefore).toBe(
+      2_000 + DEFAULT_WATCHDOG.silentAfterMs + DEFAULT_WATCHDOG.retryBaseMs,
+    );
     expect(later).toEqual(first);
   });
 
@@ -184,13 +194,17 @@ describe('a tick is not a launch', () => {
       { kind: 'silent', reason: 'x' },
       observe({ run: run({ attempt: 1, startedAt: 1_000 }), lastActivityAt: 7_000 }),
     );
-    expect(action.kind === 'retry' && action.notBefore).toBe(7_000 + DEFAULT_WATCHDOG.retryBaseMs);
+    expect(action.kind === 'retry' && action.notBefore).toBe(
+      7_000 + DEFAULT_WATCHDOG.silentAfterMs + DEFAULT_WATCHDOG.retryBaseMs,
+    );
   });
 
   it('falls back to the start time when a run never did anything', () => {
     const r = run({ attempt: 1, startedAt: 3_000 });
     const action = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: r, lastActivityAt: undefined }));
-    expect(action.kind === 'retry' && action.notBefore).toBe(3_000 + DEFAULT_WATCHDOG.retryBaseMs);
+    expect(action.kind === 'retry' && action.notBefore).toBe(
+      3_000 + DEFAULT_WATCHDOG.silentAfterMs + DEFAULT_WATCHDOG.retryBaseMs,
+    );
   });
 
   it.each([
@@ -212,5 +226,52 @@ describe('a tick is not a launch', () => {
     const first = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, observe({ run: r }));
     const second = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, observe({ run: r }));
     expect(first.kind === 'escalate' && first.key).toBe(second.kind === 'escalate' && second.key);
+  });
+});
+
+describe('found by adversarial review', () => {
+  it('keys a stuck escalation on the tool, not on a reason that ages', () => {
+    // The reason reads "waiting 5m for approval of Bash", then 6m, then 7m.
+    // Keying on it produced a new key every tick — sixty distinct
+    // "duplicates" an hour, defeating the deduplication it was added for.
+    const r = run({ id: 'r1' });
+    const keys = [0, 60_000, 120_000, 180_000].map((delta) => {
+      const observation = observe({
+        run: r,
+        pendingApproval: 'Bash',
+        pendingSince: NOW - 5 * 60_000,
+        now: NOW + delta,
+      });
+      const action = nextAction(assess(observation), observation);
+      return action.kind === 'escalate' ? action.key : `not-escalate:${action.kind}`;
+    });
+    expect(new Set(keys).size).toBe(1);
+  });
+
+  it('treats an approval with no recorded wait as stuck, not as silence', () => {
+    // Falling through to the silence check RETRIES it, spending a fresh turn
+    // that parks on the same approval. Not knowing how long it has waited is
+    // not evidence that it has not waited long.
+    const observation = observe({
+      run: run({ id: 'r1', startedAt: NOW - 60 * 60_000 }),
+      pendingApproval: 'Bash',
+      lastActivityAt: NOW - 30 * 60_000,
+    });
+    const health = assess(observation);
+    expect(health.kind).toBe('stuck');
+    expect(nextAction(health, observation).kind).toBe('escalate');
+  });
+
+  it('terminalizes the run when it gives up, so the slot is released', () => {
+    // Otherwise the dead run stays `running` and the reconciler counts its
+    // concurrency slot as occupied for the life of the mission.
+    const observation = observe({ run: run({ id: 'r1', attempt: 3 }), sessionAlive: false });
+    const action = nextAction(assess(observation), observation);
+    expect(action).toMatchObject({ kind: 'give_up', terminal: 'failed' });
+  });
+
+  it('terminalizes the old run when it retries', () => {
+    const observation = observe({ run: run({ id: 'r1', attempt: 1 }), sessionAlive: false });
+    expect(nextAction(assess(observation), observation)).toMatchObject({ kind: 'retry', terminal: 'failed' });
   });
 });

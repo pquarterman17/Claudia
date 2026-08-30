@@ -1,4 +1,6 @@
 import type { ChildRun, EscalationSeverity } from '@claudia/shared';
+import { escalationKey } from './capabilities.js';
+import { dispatchKey } from './reconcile.js';
 
 /**
  * Noticing that a child has stopped being useful.
@@ -44,6 +46,11 @@ export interface RunObservation {
   sessionAlive: boolean;
   /** When the session last produced anything at all. */
   lastActivityAt?: number;
+  /** The highest attempt any run for this task has spent. Absent falls back to
+   * this run's own attempt — but then the watchdog and the reconciler can
+   * disagree about whether a task is exhausted, and propose an attempt number
+   * that is already taken. */
+  attemptsSpent?: number;
   /** Tool name it is parked on, when it is parked. */
   pendingApproval?: string;
   /** When it parked. */
@@ -55,7 +62,11 @@ export type RunHealth =
   | { kind: 'healthy' }
   | { kind: 'finished' }
   | { kind: 'orphaned'; reason: string }
-  | { kind: 'stuck'; reason: string }
+  /** `tool` is the STABLE identity of what it is stuck on. `reason` contains
+   * an elapsed time and therefore changes every tick, so anything derived
+   * from it drifts — which is how the escalation key defeated its own
+   * deduplication. */
+  | { kind: 'stuck'; reason: string; tool: string }
   | { kind: 'silent'; reason: string };
 
 /**
@@ -79,11 +90,23 @@ export function assess(observation: RunObservation, policy: WatchdogPolicy = DEF
       return {
         kind: 'stuck',
         reason: `waiting ${minutes(waited)} for approval of ${observation.pendingApproval}`,
+        tool: observation.pendingApproval,
       };
     }
     // Parked but not yet long enough to call it: still healthy, and saying so
     // keeps a slow human from being treated as a fault.
     return { kind: 'healthy' };
+  }
+  if (observation.pendingApproval) {
+    // Parked, with no record of when. Treated as stuck rather than falling
+    // through to the silence check, which would RETRY it — spending a fresh
+    // turn that parks on the same approval. Not knowing how long it has waited
+    // is not evidence that it has not waited long.
+    return {
+      kind: 'stuck',
+      reason: `waiting for approval of ${observation.pendingApproval}`,
+      tool: observation.pendingApproval,
+    };
   }
   const since = observation.lastActivityAt ?? run.startedAt;
   const quiet = now - since;
@@ -104,9 +127,22 @@ export type WatchdogAction =
    * is when the backoff actually expires, so a caller that has not yet reached
    * it does nothing at all.
    */
-  | { kind: 'retry'; afterMs: number; notBefore: number; attempt: number; reason: string; key: string }
+  | {
+      kind: 'retry';
+      afterMs: number;
+      notBefore: number;
+      attempt: number;
+      reason: string;
+      key: string;
+      /** The state the OLD run must be written to before the retry starts.
+       * Without it the dead run stays `running` and the reconciler counts its
+       * slot as occupied forever — a wedge that reads as a busy fleet. */
+      terminal: 'failed';
+    }
   | { kind: 'escalate'; request: string; reason: string; severity: EscalationSeverity; key: string }
-  | { kind: 'give_up'; reason: string };
+  /** Terminal for the same reason as retry: giving up on a run must not leave
+   * it holding a concurrency slot for the life of the mission. */
+  | { kind: 'give_up'; reason: string; terminal: 'failed' };
 
 /**
  * When the run stopped being useful — the fixed point a backoff counts from.
@@ -117,6 +153,12 @@ export type WatchdogAction =
  */
 export function retryAnchor(observation: RunObservation): number {
   return observation.run.endedAt ?? observation.lastActivityAt ?? observation.run.startedAt;
+}
+
+/** When the fault this action answers first became visible. */
+function faultAt(health: RunHealth, observation: RunObservation, policy: WatchdogPolicy): number {
+  const anchor = retryAnchor(observation);
+  return health.kind === 'silent' ? anchor + policy.silentAfterMs : anchor;
 }
 
 /** The reservation key for one retry of one run. Derived, never random. */
@@ -149,17 +191,24 @@ export function nextAction(
       request: health.reason,
       reason: 'only a human can clear an approval, and retrying would park on the same one',
       severity: 'blocking',
-      // Stable, so a pulse every minute files one request rather than sixty an
-      // hour into the inbox a human is supposed to be reading.
-      key: `escalation:${run.id}:${health.reason}`,
+      // Keyed on the TOOL, not the reason. The reason carries an elapsed time,
+      // so keying on it produced a new key every tick — sixty distinct
+      // "duplicates" an hour, which is exactly what the key was added to stop.
+      key: escalationKey(run.id, health.tool),
     };
   }
 
-  const next = run.attempt + 1;
+  // Counted over the TASK, not this run. The reconciler bounds retries by the
+  // highest attempt any of the task's runs has spent; counting from one run
+  // let the watchdog propose an attempt another run already holds, and call a
+  // task retryable that the reconciler had already blocked.
+  const spent = Math.max(run.attempt, observation.attemptsSpent ?? run.attempt);
+  const next = spent + 1;
   if (next > policy.maxAttempts) {
     return {
       kind: 'give_up',
-      reason: `${run.attempt} attempt${run.attempt === 1 ? '' : 's'} spent on this task; not starting another`,
+      reason: `${spent} attempt${spent === 1 ? '' : 's'} spent on this task; not starting another`,
+      terminal: 'failed',
     };
   }
   const afterMs = backoffMs(run.attempt, policy);
@@ -172,9 +221,18 @@ export function nextAction(
     // and defaulting `now` to 0 failed the other way — instantly eligible,
     // forever. All three fallbacks here are fixed points in the run's past, so
     // ticking more often cannot change when the retry becomes due.
-    notBefore: retryAnchor(observation) + afterMs,
+    // Counted from when the fault became DETECTABLE, not from when activity
+    // stopped. Silence is only declared after `silentAfterMs` (15m), and the
+    // backoff caps at `retryMaxMs` (10m), so anchoring on last activity made
+    // every silent-path deadline already expired — the backoff was structurally
+    // dead on the commonest failure, and only `maxAttempts` bounded anything.
+    notBefore: faultAt(health, observation, policy) + afterMs,
     reason: health.reason,
-    key: retryKey(run.id, next),
+    // The SAME namespace the reconciler reserves in. Two key spaces meant a
+    // watchdog retry and a reconciler dispatch of one task's one attempt could
+    // both be reserved, which is the thing keys exist to prevent.
+    key: dispatchKey(run.missionId, run.taskId, next),
+    terminal: 'failed',
   };
 }
 

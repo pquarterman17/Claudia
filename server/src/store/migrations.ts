@@ -240,8 +240,8 @@ export function applyMigrations(db: DatabaseSync, migrations: readonly Migration
       // restart this store exists for — both saw the old version, and the
       // loser replayed a migration that had already run. It failed with
       // "duplicate column name", openFleetStore returned a failure, and the
-      // mission layer went silently unavailable on a database that was
-      // perfectly healthy and fully migrated.
+      // mission layer went silently unavailable on a perfectly healthy,
+      // fully-migrated database.
       if (schemaVersion(db) >= migration.version) {
         db.exec('ROLLBACK');
         continue;

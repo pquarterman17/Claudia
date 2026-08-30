@@ -41,6 +41,15 @@ export const DEFAULT_CHILD_CAPABILITIES: readonly Capability[] = [
   'git.commit',
 ];
 
+/**
+ * Who may issue a grant at all.
+ *
+ * `manager` is deliberately absent. It is a model, and its context is fed by
+ * child reports that come from repository contents — the exact injection path
+ * this module exists to break. A grant it writes is a suggestion.
+ */
+const TRUSTED_ISSUERS: ReadonlySet<string> = new Set<string>(['human', 'system']);
+
 /** Capabilities that always need an explicit human or policy decision. */
 export const ELEVATED: ReadonlySet<Capability> = new Set<Capability>([
   'git.push',
@@ -116,13 +125,24 @@ export function checkCapability(
   // Defence in depth. A child cannot reach the store, so this should be
   // unreachable — but a grant recorded as child-issued is a bug worth failing
   // on rather than honouring.
-  if (grant.issuedBy === 'child') return refuse(needed, 'a child cannot grant a capability');
+  // An ALLOW-list. Rejecting only `child` let every other value through —
+  // `manager`, `undefined`, and `Child`, which defeated the check on a capital
+  // letter. The manager is a model whose context is fed by child reports drawn
+  // from repository files, so a grant it writes is a suggestion, not authority.
+  if (!TRUSTED_ISSUERS.has(grant.issuedBy)) {
+    return refuse(needed, `a grant issued by ${String(grant.issuedBy)} is not honoured`);
+  }
   // Lateral movement: one run's approval must not become another's.
   if (grant.runId !== request.runId) return refuse(needed, `that grant belongs to run ${grant.runId}`);
   if (grant.missionId !== request.missionId || grant.taskId !== request.taskId) {
     return refuse(needed, 'that grant was issued for a different task');
   }
-  if (grant.expiresAt !== undefined && now >= grant.expiresAt) {
+  // A non-finite deadline satisfied neither `now >= expiresAt` nor the
+  // `=== undefined` check below, so `NaN` — one bad `Number(...)` in an
+  // approval handler — produced a permanent elevated grant through the very
+  // rule written to prevent standing permissions.
+  if (!Number.isFinite(now)) return refuse(needed, 'the clock is not usable');
+  if (grant.expiresAt !== undefined && !(Number.isFinite(grant.expiresAt) && now < grant.expiresAt)) {
     return refuse(needed, 'that grant has expired');
   }
   if (grant.scope.repo !== request.repo || grant.scope.worktreePath !== request.worktreePath) {
@@ -134,7 +154,7 @@ export function checkCapability(
   // An elevated capability with no expiry is a standing permission, which is
   // not a thing a human approving one push meant to hand out. Ordinary
   // capabilities are the run's working scope and live as long as it does.
-  if (ELEVATED.has(needed) && grant.expiresAt === undefined) {
+  if (ELEVATED.has(needed) && !Number.isFinite(grant.expiresAt)) {
     return refuse(needed, `a grant for ${needed} has to say when it expires`);
   }
   return { ok: true };
@@ -174,7 +194,11 @@ export function defaultGrant(id: string, request: CapabilityRequest): Grant {
  * stop opening.
  */
 export function escalationKey(runId: string, request: string): string {
-  return `escalation:${runId}:${request}`;
+  // Encoded, because a raw join collides: ('r1', 'a:b') and ('r1:a', 'b')
+  // produced the same key, and the key is unique in the store — so two
+  // different runs' requests would merge into one inbox row and a human would
+  // approve something other than what they read.
+  return `escalation:${encodeURIComponent(runId)}:${encodeURIComponent(request)}`;
 }
 
 export interface ReportLimits {
@@ -195,8 +219,19 @@ export type SanitizedReport =
   | { ok: true; text: string; truncated: boolean }
   | { ok: false; reason: string };
 
-/** Control characters, minus tab and newline, which are ordinary text here. */
-const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
+/**
+ * Control characters minus tab and newline — CARRIAGE RETURN included.
+ *
+ * CR was missed, and it is the exact attack the stripping exists to stop:
+ * `tests: 3 FAILED\rtests: all passed` renders in any CR-honouring view as
+ * "tests: all passed" while the stored record says the opposite. A child can
+ * show a human a false green. It also broke the line bound, since a
+ * CR-delimited report is one line to `split('\n')`.
+ *
+ * The bidirectional overrides go too: they reorder rendered text without
+ * changing the bytes, which is the same lie by a different mechanism.
+ */
+const CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 
 /**
  * Makes a child's output safe to STORE and DISPLAY. Not to obey.
@@ -238,7 +273,10 @@ export function sanitizeReport(raw: unknown, limits: ReportLimits = DEFAULT_REPO
  * that turns one into a `Grant`.
  */
 export function requestedCapability(text: string): Capability | undefined {
-  const match = /(?:^|\n)[ \t]*NEEDS CAPABILITY:[ \t]*([a-z.]{1,20})[ \t]*(?:$|\n)/i.exec(text);
+  // \r accepted around the line: Windows is the platform this app is developed
+  // on, and a CRLF child request matched nothing — so it was never escalated
+  // and the run simply stalled until its timeout.
+  const match = /(?:^|\r?\n)[ \t]*NEEDS CAPABILITY:[ \t]*([a-z.]{1,20})[ \t]*(?:$|\r?\n)/i.exec(text);
   const asked = match?.[1]?.toLowerCase();
   return asked !== undefined && isCapability(asked) ? asked : undefined;
 }

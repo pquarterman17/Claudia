@@ -72,6 +72,18 @@ the Claude Agent SDK. Dependabot is enabled for npm and GitHub Actions, grouped
 and monthly so routine bumps stay quiet; security advisories arrive immediately
 and automated security fixes are on.
 
+### Known unfixable advisory: `glib` 0.18.5 (RUSTSEC / GHSA, moderate)
+
+The desktop shell pulls Tauri, which on **Linux only** reaches `glib` through its
+GTK tray stack (`gtk` -> `libappindicator` -> `tray-icon` -> `tauri`). The
+advisory is unsoundness in `VariantStrIter`'s iterator impls, and its first
+patched version is 0.20.0 — which Tauri's pinned `gtk` 0.18 cannot take, so it is
+not resolvable here until Tauri moves. Measured scope rather than assumed:
+`cargo tree -i glib --target x86_64-pc-windows-msvc` reports nothing at all, so
+the crate is absent from Windows builds entirely, and Claudia's own code never
+touches the affected API. Left open deliberately rather than dismissed, so it
+resurfaces if Tauri ever does upgrade.
+
 ## Pre-publication audit (2026-07-26)
 
 The full history — 106 commits, 187 distinct files — was scanned before publishing:

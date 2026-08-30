@@ -1,6 +1,6 @@
 import type { ChildRun, Task } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
-import { describeRecovery, recoverRuns, recoverTasks } from '../src/fleet/recovery.js';
+import { describeRecovery, planRecovery, recoverRuns, recoverTasks } from '../src/fleet/recovery.js';
 
 /**
  * The post-crash states. A run row saying `running` is, after a restart, a
@@ -44,9 +44,12 @@ describe('recoverRuns', () => {
     expect(recovered[0]).toMatchObject({ kind: 'adopt', runId: 'r1', sessionId: 's1' });
   });
 
-  it('orphans a run whose session is gone', () => {
+  it('orphans a run whose session is gone, and says to terminalize it', () => {
+    // Found in review. An orphan that leaves the row saying `running` is worse
+    // than no recovery: the reconciler counts it as an occupied slot forever,
+    // so the task is reset to ready and then never dispatched.
     const recovered = recoverRuns([run({ id: 'r1', sessionId: 's1' })], new Set());
-    expect(recovered[0]).toMatchObject({ kind: 'orphan', runId: 'r1' });
+    expect(recovered[0]).toMatchObject({ kind: 'orphan', runId: 'r1', to: 'failed' });
     expect(recovered[0]?.kind === 'orphan' && recovered[0].reason).toContain('did not survive');
   });
 
@@ -132,5 +135,66 @@ describe('describeRecovery', () => {
       [{ taskId: 't', to: 'ready', reason: '' }],
     );
     expect(summary).toBe('recovered 1 run(s), orphaned 1, reset 1 task(s) to ready');
+  });
+});
+
+describe('planRecovery', () => {
+  it('never resets a task without also terminalizing the run holding its slot', () => {
+    // The wedge, end to end: task back to ready, run row still "running", the
+    // reconciler skipping the task while counting its slot as busy.
+    const plan = planRecovery([task({ id: 't1' })], [run({ id: 'r1', taskId: 't1' })], new Set());
+    expect(plan.tasks).toEqual([
+      {
+        taskId: 't1',
+        to: 'ready',
+        reason: 'it was running when the server stopped, and nothing is running now',
+      },
+    ]);
+    expect(plan.runs).toEqual([
+      { kind: 'orphan', runId: 'r1', to: 'failed', reason: 'its session did not survive the restart' },
+    ]);
+  });
+
+  it('leaves both alone when the session survived', () => {
+    const plan = planRecovery([task({ id: 't1' })], [run({ id: 'r1', taskId: 't1' })], new Set(['s1']));
+    expect(plan.tasks).toEqual([]);
+    expect(plan.runs[0]?.kind).toBe('adopt');
+  });
+
+  it('sends a task whose run already reported to review, not back to the queue', () => {
+    // Found in review. That run did real work and its evidence is in the
+    // worktree; re-dispatching throws it away and pays for it twice.
+    const plan = planRecovery(
+      [task({ id: 't1' })],
+      [run({ id: 'r1', taskId: 't1', state: 'reported' })],
+      new Set(),
+    );
+    expect(plan.tasks[0]).toMatchObject({ taskId: 't1', to: 'reported' });
+    // And a reported run is terminal already, so nothing is written to it.
+    expect(plan.runs).toEqual([{ kind: 'leave', runId: 'r1' }]);
+  });
+
+  it('prefers the surviving run when a task has both a reported and a live one', () => {
+    const plan = planRecovery(
+      [task({ id: 't1' })],
+      [run({ id: 'r1', taskId: 't1', state: 'reported' }), run({ id: 'r2', taskId: 't1', sessionId: 's9' })],
+      new Set(['s9']),
+    );
+    expect(plan.tasks).toEqual([]);
+  });
+
+  it('every orphaned run carries a terminal state', () => {
+    // The property, not one example: nothing may be called orphaned and left
+    // in a state the reconciler reads as active.
+    const runs = [
+      run({ id: 'a', state: 'running' }),
+      run({ id: 'b', state: 'dispatched' }),
+      run({ id: 'c', sessionId: 'gone' }),
+    ];
+    const plan = planRecovery([], runs, new Set());
+    for (const decision of plan.runs) {
+      if (decision.kind === 'orphan') expect(decision.to).toBe('failed');
+    }
+    expect(plan.runs.filter((r) => r.kind === 'orphan')).toHaveLength(3);
   });
 });

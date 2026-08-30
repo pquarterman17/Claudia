@@ -1,6 +1,27 @@
 import type { WorktreeRecord } from '@claudia/shared';
 
 /**
+ * Whether two paths name the same place.
+ *
+ * Windows reaches one directory by many spellings — case, forward or back
+ * slashes, a trailing separator — and this module refuses on mismatch, so a
+ * spelling difference becomes a refused launch rather than a wrong one. That
+ * is the safe direction, but it is still wrong, and on the platform this app
+ * is actually developed on.
+ *
+ * The platform is a parameter because a comparison that is inert on the host
+ * the tests run on is not tested at all — the same trap that made an earlier
+ * path fix in this repo look correct on Linux and fail on a Windows runner.
+ */
+export function samePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
+  const normalize = (p: string): string => {
+    const slashed = p.replace(/\\/g, '/').replace(/\/+$/, '');
+    return platform === 'win32' ? slashed.toLowerCase() : slashed;
+  };
+  return normalize(a) === normalize(b);
+}
+
+/**
  * Whether a run may take a worktree, and whether one may be thrown away.
  *
  * `worktree.ts` reuses any directory that happens to exist at the expected
@@ -91,7 +112,8 @@ export function claimWorktree(
   ];
   for (const [what, seen, expected] of identity) {
     if (seen === undefined) return { kind: 'refuse', reason: `cannot tell which ${what} that worktree is on` };
-    if (seen !== expected) return { kind: 'refuse', reason: `that worktree is on ${what} ${seen}, not ${expected}` };
+    const matches = what === 'repository' ? samePath(seen, expected) : seen === expected;
+    if (!matches) return { kind: 'refuse', reason: `that worktree is on ${what} ${seen}, not ${expected}` };
   }
 
   if (request.repo !== record.repo) {
@@ -100,7 +122,7 @@ export function claimWorktree(
   if (request.branch !== record.branch) {
     return { kind: 'refuse', reason: `that worktree is for ${record.branch}, not ${request.branch}` };
   }
-  if (request.path !== record.path) {
+  if (!samePath(request.path, record.path)) {
     return { kind: 'refuse', reason: `the record is for ${record.path}, not ${request.path}` };
   }
 
@@ -125,8 +147,15 @@ export type CleanupVerdict =
   | { kind: 'keep'; reason: string };
 
 export interface CleanupOptions {
-  /** Task ids with a live run; their worktrees are never touched. */
-  busyTaskIds?: ReadonlySet<string>;
+  /**
+   * Task ids with a live run; their worktrees are never touched.
+   *
+   * REQUIRED. Found in review: while this was optional, a caller that simply
+   * had no activity snapshot — a startup before the store is read, a failed
+   * query — got the same answer as one that had looked and found nothing, and
+   * a worktree in active use could be removed for being clean and merged.
+   */
+  busyTaskIds: ReadonlySet<string>;
   /**
    * Worktree IDS a human confirmed for removal despite being unmerged.
    *
@@ -150,10 +179,16 @@ export interface CleanupOptions {
 export function cleanupWorktree(
   record: WorktreeRecord,
   observed: ObservedWorktree,
-  options: CleanupOptions = {},
+  options: CleanupOptions,
 ): CleanupVerdict {
-  if (record.ownerTaskId && options.busyTaskIds?.has(record.ownerTaskId)) {
+  if (record.ownerTaskId && options.busyTaskIds.has(record.ownerTaskId)) {
     return { kind: 'keep', reason: 'a run is using it right now' };
+  }
+  // A record the fleet still considers active is not a cleanup candidate,
+  // whatever the filesystem says. The activity snapshot answers "is a run
+  // holding it"; this answers "did anyone ever say it was finished with".
+  if (record.state === 'active') {
+    return { kind: 'keep', reason: 'the fleet still has it marked active' };
   }
   if (!observed.exists) {
     return { kind: 'remove', reason: 'the directory is already gone; clearing the record' };
@@ -165,7 +200,7 @@ export function cleanupWorktree(
   if (observed.repo === undefined || observed.branch === undefined) {
     return { kind: 'keep', reason: 'cannot confirm which worktree that path is' };
   }
-  if (observed.repo !== record.repo || observed.branch !== record.branch) {
+  if (!samePath(observed.repo, record.repo) || observed.branch !== record.branch) {
     return {
       kind: 'keep',
       reason: `that path is ${observed.repo} on ${observed.branch}, not ${record.repo} on ${record.branch}`,
@@ -202,7 +237,7 @@ export function cleanupWorktree(
 export function cleanupPlan(
   records: readonly WorktreeRecord[],
   observe: (record: WorktreeRecord) => ObservedWorktree,
-  options: CleanupOptions = {},
+  options: CleanupOptions,
 ): Array<{ record: WorktreeRecord; verdict: CleanupVerdict }> {
   return records.map((record) => ({ record, verdict: cleanupWorktree(record, observe(record), options) }));
 }

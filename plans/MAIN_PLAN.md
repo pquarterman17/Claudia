@@ -162,6 +162,37 @@ Recording these so they are not rediscovered as bugs:
 
 ## Completed
 
+- **Argus parity, Claude-owned rows** (2026-08-30, in review) — `plans/ARGUS_PARITY_PLAN.md` is
+  ChatGPT's plan; this is the state of the rows it assigns to Claude, as a stack of PRs each
+  based on the last. The bottom of the stack is the debate + crew branch (#36), which merges
+  first.
+  | Plan PR | Branch | What landed |
+  | --- | --- | --- |
+  | 1 | `argus-pr1-contracts-store` | Domain contract, 54/54 command validation, SQLite store |
+  | 2 | `argus-pr2-recovery` | Restart reconciliation |
+  | 3 | `argus-pr3-worktree-ownership` | Claim and cleanup rules |
+  | 5 | `argus-pr5-dispatcher` | Deterministic reconciler |
+  | 7 | `argus-pr7-guardrails` | Watchdog, bounded retry, capability boundary |
+  | 8 | `argus-pr8-acceptance` | Completion contract |
+  | 10 | `argus-pr10-resync` | Backpressure and sequence resync |
+  The decision layers are pure and complete; the wiring that turns a `dispatch` decision into a
+  session in a worktree needs PRs 1-3 merged first, and is the next piece of work rather than
+  something these PRs quietly omit.
+  **Three calls a reviewer should look at, because each could reasonably go the other way:**
+  `node:sqlite` over `better-sqlite3` (no native module, which matters for a Tauri sidecar; costs
+  an `engines` bump to >=22.13 that CI was already assuming); acceptance defaults to asking a
+  human even when everything is green, reading "nobody looked" as not being the plan's "auditable
+  decision"; and a child's report can never produce a capability grant, only an escalation —
+  child output is model-generated from repository contents, so a file in the repo is transitively
+  an input to that check.
+  The plan's PR 0 is Codex's, and its absence showed: the contract had five gaps the store agent
+  caught on contact — an `expired` escalation state nothing could reach, an untyped `agent` on a
+  run that made "retry with the other one" undecidable, missing budgets, missing timeline filter
+  ids, and a mission status with no transition table while every sibling entity had one. All five
+  are fixed. Deliberately NOT invented: the plan's "risk policy" field, since naming that enum is
+  PR 0's call and guessing it is the exact failure PR 0's gate exists to prevent.
+
+
 - ~~**Crew — one objective, split by an agent, worked in parallel**~~ (2026-08-30, owner ask) —
   the second half of the Argus-shaped ask the debate did not cover: not a pair relaying, but a
   fleet. The owner was cutting a job into pieces by hand and feeding one piece to each window.

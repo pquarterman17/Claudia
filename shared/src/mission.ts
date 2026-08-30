@@ -1,3 +1,5 @@
+import type { AgentKind } from './index.js';
+
 /**
  * The durable side of the fleet: what survives a restart.
  *
@@ -59,6 +61,11 @@ export interface Mission {
   /** Seconds between reconciliations. See PULSE_MIN_SEC / PULSE_MAX_SEC. */
   pulseSec: number;
   maxChildren: number;
+  /** Wall-clock ceiling for the whole mission, in seconds. Absent means none.
+   * Enforced by the dispatcher, not here; stored so it survives a restart. */
+  budgetSec?: number;
+  /** Token ceiling across every child. Absent means none. */
+  budgetTokens?: number;
   /** Repository the mission's tasks default to. */
   cwd: string;
   createdAt: number;
@@ -89,8 +96,9 @@ export interface ChildRun {
   /** The live session, while there is one. Absent once it has ended. */
   sessionId?: string;
   worktreeId?: string;
-  /** Which agent ran it, so a retry can pick the other one. */
-  agent: string;
+  /** Which agent ran it, so a retry can pick the other one — typed, because
+   * 'pick the other one' is not a decision you can make about free text. */
+  agent: AgentKind;
   /** 1-based; a retry is a new run, never a mutation of the old one. */
   attempt: number;
   state: ChildRunState;
@@ -134,6 +142,10 @@ export interface WorktreeRecord {
 export interface FleetEvent {
   seq: number;
   missionId: string;
+  /** Denormalised so the timeline can filter without parsing `payload`, which
+   * is untyped by design and must never be reached into for structure. */
+  taskId?: string;
+  runId?: string;
   actor: FleetActor;
   kind: string;
   /** Typed per `kind`; stored as JSON and never executed. */
@@ -154,6 +166,9 @@ export interface Escalation {
   reason: string;
   severity: EscalationSeverity;
   resolution: EscalationResolution;
+  /** When an unanswered request stops being offered. Without this the
+   * `expired` resolution is a state nothing can ever reach. */
+  expiresAt?: number;
   createdAt: number;
   resolvedAt?: number;
   /** Freeform note from whoever resolved it. */
@@ -168,6 +183,15 @@ export interface Escalation {
  * three independent answers is how a fleet ends up with a task that is both
  * running and cancelled.
  */
+export const MISSION_TRANSITIONS: Readonly<Record<MissionStatus, readonly MissionStatus[]>> = {
+  // Completed is not terminal: finishing a mission and then thinking of one
+  // more task is the ordinary case, and forcing a new mission for it would
+  // split the history of one intention across two records.
+  active: ['completed', 'archived'],
+  completed: ['active', 'archived'],
+  archived: ['active'],
+};
+
 export const TASK_TRANSITIONS: Readonly<Record<TaskStatus, readonly TaskStatus[]>> = {
   proposed: ['ready', 'cancelled'],
   ready: ['blocked', 'running', 'cancelled'],
@@ -199,6 +223,10 @@ export const WORKTREE_TRANSITIONS: Readonly<Record<WorktreeState, readonly Workt
   archived: ['removed', 'active'],
   removed: [],
 };
+
+export function canTransitionMission(from: MissionStatus, to: MissionStatus): boolean {
+  return MISSION_TRANSITIONS[from].includes(to);
+}
 
 /** True when `to` is a legal next state for a task in `from`. */
 export function canTransitionTask(from: TaskStatus, to: TaskStatus): boolean {

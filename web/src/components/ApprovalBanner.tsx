@@ -47,7 +47,7 @@ export function ApprovalBanner({ approval, now, onApprove, onDeny }: Props) {
       <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 11px' }} onClick={onApprove}>
         Approve
       </button>
-      {approval.change && (
+      {approval.change && approval.change.kind !== 'plan' && (
         <details style={{ flexBasis: '100%', fontSize: 11, color: '#c7cada' }}>
           <summary style={{ cursor: 'pointer', color: '#b5abfc' }}>
             Review {approval.change.kind} to <span className="mono">{approval.change.path}</span>

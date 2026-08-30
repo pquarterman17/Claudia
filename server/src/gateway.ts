@@ -1,5 +1,6 @@
 import type { ClientCommand, HostPlatform, ServerEvent } from '@claudia/shared';
 import { WebSocket, WebSocketServer } from 'ws';
+import { runBulkOp } from './bulk-ops.js';
 import { isClientLive } from './client-liveness.js';
 import { pickFolders } from './folder-picker.js';
 import { launchSession, resumeSavedSession } from './launch-session.js';
@@ -324,7 +325,7 @@ export class Gateway {
         this.trigger.disarm();
         return;
       case 'bulk':
-        this.runBulk(cmd.op);
+        runBulkOp(this.manager, cmd.op);
         return;
       case 'set_plan_tier':
         this.usage.setTier(cmd.tier);
@@ -379,21 +380,11 @@ export class Gateway {
         this.settings.deleteTemplate(cmd.name);
         this.broadcastSettings();
         return;
-    }
-  }
-
-  private runBulk(op: 'approve_all' | 'interrupt_all'): void {
-    for (const summary of this.manager.summaries()) {
-      const session = this.manager.get(summary.id);
-      if (!session) continue;
-      if (op === 'approve_all') {
-        // Skip questions: "approving" one would resolve it with no answer.
-        if (summary.pendingApproval && !summary.pendingQuestion) {
-          session.approve(summary.pendingApproval.requestId);
-        }
-      } else if (summary.state === 'working' || summary.state === 'starting') {
-        void session.interrupt();
-      }
+      case 'search_files':
+        this.manager
+          .searchFiles(cmd.sessionId, cmd.query)
+          .then((matches) => this.sendTo(socket, { type: 'file_matches', sessionId: cmd.sessionId, query: cmd.query, matches }));
+        return;
     }
   }
 }

@@ -98,6 +98,8 @@ export class ClaudiaSession {
     return this.driver?.raw ?? null;
   }
 
+  /** For file-search.ts, which walks a plain directory and knows nothing about sessions. */
+  get cwd(): string { return this.opts.cwd; }
   mcpStatus() { return operations.mcpStatus(this.raw as operations.OperationalQuery | null); }
   reconnectMcp(name: string) { return (this.raw as operations.OperationalQuery | null)?.reconnectMcpServer?.(name); }
   toggleMcp(name: string, enabled: boolean) { return (this.raw as operations.OperationalQuery | null)?.toggleMcpServer?.(name, enabled); }

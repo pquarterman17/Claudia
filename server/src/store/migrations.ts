@@ -167,11 +167,34 @@ CREATE INDEX fleet_events_by_mission ON fleet_events (mission_id, seq);
 CREATE INDEX fleet_events_by_task ON fleet_events (task_id, seq) WHERE task_id IS NOT NULL;
 `;
 
+/**
+ * Escalations get an idempotency key, enforced by the database.
+ *
+ * A watchdog tick that finds a stuck run produces the same escalation every
+ * time, and a key returned by a pure helper stops nothing on its own — the
+ * repository was generating a fresh UUID per call, so a pulse each minute
+ * filed a new inbox row each minute. The uniqueness has to live where the
+ * write happens; anything above it is advisory.
+ *
+ * Added as its own migration rather than amended into `fleet-core`: the point
+ * of a version list is that a later change cannot disturb what already ran.
+ */
+const ESCALATION_KEYS = `
+ALTER TABLE escalations ADD COLUMN idempotency_key TEXT;
+CREATE UNIQUE INDEX escalations_key ON escalations (idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: 1,
     name: 'fleet-core',
     up: (db) => db.exec(FLEET_CORE),
+  },
+  {
+    version: 2,
+    name: 'escalation-idempotency',
+    up: (db) => db.exec(ESCALATION_KEYS),
   },
 ];
 

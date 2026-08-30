@@ -76,7 +76,7 @@ describe('opening the fleet database', () => {
 describe('applyMigrations', () => {
   it('upgrades a database created at an older version, keeping its rows', () => {
     const db = fresh();
-    expect(schemaVersion(db)).toBe(1);
+    expect(schemaVersion(db)).toBe(latestVersion(MIGRATIONS));
     db.prepare(
       `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
        VALUES ('m1', 'Old', 'body', 'active', 'paused', 60, 4, '/repo', 1, 1)`,
@@ -157,5 +157,58 @@ describe('the SQLite experimental warning', () => {
     const deprecation = new Error('SQLite something is deprecated');
     deprecation.name = 'DeprecationWarning';
     expect(isSqliteExperimentalWarning(deprecation)).toBe(false);
+  });
+});
+
+describe('the escalation-idempotency migration', () => {
+  it('upgrades a real version-1 database rather than only a synthetic one', () => {
+    // The first genuine second migration, so this is the first time the
+    // "migrates from a previous schema" gate is exercised against the real
+    // list rather than a test-only migration appended to it.
+    const path = join(dir, 'v1-upgrade', 'fleet.db');
+    const only = MIGRATIONS.filter((m) => m.version === 1);
+
+    const opened = openFleetDb(path, only);
+    if (!opened.ok) throw new Error(opened.message);
+    const db = opened.value;
+    expect(schemaVersion(db)).toBe(1);
+    db.prepare(
+      `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+       VALUES ('m1', 'Old', 'body', 'active', 'paused', 60, 4, '/repo', 1, 1)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO escalations (id, mission_id, source, request, reason, severity, resolution, created_at)
+       VALUES ('e1', 'm1', 'human', 'push', 'because', 'warning', 'pending', 1)`,
+    ).run();
+
+    expect(applyMigrations(db)).toBe(1);
+    expect(schemaVersion(db)).toBe(latestVersion(MIGRATIONS));
+    // The pre-existing row survives, with the new column null rather than absent.
+    const row = db.prepare('SELECT id, idempotency_key FROM escalations WHERE id = ?').get('e1');
+    expect(row?.['id']).toBe('e1');
+    expect(row?.['idempotency_key']).toBeNull();
+    closeFleetDb(db);
+  });
+
+  it('lets many escalations share a null key while unique keys collide', () => {
+    // A partial index: rows without a key are ordinary rows.
+    const db = fresh();
+    db.prepare(
+      `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+       VALUES ('m1', 'M', '', 'active', 'watching', 60, 4, '/repo', 1, 1)`,
+    ).run();
+    const insert = (id: string, key: string | null) =>
+      db
+        .prepare(
+          `INSERT INTO escalations (id, mission_id, source, request, reason, severity, resolution, created_at, idempotency_key)
+           VALUES (?, 'm1', 'manager', 'r', 'x', 'warning', 'pending', 1, ?)`,
+        )
+        .run(id, key);
+
+    insert('a', null);
+    insert('b', null);
+    insert('c', 'k');
+    expect(() => insert('d', 'k')).toThrow();
+    closeFleetDb(db);
   });
 });

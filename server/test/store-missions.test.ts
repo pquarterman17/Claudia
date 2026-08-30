@@ -6,13 +6,28 @@ import { transact, type StoreResult } from '../src/store/db.js';
 import { openFleetStore, type FleetStore } from '../src/store/index.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'claudia-store-missions-'));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+/**
+ * Every store this file opens, closed before the directory is removed.
+ *
+ * Not defensive tidiness: on Windows an open handle makes `unlink` fail with
+ * EBUSY, so one test forgetting to close fails the whole FILE during teardown
+ * — with every test reported as passing, which is a confusing way to find out.
+ * Linux unlinks open files happily, so this is invisible until CI runs.
+ * Owning cleanup here means a new test cannot reintroduce it by omission.
+ */
+const opened: FleetStore[] = [];
+afterAll(() => {
+  for (const fleet of opened) fleet.close();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 let counter = 0;
 function store(name = `db-${counter++}`): FleetStore {
-  const opened = openFleetStore(join(dir, name, 'fleet.db'));
-  if (!opened.ok) throw new Error(opened.message);
-  return opened.value;
+  const result = openFleetStore(join(dir, name, 'fleet.db'));
+  if (!result.ok) throw new Error(result.message);
+  opened.push(result.value);
+  return result.value;
 }
 
 /** Unwraps a result in a test, where a failure is simply the test failing. */

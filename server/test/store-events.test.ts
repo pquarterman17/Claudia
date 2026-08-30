@@ -6,13 +6,22 @@ import { FleetEventLog } from '../src/store/events.js';
 import { openFleetStore, type FleetStore } from '../src/store/index.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'claudia-store-events-'));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+/** Closed before the directory goes: an open handle makes unlink fail with
+ * EBUSY on Windows, and the whole file fails in teardown with every test
+ * reported as passing. */
+const opened: Array<{ close: () => void }> = [];
+afterAll(() => {
+  for (const fleet of opened) fleet.close();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 let counter = 0;
 function store(name = `db-${counter++}`): FleetStore {
-  const opened = openFleetStore(join(dir, name, 'fleet.db'));
-  if (!opened.ok) throw new Error(opened.message);
-  return opened.value;
+  const result = openFleetStore(join(dir, name, 'fleet.db'));
+  if (!result.ok) throw new Error(result.message);
+  opened.push(result.value);
+  return result.value;
 }
 
 /** Unwraps a result in a test, where a failure is simply the test failing. */

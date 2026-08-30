@@ -175,6 +175,10 @@ Recording these so they are not rediscovered as bugs:
   `CLAUDIA_OPEN=1` set by the launchers, because `npm start` is also how a server is run over
   SSH. `.gitattributes` now pins `*.bat` to CRLF and `*.command` to LF (a CR in a shebang makes
   the kernel look for an interpreter named `bash\r`), proven by re-checking the file out.
+  **Confirmed working on the owner's real Windows machine (2026-08-30)** — the one link that
+  could not be tested from here, since `cmd /c start "" <url>` actually reaching a browser has
+  no substitute on Linux. The rest was verified live: a random bound port opened correctly, no
+  flag opened nothing, and the real `.command` launcher opened the right URL end to end.
   LESSON, and it is the same one the commit-path bug taught: when the launcher polls for
   something the server knows exactly, the launcher will eventually be wrong about it — and it
   will be wrong per platform, where only one of the three gets tested.

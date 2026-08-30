@@ -236,6 +236,33 @@ export function canTransitionMission(from: MissionStatus, to: MissionStatus): bo
   return MISSION_TRANSITIONS[from].includes(to);
 }
 
+/**
+ * Whether an explicitly named route is legal, hop by hop.
+ *
+ * Deliberately a CHECKER and not a path-finder. The first version of this
+ * searched for the shortest legal route, which is the wrong mechanism: where
+ * several routes exist they do not mean the same thing. Asked to get a crashed
+ * task from `running` to `ready`, the search returned `running -> reported ->
+ * ready` — the same length as the right answer and a lie, since `reported`
+ * means a child claimed the work was done. A module that knows WHY a thing is
+ * moving is the only thing that can pick the route; this just refuses the ones
+ * the state machine forbids.
+ *
+ * An empty route is legal and means "already there".
+ */
+export function isLegalRoute<S extends string>(
+  from: S,
+  route: readonly S[],
+  table: Readonly<Record<S, readonly S[]>>,
+): boolean {
+  let at = from;
+  for (const next of route) {
+    if (!(table[at] ?? []).includes(next)) return false;
+    at = next;
+  }
+  return true;
+}
+
 /** True when `to` is a legal next state for a task in `from`. */
 export function canTransitionTask(from: TaskStatus, to: TaskStatus): boolean {
   return TASK_TRANSITIONS[from].includes(to);

@@ -234,6 +234,18 @@ export function applyMigrations(db: DatabaseSync, migrations: readonly Migration
     if (migration.version <= current) continue;
     db.exec('BEGIN IMMEDIATE');
     try {
+      // Re-read INSIDE the write lock. The version above was sampled before
+      // anything was serialised, so two processes opening the same file — the
+      // old sidecar still holding it while a new one starts, which is the
+      // restart this store exists for — both saw the old version, and the
+      // loser replayed a migration that had already run. It failed with
+      // "duplicate column name", openFleetStore returned a failure, and the
+      // mission layer went silently unavailable on a database that was
+      // perfectly healthy and fully migrated.
+      if (schemaVersion(db) >= migration.version) {
+        db.exec('ROLLBACK');
+        continue;
+      }
       migration.up(db);
       // PRAGMA takes no bound parameters, so the version is interpolated. It is
       // an integer checked by assertOrdered, never anything user-supplied.

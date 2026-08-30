@@ -15,6 +15,9 @@ import { ensureWorktree } from './worktree.js';
  * tell afterwards which change lost. Isolation is what makes running them at
  * once defensible at all.
  */
+/** Which session a crew's `blockedBy` warning is about. */
+const blockedFor = new Map<string, string>();
+
 export class CrewRunner {
   private readonly crews = new Map<string, CrewStatus>();
 
@@ -59,6 +62,7 @@ export class CrewRunner {
     const reason = escalationReason(pending.toolName);
     if (crew.blockedBy === reason) return;
     crew.blockedBy = reason;
+    blockedFor.set(crew.id, summary.id);
     this.publish(crew);
   }
 
@@ -119,8 +123,16 @@ export class CrewRunner {
       cursor: (sessionId) => this.manager.get(sessionId)?.transcript.cursor() ?? 0,
       since: (sessionId, cursor) => this.manager.get(sessionId)?.transcript.since(cursor) ?? [],
       progress: (update) => {
-        // Any progress means it is no longer stuck on the thing it was stuck on.
-        delete status.blockedBy;
+        // Cleared only by the member it belongs to. A parked session emits its
+        // pending approval exactly once and then goes quiet, so any other
+        // member finishing used to erase the warning — the panel showed a
+        // healthy crew while one member sat parked for its whole timeout.
+        const owner = blockedFor.get(status.id);
+        const from = update.kind === 'member' ? status.members[update.index]?.sessionId : status.plannerSessionId;
+        if (owner === undefined || owner === from) {
+          delete status.blockedBy;
+          blockedFor.delete(status.id);
+        }
         if (update.kind === 'planner') status.plannerSessionId = update.sessionId;
         else if (update.kind === 'planned') {
           status.members = update.members;

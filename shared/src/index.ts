@@ -136,6 +136,8 @@ export interface SessionSummary {
   id: string;
   /** Which agent backs this session. Absent means Claude, for older clients. */
   agent?: AgentKind;
+  /** Branch and dirty state of the working directory, when it is a repository. */
+  git?: GitInfo;
   /** Display name — basename of cwd. */
   name: string;
   /** Auto-generated from the task (like terminal tab titles), or user-set. */
@@ -259,6 +261,13 @@ export type HostPlatform = 'win32' | 'darwin' | 'linux';
  * instructions into ones already open — run the tests, summarise the diff,
  * rebase onto main.
  */
+/** The branch a session's directory is on, and whether it has uncommitted work. */
+export interface GitInfo {
+  branch: string;
+  /** Count of changed paths, so a tile can show that work is uncommitted. */
+  dirtyFiles: number;
+}
+
 export interface ToolkitAction {
   id: string;
   /** Shown on the button and matched in the command palette. */

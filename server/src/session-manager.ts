@@ -1,3 +1,4 @@
+import { GitCache } from './git-info.js';
 import type { FeedStep, FeedStepPatch, McpServerInfo, SessionSummary, SlashCommandInfo, TranscriptItem } from '@claudia/shared';
 import { ClaudiaSession, type LaunchOptions } from './session.js';
 
@@ -18,6 +19,7 @@ export interface ManagerEvents {
 export class SessionManager {
   private sessions = new Map<string, ClaudiaSession>();
   private feeds = new Map<string, FeedStep[]>();
+  private readonly git = new GitCache();
   private events: ManagerEvents;
 
   constructor(events: ManagerEvents) {
@@ -68,7 +70,25 @@ export class SessionManager {
   }
 
   summaries(): SessionSummary[] {
-    return [...this.sessions.values()].map((s) => s.summary());
+    return [...this.sessions.values()].map((s) => {
+      const summary = s.summary();
+      const git = this.git.get(summary.cwd);
+      return git ? { ...summary, git } : summary;
+    });
+  }
+
+  /**
+   * Re-reads branch and dirty state for every live session's directory, and
+   * pushes an update when anything changed. Driven on a timer rather than per
+   * summary: the summary is rebuilt on every state change and must not wait on
+   * a subprocess.
+   */
+  async refreshGit(): Promise<void> {
+    const before = JSON.stringify([...this.sessions.values()].map((s) => this.git.get(s.summary().cwd)));
+    await this.git.refresh([...this.sessions.values()].map((s) => s.summary().cwd));
+    const after = JSON.stringify([...this.sessions.values()].map((s) => this.git.get(s.summary().cwd)));
+    if (before === after) return;
+    for (const summary of this.summaries()) this.events.onUpdate(summary);
   }
 
   feedSnapshot(): Record<string, FeedStep[]> {

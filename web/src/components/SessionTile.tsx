@@ -7,6 +7,7 @@ import { PERMISSION_MODES } from '../permission-modes';
 import { send } from '../store';
 import { COLORS, statusOf } from '../status';
 import { AgentBadge } from './AgentBadge';
+import { BranchChip } from './BranchChip';
 import { ApprovalBanner } from './ApprovalBanner';
 import { Composer } from './Composer';
 import { ContextMeter } from './ContextMeter';
@@ -183,10 +184,11 @@ export function SessionTile({
             )}
           </button>
         )}
+        <BranchChip git={session.git} />
         <span
           className="mono"
           title={session.cwd}
-          style={{ flex: '1 1 auto', minWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 10.5, color: '#75798c' }}
+          style={{ flex: '1 1 auto', minWidth: 40, overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 10.5, color: '#75798c' }}
         >
           {session.cwd}
         </span>

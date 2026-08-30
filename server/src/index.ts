@@ -107,6 +107,13 @@ usage.start();
 // One clock drives the countdown; the engine decides whether anything happens.
 const ticker = setInterval(() => trigger.tick(manager.summaries()), 1000);
 
+// Branch and dirty state, on a slower clock than the trigger: it spawns `git`,
+// and a branch changes on a human timescale. Failures are already swallowed
+// inside, so an unhandled rejection cannot reach the process from here.
+const gitTicker = setInterval(() => void manager.refreshGit(), 15_000);
+gitTicker.unref?.();
+void manager.refreshGit();
+
 httpServer.listen(CLAUDIA_PORT, '127.0.0.1', () => {
   console.log(`[claudia] listening on http://127.0.0.1:${CLAUDIA_PORT} · ${platform}`);
 });
@@ -124,6 +131,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     console.log(`[claudia] ${signal} — stopping sessions`);
     clearInterval(ticker);
+    clearInterval(gitTicker);
     usage.stop();
     manager.stopAll();
     httpServer.close(() => process.exit(0));

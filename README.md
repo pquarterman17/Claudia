@@ -73,7 +73,8 @@ Wrap-up script location: `~/bin/wrapup.sh` (macOS/Linux) or `C:\bin\wrapup.ps1` 
 
 ## Using it
 
-- **Board** — every session is a tile: status, working dir, model chip
+- **Board** — every session is a tile: status, **branch** (with a dot when the tree is dirty),
+  working dir, model chip
   ("Opus 5", "Haiku 4.5", "Opus 5 1M"), the reply **streaming live** as it is written, and a
   feed of reads/edits/commands with real durations
   and ✓/✕ outcomes, nested sub-agent rows with live token counts. Fill mode divides the window

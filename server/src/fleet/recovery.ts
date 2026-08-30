@@ -1,4 +1,4 @@
-import type { ChildRun, Task } from '@claudia/shared';
+import { isLegalRoute, TASK_TRANSITIONS, type ChildRun, type Task, type TaskStatus } from '@claudia/shared';
 
 /**
  * Putting the fleet back together after the server was not running.
@@ -56,7 +56,36 @@ export function recoverRuns(
   });
 }
 
-export type TaskRecovery = { taskId: string; to: Task['status']; reason: string };
+/**
+ * Where a task must end up, and the legal route to get it there.
+ *
+ * `path` rather than a single destination because the state machine does not
+ * always allow the obvious hop: a task caught `running` by a crash belongs
+ * back in the queue, but `running -> ready` is not a transition — the route is
+ * `running -> failed -> ready`, and it is more truthful anyway, since that
+ * attempt did fail. Applying `path` in order is the whole contract; a caller
+ * that writes only the last element gets its write refused.
+ */
+export type TaskRecovery = { taskId: string; to: TaskStatus; path: readonly TaskStatus[]; reason: string };
+
+/**
+ * The route back into the queue, named rather than searched for.
+ *
+ * Via `failed`, because that attempt did fail — the server died under it. The
+ * other two-hop route the state machine allows is via `reported`, which would
+ * assert that a child claimed the work was finished. Both are legal; only one
+ * is true, and nothing but this module knows which.
+ */
+const TO_QUEUE: readonly TaskStatus[] = ['failed', 'ready'];
+/** Already a standing claim; it only has to be recorded as one. */
+const TO_REVIEW: readonly TaskStatus[] = ['reported'];
+
+/** Builds the recovery, refusing to emit a move the store would reject. */
+function move(task: Task, route: readonly TaskStatus[], reason: string): TaskRecovery | undefined {
+  if (!isLegalRoute(task.status, route, TASK_TRANSITIONS)) return undefined;
+  const to = route[route.length - 1];
+  return to ? { taskId: task.id, to, path: route, reason } : undefined;
+}
 
 /**
  * Tasks whose status no longer matches reality.
@@ -75,37 +104,35 @@ export function recoverTasks(
   runs: readonly ChildRun[],
   adoptedRunIds: ReadonlySet<string>,
 ): TaskRecovery[] {
-  // The LATEST attempt decides, not whichever attempt happens to look best.
-  // Found in review: taking "any run reported" meant a task whose attempt 1
-  // was reported and rejected, and whose attempt 2 was running at the crash,
-  // came back as `reported` from the stale attempt — restoring a claim that
-  // had already been considered and turned down.
+  // The LATEST attempt decides, not whichever attempt happens to look best. A
+  // task whose attempt 1 was reported and rejected, and whose attempt 2 was
+  // running at the crash, must not come back as a claim from the stale one.
   const latest = new Map<string, ChildRun>();
   for (const run of runs) {
     const held = latest.get(run.taskId);
     if (!held || run.attempt > held.attempt) latest.set(run.taskId, run);
   }
 
+  // ANY surviving run, not just the latest one. A task whose latest attempt
+  // failed while an earlier one is still alive must not be requeued: that
+  // dispatches a second agent alongside one already working, in the same
+  // worktree. The latest attempt decides WHERE a task goes; any live run
+  // decides whether it moves at all.
+  const alive = new Set(runs.filter((run) => adoptedRunIds.has(run.id)).map((run) => run.taskId));
+
   const recoveries: TaskRecovery[] = [];
   for (const task of tasks) {
     if (task.status !== 'running') continue;
+    if (alive.has(task.id)) continue;
     const run = latest.get(task.id);
-    if (run && adoptedRunIds.has(run.id)) continue;
-    if (run?.state === 'reported') {
-      // That attempt finished and its evidence is in the worktree. Sending it
-      // back to the queue throws the work away and pays for it twice.
-      recoveries.push({
-        taskId: task.id,
-        to: 'reported',
-        reason: 'its latest run reported before the server stopped; the work is waiting on review',
-      });
-      continue;
-    }
-    recoveries.push({
-      taskId: task.id,
-      to: 'ready',
-      reason: 'it was running when the server stopped, and nothing is running now',
-    });
+
+    const recovery =
+      run?.state === 'reported'
+        ? // That attempt finished and its evidence is in the worktree. Sending
+          // it back to the queue throws the work away and pays for it twice.
+          move(task, TO_REVIEW, 'its latest run reported before the server stopped; the work is waiting on review')
+        : move(task, TO_QUEUE, 'it was running when the server stopped, and nothing is running now');
+    if (recovery) recoveries.push(recovery);
   }
   return recoveries;
 }

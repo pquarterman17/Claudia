@@ -116,22 +116,28 @@ export function reconcile(input: ReconcileInput): Decision[] {
       if (task.status !== 'blocked') decisions.push({ kind: 'block', taskId: task.id, reason: blocker });
       continue;
     }
-    if (task.status === 'blocked') {
-      decisions.push({ kind: 'unblock', taskId: task.id, reason: 'every dependency is accepted' });
-    }
-
     // Already working. This is the check that makes a pulse idempotent: the
     // task's state may not have caught up yet, but its run has.
     if (activeByTask.has(task.id)) continue;
 
+    // Attempts are checked BEFORE any unblock is emitted. Emitting one first
+    // meant a task blocked because its attempts were spent was unblocked and
+    // re-blocked on every single pulse — two events a minute, for the life of
+    // the mission, describing a state that never changed.
     const attempts = attemptsByTask.get(task.id) ?? 0;
     if (attempts >= policy.maxAttempts) {
-      decisions.push({
-        kind: 'block',
-        taskId: task.id,
-        reason: `${attempts} attempt${attempts === 1 ? '' : 's'} spent, limit is ${policy.maxAttempts}`,
-      });
+      if (task.status !== 'blocked') {
+        decisions.push({
+          kind: 'block',
+          taskId: task.id,
+          reason: `${attempts} attempt${attempts === 1 ? '' : 's'} spent, limit is ${policy.maxAttempts}`,
+        });
+      }
       continue;
+    }
+
+    if (task.status === 'blocked') {
+      decisions.push({ kind: 'unblock', taskId: task.id, reason: 'every dependency is accepted' });
     }
     candidates.push(task);
   }

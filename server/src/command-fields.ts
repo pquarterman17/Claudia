@@ -74,7 +74,20 @@ export const MAX_WORKERS = 8;
  * MAX_IMAGE_DATA_LEN each, and a prompt beside them. Anything past that is not
  * a command this protocol has, whatever it calls its fields.
  */
-export const MAX_TOTAL_TEXT_LEN = MAX_IMAGES_PER_PROMPT * MAX_IMAGE_DATA_LEN + MAX_TEXT_LEN;
+/**
+ * Headroom for the JSON scaffolding the budget also charges for.
+ *
+ * The scan charges every KEY as well as every value, so a command made
+ * entirely of maximum-size fields still needs room for `type`, `sessionId`,
+ * `images`, and each image's `mediaType` and `name`. Without it the budget
+ * rejected the exact command its own comment promised to admit — a full
+ * 200,000-character prompt with four maximum images came up 172 characters
+ * short, and the test named for that case used a four-character prompt.
+ */
+const STRUCTURAL_TEXT = 64_000;
+
+export const MAX_TOTAL_TEXT_LEN =
+  MAX_IMAGES_PER_PROMPT * MAX_IMAGE_DATA_LEN + MAX_TEXT_LEN + STRUCTURAL_TEXT;
 
 /**
  * The ceiling on a single raw websocket frame, enforced by ws itself before

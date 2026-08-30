@@ -25,18 +25,27 @@ const git = (dir: string, args: string[]): string =>
   // bury a real failure, which still throws, in hint text.
   execFileSync('git', args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 
-/** Enough identity to commit, without spending a spawn to persist it. */
-const IDENTITY = ['-c', 'user.email=test@example.com', '-c', 'user.name=Test'];
+/**
+ * Identity through the ENVIRONMENT, not `git config`.
+ *
+ * The code under test spawns its own `git commit`, in a child process this
+ * file never launches, so `-c` flags on the setup commands cannot reach it and
+ * repo-local config would have to be written per repository. Environment is
+ * inherited by every descendant for free, costs no spawns, and — the part that
+ * actually bit — does not depend on the machine having a global identity. A CI
+ * runner has none, which is exactly how this broke.
+ */
+process.env['GIT_AUTHOR_NAME'] = 'Test';
+process.env['GIT_AUTHOR_EMAIL'] = 'test@example.com';
+process.env['GIT_COMMITTER_NAME'] = 'Test';
+process.env['GIT_COMMITTER_EMAIL'] = 'test@example.com';
 
 function repo(branch = 'feat/work', withRemote = true): string {
   const dir = mkdtempSync(join(tmpdir(), 'claudia-commit-'));
   git(dir, ['init', '--initial-branch', branch]);
   writeFileSync(join(dir, 'tracked.txt'), 'original\n');
   git(dir, ['add', '.']);
-  // Identity inline rather than two more `git config` spawns per repository:
-  // process creation is the expensive part on Windows, and this helper runs
-  // once or twice per test.
-  git(dir, [...IDENTITY, 'commit', '-m', 'first']);
+  git(dir, ['commit', '-m', 'first']);
   if (withRemote) {
     const bare = mkdtempSync(join(tmpdir(), 'claudia-origin-'));
     git(bare, ['init', '--bare']);
@@ -250,10 +259,6 @@ describe('commitAndPush', () => {
     // works fine — refusing here would be refusing over the wrong question.
     const dir = mkdtempSync(join(tmpdir(), 'claudia-fresh-'));
     git(dir, ['init', '--initial-branch', 'feat/first']);
-    git(dir, ['config', 'user.email', 'test@example.com']);
-    git(dir, ['config', 'user.name', 'Test']);
-    // Persisted here on purpose: commitAndPush does the committing in this
-    // test, so the identity has to outlive the setup.
     await commitAndPush([{ cwd: dir, files: [write(dir, 'a.txt', 'work')], titles: ['First ever'] }]);
     expect(log(dir)).toEqual(['First ever']);
   });

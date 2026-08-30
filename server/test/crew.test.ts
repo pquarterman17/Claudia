@@ -1,4 +1,4 @@
-import type { AgentKind } from '@claudia/shared';
+import type { AgentKind, SessionSummary } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
 import { MAX_TASKS, runCrew, type CrewDeps, type CrewProgress, type LaunchedMember } from '../src/crew.js';
 
@@ -20,6 +20,8 @@ interface Harness {
   inFlight: Set<string>;
   peakInFlight: number;
   cancelled: string[];
+  /** How each session's turn ends. Defaults to `idle`. */
+  states: Map<string, string>;
 }
 
 interface HarnessOpts {
@@ -34,6 +36,7 @@ function harness(opts: HarnessOpts = {}): Harness {
   // Transcripts GROW, as a real one does. A replacing map would hide the very
   // defect the turn-aware read exists to catch.
   const transcripts = new Map<string, Array<{ kind: string; text: string }>>();
+  const appended = new Map<string, number>();
   let next = 0;
   let openLaunches = 0;
 
@@ -46,6 +49,7 @@ function harness(opts: HarnessOpts = {}): Harness {
     inFlight: new Set(),
     peakInFlight: 0,
     cancelled: [],
+    states: new Map(),
   };
 
   h.deps = {
@@ -69,7 +73,10 @@ function harness(opts: HarnessOpts = {}): Harness {
       h.sent.push({ session, text });
       const reply = replies.get(session)?.shift();
       const items = transcripts.get(session) ?? [];
-      if (reply !== undefined) items.push({ kind: 'assistant', text: reply });
+      if (reply !== undefined) {
+        items.push({ kind: 'assistant', text: reply });
+        appended.set(session, (appended.get(session) ?? 0) + 1);
+      }
       transcripts.set(session, items);
       h.inFlight.add(session);
       h.peakInFlight = Math.max(h.peakInFlight, h.inFlight.size);
@@ -80,9 +87,18 @@ function harness(opts: HarnessOpts = {}): Harness {
       await Promise.resolve();
       await Promise.resolve();
       h.inFlight.delete(session);
-      return undefined;
+      // A real settle carries the state it settled INTO — `idle` for a turn
+      // that finished, `error`/`stopped` for one that died. Returning nothing
+      // is what let a dead turn read as an answer.
+      return { id: session, state: h.states.get(session) ?? 'idle' } as SessionSummary;
     },
     transcript: (session) => transcripts.get(session) ?? [],
+    cursor: (session) => appended.get(session) ?? 0,
+    since: (session, cursor) => {
+      const items = transcripts.get(session) ?? [];
+      const total = appended.get(session) ?? 0;
+      return items.slice(Math.max(0, cursor - (total - items.length)));
+    },
     progress: (update) => h.progress.push(update),
     cancel: (id) => h.cancelled.push(id),
   };
@@ -104,6 +120,23 @@ function spec(over: Partial<Parameters<typeof runCrew>[0]> = {}) {
 }
 
 describe('runCrew', () => {
+  it('stops a member whose own turn times out, without failing the run', async () => {
+    // Found in review. The per-member catch returns normally, so Promise.all
+    // resolves and the run-level cleanup never fires — the planner writes a
+    // report while a timed-out member is still editing and still spending.
+    const h = harness({ replies: { 'session-1': [PLAN, 'the report'], 'session-3': ['did beta'] } });
+    const settle = h.deps.awaitSettled;
+    h.deps.awaitSettled = (session, ms) =>
+      session === 'session-2' ? Promise.reject(new Error('member timed out')) : settle(session, ms);
+
+    const result = await runCrew(spec(), h.deps);
+    expect(h.cancelled).toEqual(['session-2']);
+    expect(result.members[0]).toMatchObject({ state: 'failed' });
+    // The other member and the report are unaffected: one failure is not the run's.
+    expect(result.members[1]?.state).toBe('done');
+    expect(result.report).toBe('the report');
+  });
+
   it('stops every session it started when the planner turn fails', async () => {
     // Found in review. The bookkeeping promise rejecting is not a reason to
     // leave several agents editing several worktrees with nobody reading it.
@@ -208,7 +241,7 @@ describe('runCrew', () => {
   it('carries on when one member cannot get a checkout', async () => {
     // One failed worktree must not cost the other members' work.
     const h = harness({
-      replies: { 'session-1': [PLAN, 'r'] },
+      replies: { 'session-1': [PLAN, 'r'], 'session-2': ['did beta'] },
       refuseBranch: (b) => b.includes('alpha'),
     });
     const result = await runCrew(spec(), h.deps);

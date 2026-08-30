@@ -1,5 +1,6 @@
 import type { AgentKind, SessionSummary } from '@claudia/shared';
-import { assistantTextAfter, lastAssistantText, rebuttalPrompt, reviewPrompt, verdictPrompt, type DebateSubject } from './relay.js';
+import { hasReviewableChanges } from './git-info.js';
+import { lastAssistantText, rebuttalPrompt, reviewPrompt, verdictPrompt, type DebateSubject } from './relay.js';
 
 /**
  * Two agents working the same problem until the answer survives both.
@@ -46,6 +47,10 @@ export interface DebateDeps {
   awaitSettled: (sessionId: string, timeoutMs: number) => Promise<SessionSummary>;
   /** The session's transcript, for reading what it just said. */
   transcript: (sessionId: string) => ReadonlyArray<{ kind: string; text: string }>;
+  /** A marker for "everything said so far", stable under transcript eviction. */
+  cursor: (sessionId: string) => number;
+  /** Only what was appended after `cursor`. */
+  since: (sessionId: string, cursor: number) => ReadonlyArray<{ kind: string; text: string }>;
   readDiff: (cwd: string) => Promise<string | null>;
   /** Progress, for the record the human reads afterwards. */
   note: (entry: DebateEntry) => void;
@@ -85,7 +90,12 @@ export interface DebateResult {
  */
 export function reviewerIsSatisfied(critique: string): boolean {
   const text = critique.trim().toLowerCase();
-  if (/\b(but|however|although|though|except|caveat|concerns?|issues?|wrong|missing)\b/.test(text.slice(0, 400))) {
+  // The WHOLE critique, not the first 400 characters. The agreement match
+  // reads the opening sentence either way, so a critique that opened politely
+  // and put its objection at character 420 was classified as satisfied — the
+  // exact direction the comment above says must never happen. A wider veto
+  // costs at most one extra round; a narrow one drops the finding.
+  if (/\b(but|however|although|though|except|caveat|concerns?|issues?|wrong|missing)\b/.test(text)) {
     return false;
   }
   const opening = text.split(/[.!?\n]/)[0] ?? '';
@@ -98,6 +108,11 @@ export function reviewerIsSatisfied(critique: string): boolean {
  * The baseline is the whole point. `awaitSettled` is satisfied instantly by a
  * session that is already settled, so without a mark in the transcript a
  * stopped author "answers" every question with whatever it last said.
+ *
+ * The mark is the log's own append counter, not the array's length: a
+ * transcript at its eviction cap reports the same length before and after a
+ * reply, so a length cursor finds nothing on exactly the long-lived sessions a
+ * human has been working in.
  */
 async function ask(
   sessionId: string,
@@ -105,10 +120,16 @@ async function ask(
   deps: DebateDeps,
   timeoutMs = TURN_TIMEOUT_MS,
 ): Promise<string | undefined> {
-  const baseline = deps.transcript(sessionId).length;
+  const baseline = deps.cursor(sessionId);
   deps.send(sessionId, text);
-  await deps.awaitSettled(sessionId, timeoutMs);
-  return assistantTextAfter(deps.transcript(sessionId), baseline);
+  const settled = await deps.awaitSettled(sessionId, timeoutMs);
+  // `isSettled` counts `error` and `stopped` as settled, so waiting for a turn
+  // to end cannot tell finishing from dying. A turn that died still leaves its
+  // mid-turn preamble — "Let me read the diff first." — in the transcript,
+  // after the baseline, passing every other guard. Published as a critique it
+  // then bills the human's own tile for a rebuttal to a non-critique.
+  if (settled.state !== 'idle') return undefined;
+  return lastAssistantText(deps.since(sessionId, baseline));
 }
 
 /**
@@ -139,6 +160,26 @@ export async function runDebate(spec: DebateSpec, deps: DebateDeps): Promise<Deb
     };
   }
 
+  // Read BEFORE anything is launched. `readDiff` returns a truthy marker for a
+  // clean tree, so an exchange about nothing used to run in full: a reviewer
+  // session, two review turns, two rebuttals and a verdict — five model turns
+  // across two agents, unattended, over "(no tracked changes)". `diff` is the
+  // default subject, so the natural moment to ask for a review — just after
+  // committing — was the one that bought it.
+  let diff: string | undefined;
+  if (spec.subject === 'diff') {
+    diff = (await deps.readDiff(spec.cwd)) ?? undefined;
+    if (!hasReviewableChanges(diff)) {
+      return {
+        authorSessionId: spec.authorSessionId ?? '',
+        reviewerSessionId: '',
+        rounds: 0,
+        entries: [],
+        stoppedBecause: 'there is nothing uncommitted to review',
+      };
+    }
+  }
+
   // Only what this exchange started is ours to stop. The human's own tile
   // keeps running whatever happens here.
   const launched: string[] = [];
@@ -166,7 +207,7 @@ export async function runDebate(spec: DebateSpec, deps: DebateDeps): Promise<Deb
       material = await ask(authorSessionId, spec.objective, deps);
       if (material) record({ round: 0, speaker: spec.author, role: 'opening', text: material });
     } else if (spec.subject === 'diff') {
-      material = (await deps.readDiff(spec.cwd)) ?? undefined;
+      material = diff;
     } else {
       material = lastAssistantText(deps.transcript(authorSessionId));
     }
@@ -223,7 +264,10 @@ export async function runDebate(spec: DebateSpec, deps: DebateDeps): Promise<Deb
       material = spec.subject === 'diff' ? ((await deps.readDiff(spec.cwd)) ?? material) : rebuttal;
     }
 
-    const verdict = await ask(authorSessionId, verdictPrompt(ran), deps);
+    // Nothing was said, so there is nothing to summarise. Asking anyway spends
+    // a turn on the human's own tile describing an exchange that did not
+    // happen — the last of three ways this path used to bill for silence.
+    const verdict = entries.length > 0 ? await ask(authorSessionId, verdictPrompt(ran), deps) : undefined;
     if (verdict) record({ round: ran, speaker: spec.author, role: 'verdict', text: verdict });
 
     return {

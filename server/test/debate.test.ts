@@ -16,7 +16,11 @@ interface Harness {
   notes: DebateEntry[];
   /** Queued replies per session, consumed in order. */
   replies: Map<string, string[]>;
-  said: Map<string, string>;
+  /** Transcripts that GROW, as a real one does: a reply is appended, never
+   * replaced, so a turn-aware read can tell this turn's answer from the last. */
+  transcripts: Map<string, Array<{ kind: string; text: string }>>;
+  cancelled: string[];
+  states: Map<string, string>;
   diff: string | null;
 }
 
@@ -27,7 +31,9 @@ function harness(replies: Record<string, string[]> = {}, diff: string | null = '
     launched: [],
     notes: [],
     replies: new Map(Object.entries(replies)),
-    said: new Map(),
+    transcripts: new Map(),
+    cancelled: [],
+    states: new Map(),
     diff,
   };
   let next = 0;
@@ -41,15 +47,16 @@ function harness(replies: Record<string, string[]> = {}, diff: string | null = '
       // The reply a session gives is whatever was queued for it next.
       const queued = h.replies.get(session);
       const reply = queued?.shift();
-      if (reply !== undefined) h.said.set(session, reply);
+      const items = h.transcripts.get(session) ?? [];
+      if (reply !== undefined) items.push({ kind: 'assistant', text: reply });
+      h.transcripts.set(session, items);
     },
     awaitSettled: (id) => Promise.resolve({ id, state: 'idle' } as SessionSummary),
-    transcript: (id) => {
-      const text = h.said.get(id);
-      return text ? [{ kind: 'assistant', text }] : [];
-    },
+    transcript: (id) => h.transcripts.get(id) ?? [],
     readDiff: () => Promise.resolve(h.diff),
     note: (entry) => h.notes.push(entry),
+    cancel: (id) => h.cancelled.push(id),
+    stateOf: (id) => h.states.get(id) ?? 'idle',
   };
   return h;
 }
@@ -64,6 +71,57 @@ const spec = {
 };
 
 describe('runDebate', () => {
+  it('refuses a stopped author instead of reading its last reply as an answer', async () => {
+    // Found in review. `awaitSettled` is satisfied instantly by a session that
+    // is already settled, so a stopped author "answered" every question with
+    // whatever it last said — real, fluent text about the right repository.
+    const h = harness();
+    h.transcripts.set('author', [{ kind: 'assistant', text: 'stale text from an earlier question' }]);
+    h.states.set('author', 'stopped');
+    const result = await runDebate({ ...spec, authorSessionId: 'author' }, h.deps);
+    expect(result.stoppedBecause).toContain('stopped');
+    expect(result.verdict).toBeUndefined();
+    // And it spent nothing: no reviewer was launched for a dead exchange.
+    expect(h.launched).toEqual([]);
+  });
+
+  it.each(['working', 'awaiting_approval', 'error', 'starting'])(
+    'refuses an author that is %s',
+    async (state) => {
+      const h = harness();
+      h.states.set('author', state);
+      const result = await runDebate({ ...spec, authorSessionId: 'author' }, h.deps);
+      expect(result.stoppedBecause).toContain(state);
+    },
+  );
+
+  it('never reads a reply from before the question it just asked', async () => {
+    // The same defect one level down: even a live session has a transcript,
+    // and "the last thing it said" is only an answer if it came after the ask.
+    const h = harness();
+    h.transcripts.set('session-1', [{ kind: 'assistant', text: 'something it said earlier' }]);
+    const result = await runDebate({ ...spec, authorSessionId: 'author' }, h.deps);
+    expect(result.stoppedBecause).toBe('the reviewer said nothing');
+    expect(result.entries).toEqual([]);
+  });
+
+  it('stops the sessions it started when a turn times out', async () => {
+    // Otherwise the bookkeeping promise rejects and two agents carry on
+    // spending money on a question nobody will ever read.
+    const h = harness();
+    h.deps.awaitSettled = () => Promise.reject(new Error('turn timed out'));
+    await expect(runDebate({ ...spec, subject: 'plan' }, h.deps)).rejects.toThrow('turn timed out');
+    expect(h.cancelled).toEqual(['session-1', 'session-2']);
+  });
+
+  it("never stops the human's own tile, only what it launched", async () => {
+    const h = harness();
+    h.deps.awaitSettled = () => Promise.reject(new Error('turn timed out'));
+    await expect(runDebate({ ...spec, authorSessionId: 'author' }, h.deps)).rejects.toThrow();
+    expect(h.cancelled).not.toContain('author');
+    expect(h.cancelled).toEqual(['session-1']);
+  });
+
   it('launches the reviewer as the OTHER agent, which is the whole point', async () => {
     const h = harness({ 'session-1': ['a critique', 'a verdict'] });
     await runDebate({ ...spec, authorSessionId: 'author' }, h.deps);

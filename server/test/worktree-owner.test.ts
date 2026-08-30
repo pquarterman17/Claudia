@@ -103,11 +103,41 @@ describe('claimWorktree', () => {
     expect(claimWorktree(REQUEST, record({ state }), gone)).toMatchObject({ kind: 'create' });
   });
 
-  it('treats an unowned record as claimable', () => {
+  it('refuses a record with no owner rather than treating it as free', () => {
+    // Changed in review. A half-recorded owner is a record written by
+    // something that crashed midway — not evidence that this task may write
+    // into the directory.
     const orphan = record();
     delete orphan.ownerMissionId;
     delete orphan.ownerTaskId;
-    expect(claimWorktree(REQUEST, orphan, there)).toMatchObject({ kind: 'reuse' });
+    expect(claimWorktree(REQUEST, orphan, there)).toMatchObject({ kind: 'refuse' });
+  });
+
+  it.each([['ownerMissionId'], ['ownerTaskId']])('refuses a record missing %s', (missing) => {
+    const partial = record() as unknown as Record<string, unknown>;
+    delete partial[missing];
+    expect(claimWorktree(REQUEST, partial as never, there).kind).toBe('refuse');
+  });
+
+  it.each([['repo'], ['branch']])('refuses when the observation cannot name the %s', (field) => {
+    // The core fail-open bug: an observation that could not see the repository
+    // or branch skipped the comparison and fell through to reuse. Not knowing
+    // must never read as agreement.
+    const blind = { ...there } as Record<string, unknown>;
+    delete blind[field];
+    const verdict = claimWorktree(REQUEST, record(), blind as never);
+    expect(verdict.kind).toBe('refuse');
+    expect(verdict.reason).toContain('cannot tell');
+  });
+
+  it('refuses when the request path is not the recorded one', () => {
+    const verdict = claimWorktree({ ...REQUEST, path: '/somewhere/else' }, record(), there);
+    expect(verdict.kind).toBe('refuse');
+  });
+
+  it('refuses when the request is for a different mission', () => {
+    const verdict = claimWorktree({ ...REQUEST, missionId: 'm2' }, record(), there);
+    expect(verdict).toMatchObject({ kind: 'refuse', reason: 'another task owns that worktree' });
   });
 });
 
@@ -120,11 +150,13 @@ describe('cleanupWorktree', () => {
   it('will not let a confirmation override uncommitted work', () => {
     // The only way to know it is safe is to look, and an unattended fleet
     // cannot. So this veto has no override.
-    const verdict = cleanupWorktree(record(), { ...there, dirty: true, merged: true }, { confirmedUnmerged: true });
+    const verdict = cleanupWorktree(record(), { ...there, dirty: true, merged: true }, {
+      confirmedUnmerged: new Set(['w1']),
+    });
     expect(verdict.kind).toBe('keep');
   });
 
-  it('trusts the record when nothing was observed about dirtiness', () => {
+  it('keeps a worktree when nothing was observed at all', () => {
     expect(cleanupWorktree(record({ dirty: true }), { exists: true }).kind).toBe('keep');
   });
 
@@ -134,9 +166,45 @@ describe('cleanupWorktree', () => {
     expect(verdict.reason).toContain('not merged');
   });
 
-  it('removes an unmerged branch once confirmed, because the commits survive', () => {
-    const verdict = cleanupWorktree(record(), { ...there, merged: false }, { confirmedUnmerged: true });
+  it('removes an unmerged branch once THAT worktree is confirmed', () => {
+    const verdict = cleanupWorktree(record(), { ...there, merged: false }, {
+      confirmedUnmerged: new Set(['w1']),
+    });
     expect(verdict.kind).toBe('remove');
+  });
+
+  it('does not let confirming one worktree authorise another', () => {
+    // Changed in review: confirmation used to be one batch-wide boolean, so
+    // approving a single removal in a preview authorised every unmerged one.
+    const verdict = cleanupWorktree(record({ id: 'w2' }), { ...there, merged: false }, {
+      confirmedUnmerged: new Set(['w1']),
+    });
+    expect(verdict.kind).toBe('keep');
+  });
+
+  it.each([['repo'], ['branch']])('keeps a worktree whose %s cannot be confirmed', (field) => {
+    const blind = { ...there, merged: true } as Record<string, unknown>;
+    delete blind[field];
+    const verdict = cleanupWorktree(record(), blind as never);
+    expect(verdict).toMatchObject({ kind: 'keep', reason: 'cannot confirm which worktree that path is' });
+  });
+
+  it('keeps a worktree whose path turns out to be a different repository', () => {
+    const verdict = cleanupWorktree(record(), { ...there, repo: '/elsewhere', merged: true });
+    expect(verdict.kind).toBe('keep');
+  });
+
+  it('keeps a worktree when cleanliness was never observed', () => {
+    // Trusting a `dirty` flag written before a crash is how a fleet deletes an
+    // afternoon of edits.
+    const verdict = cleanupWorktree(record({ dirty: false }), { exists: true, repo: '/repo', branch: 'claudia/task-1', merged: true });
+    expect(verdict).toMatchObject({ kind: 'keep', reason: 'cannot confirm it is clean' });
+  });
+
+  it('keeps a worktree whose merge state is unknown', () => {
+    const verdict = cleanupWorktree(record(), { ...there });
+    expect(verdict.kind).toBe('keep');
+    expect(verdict.reason).toContain('cannot confirm');
   });
 
   it('removes a merged, clean worktree', () => {

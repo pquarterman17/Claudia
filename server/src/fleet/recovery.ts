@@ -19,7 +19,12 @@ import type { ChildRun, Task } from '@claudia/shared';
 
 export type RunRecovery =
   | { kind: 'adopt'; runId: string; sessionId: string; reason: string }
-  | { kind: 'orphan'; runId: string; reason: string }
+  /** `to` is the terminal state the row MUST be written to. Found in review:
+   * calling a run orphaned without terminalizing it leaves the store saying
+   * `running`, and the reconciler counts that as an occupied slot forever —
+   * so the task is reset to ready and then never dispatched, which is a wedge
+   * that looks exactly like a busy fleet. */
+  | { kind: 'orphan'; runId: string; to: 'failed'; reason: string }
   | { kind: 'leave'; runId: string };
 
 /**
@@ -45,6 +50,7 @@ export function recoverRuns(
     return {
       kind: 'orphan',
       runId: run.id,
+      to: 'failed',
       reason: run.sessionId ? 'its session did not survive the restart' : 'it never recorded a session',
     };
   });
@@ -72,10 +78,23 @@ export function recoverTasks(
   const stillRunning = new Set(
     runs.filter((run) => adoptedRunIds.has(run.id)).map((run) => run.taskId),
   );
+  // A run that finished and reported before the crash did real work, and its
+  // evidence is in the worktree. Found in review: resetting such a task to
+  // `ready` throws that away and pays for it again, which is the one recovery
+  // outcome worse than doing nothing.
+  const reported = new Set(runs.filter((run) => run.state === 'reported').map((run) => run.taskId));
   const recoveries: TaskRecovery[] = [];
   for (const task of tasks) {
     if (task.status !== 'running') continue;
     if (stillRunning.has(task.id)) continue;
+    if (reported.has(task.id)) {
+      recoveries.push({
+        taskId: task.id,
+        to: 'reported',
+        reason: 'its run reported before the server stopped; the work is waiting on review',
+      });
+      continue;
+    }
     recoveries.push({
       taskId: task.id,
       to: 'ready',
@@ -83,6 +102,24 @@ export function recoverTasks(
     });
   }
   return recoveries;
+}
+
+/**
+ * The whole recovery, as one set of transitions to apply together.
+ *
+ * Returned as a unit because the two halves are only correct together: writing
+ * the task back to `ready` while its run row still says `running` is the wedge
+ * described above. A caller applying this in a transaction cannot land one
+ * without the other.
+ */
+export function planRecovery(
+  tasks: readonly Task[],
+  runs: readonly ChildRun[],
+  liveSessionIds: ReadonlySet<string>,
+): { runs: RunRecovery[]; tasks: TaskRecovery[] } {
+  const runRecoveries = recoverRuns(runs, liveSessionIds);
+  const adopted = new Set(runRecoveries.filter((r) => r.kind === 'adopt').map((r) => r.runId));
+  return { runs: runRecoveries, tasks: recoverTasks(tasks, runs, adopted) };
 }
 
 /**

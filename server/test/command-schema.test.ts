@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseCommand } from '../src/command-schema.js';
+import { MAX_FRAME_BYTES, MAX_IMAGE_DATA_LEN, MAX_TEXT_LEN, MAX_TOTAL_TEXT_LEN } from '../src/command-fields.js';
 
 /**
  * One valid example per ClientCommand member (shared/src/protocol.ts), kept
@@ -161,5 +162,73 @@ describe('parseCommand: malformed input', () => {
     for (let i = 0; i < 10; i++) deep = { nested: deep };
     const result = parseCommand({ type: 'ping', junk: deep });
     expect(result).toEqual({ ok: false, reason: 'nesting too deep (max 6)' });
+  });
+});
+
+describe('total content budget', () => {
+  it('rejects a huge string hiding under a field no command declares', () => {
+    // Found in review. `ping` declares no fields, so the junk was never looked
+    // at — and the allocation and parse were paid anyway, as fast as a local
+    // page could send them.
+    const result = parseCommand({ type: 'ping', junk: 'x'.repeat(MAX_TOTAL_TEXT_LEN + 1) });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('too much text');
+  });
+
+  it('charges strings under unknown fields on any command, not just ping', () => {
+    const result = parseCommand({
+      type: 'send_prompt',
+      sessionId: 's1',
+      text: 'hello',
+      junk: 'x'.repeat(MAX_TOTAL_TEXT_LEN),
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it('charges nested strings, not only top-level ones', () => {
+    const result = parseCommand({
+      type: 'ping',
+      junk: { deeper: ['x'.repeat(MAX_TOTAL_TEXT_LEN / 2), 'x'.repeat(MAX_TOTAL_TEXT_LEN / 2 + 2)] },
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it('charges long keys too, so the cost cannot move into the field name', () => {
+    // Bounded by MAX_ARRAY_LEN keys, so the only way past the budget is long
+    // names — which is exactly the move this charges for.
+    const payload: Record<string, unknown> = { type: 'ping' };
+    for (let i = 0; i < 199; i++) payload[`k${i}`.padEnd(MAX_TEXT_LEN - 1, 'x')] = 1;
+    expect(parseCommand(payload).ok).toBe(false);
+  });
+
+  it('sums across siblings rather than checking each alone', () => {
+    // Each string is individually legal; together they are not.
+    const half = 'x'.repeat(Math.floor(MAX_TOTAL_TEXT_LEN / 2) + 1);
+    expect(parseCommand({ type: 'ping', a: half, b: half }).ok).toBe(false);
+  });
+
+  it('still accepts the largest legitimate command', () => {
+    // Four images at the documented maximum plus a prompt: the budget exists
+    // to bound abuse, not to break the real ceiling the browser already allows.
+    const images = Array.from({ length: 4 }, () => ({
+      mediaType: 'image/png',
+      data: 'a'.repeat(MAX_IMAGE_DATA_LEN),
+      name: 'shot.png',
+    }));
+    const result = parseCommand({ type: 'send_prompt', sessionId: 's1', text: 'look', images });
+    expect(result.ok).toBe(true);
+  });
+
+  it('leaves an ordinary command well inside the budget', () => {
+    expect(parseCommand({ type: 'send_prompt', sessionId: 's1', text: 'hello' }).ok).toBe(true);
+  });
+});
+
+describe('MAX_FRAME_BYTES', () => {
+  it('sits above the content budget, so ws never rejects a legal command', () => {
+    // The frame ceiling is the outer limit; if it were tighter than the budget
+    // a legitimate four-image prompt would be dropped before parsing, with no
+    // reason ever reaching the client.
+    expect(MAX_FRAME_BYTES).toBeGreaterThan(MAX_TOTAL_TEXT_LEN);
   });
 });

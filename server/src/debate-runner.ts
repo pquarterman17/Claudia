@@ -126,6 +126,10 @@ export class DebateRunner {
       awaitSettled: (sessionId, timeoutMs) => this.manager.awaitSettled(sessionId, timeoutMs),
       transcript: (sessionId) => this.manager.get(sessionId)?.transcript.list() ?? [],
       readDiff: (cwd) => readDiff(cwd),
+      // Only sessions this exchange launched are ever passed here, so stopping
+      // one can never take down a tile the human is using.
+      cancel: (sessionId) => this.manager.get(sessionId)?.stop(),
+      stateOf: (sessionId) => this.manager.get(sessionId)?.summary().state,
       note: (entry) => {
         delete status.blockedBy;
         status.entries.push(entry);

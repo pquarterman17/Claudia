@@ -1,4 +1,5 @@
 import type { AgentKind, SessionSummary } from '@claudia/shared';
+import { hasReviewableChanges } from './git-info.js';
 import { lastAssistantText, rebuttalPrompt, reviewPrompt, verdictPrompt, type DebateSubject } from './relay.js';
 
 /**
@@ -89,7 +90,12 @@ export interface DebateResult {
  */
 export function reviewerIsSatisfied(critique: string): boolean {
   const text = critique.trim().toLowerCase();
-  if (/\b(but|however|although|though|except|caveat|concerns?|issues?|wrong|missing)\b/.test(text.slice(0, 400))) {
+  // The WHOLE critique, not the first 400 characters. The agreement match
+  // reads the opening sentence either way, so a critique that opened politely
+  // and put its objection at character 420 was classified as satisfied — the
+  // exact direction the comment above says must never happen. A wider veto
+  // costs at most one extra round; a narrow one drops the finding.
+  if (/\b(but|however|although|though|except|caveat|concerns?|issues?|wrong|missing)\b/.test(text)) {
     return false;
   }
   const opening = text.split(/[.!?\n]/)[0] ?? '';
@@ -116,7 +122,13 @@ async function ask(
 ): Promise<string | undefined> {
   const baseline = deps.cursor(sessionId);
   deps.send(sessionId, text);
-  await deps.awaitSettled(sessionId, timeoutMs);
+  const settled = await deps.awaitSettled(sessionId, timeoutMs);
+  // `isSettled` counts `error` and `stopped` as settled, so waiting for a turn
+  // to end cannot tell finishing from dying. A turn that died still leaves its
+  // mid-turn preamble — "Let me read the diff first." — in the transcript,
+  // after the baseline, passing every other guard. Published as a critique it
+  // then bills the human's own tile for a rebuttal to a non-critique.
+  if (settled.state !== 'idle') return undefined;
   return lastAssistantText(deps.since(sessionId, baseline));
 }
 
@@ -148,6 +160,26 @@ export async function runDebate(spec: DebateSpec, deps: DebateDeps): Promise<Deb
     };
   }
 
+  // Read BEFORE anything is launched. `readDiff` returns a truthy marker for a
+  // clean tree, so an exchange about nothing used to run in full: a reviewer
+  // session, two review turns, two rebuttals and a verdict — five model turns
+  // across two agents, unattended, over "(no tracked changes)". `diff` is the
+  // default subject, so the natural moment to ask for a review — just after
+  // committing — was the one that bought it.
+  let diff: string | undefined;
+  if (spec.subject === 'diff') {
+    diff = (await deps.readDiff(spec.cwd)) ?? undefined;
+    if (!hasReviewableChanges(diff)) {
+      return {
+        authorSessionId: spec.authorSessionId ?? '',
+        reviewerSessionId: '',
+        rounds: 0,
+        entries: [],
+        stoppedBecause: 'there is nothing uncommitted to review',
+      };
+    }
+  }
+
   // Only what this exchange started is ours to stop. The human's own tile
   // keeps running whatever happens here.
   const launched: string[] = [];
@@ -175,7 +207,7 @@ export async function runDebate(spec: DebateSpec, deps: DebateDeps): Promise<Deb
       material = await ask(authorSessionId, spec.objective, deps);
       if (material) record({ round: 0, speaker: spec.author, role: 'opening', text: material });
     } else if (spec.subject === 'diff') {
-      material = (await deps.readDiff(spec.cwd)) ?? undefined;
+      material = diff;
     } else {
       material = lastAssistantText(deps.transcript(authorSessionId));
     }
@@ -232,7 +264,10 @@ export async function runDebate(spec: DebateSpec, deps: DebateDeps): Promise<Deb
       material = spec.subject === 'diff' ? ((await deps.readDiff(spec.cwd)) ?? material) : rebuttal;
     }
 
-    const verdict = await ask(authorSessionId, verdictPrompt(ran), deps);
+    // Nothing was said, so there is nothing to summarise. Asking anyway spends
+    // a turn on the human's own tile describing an exchange that did not
+    // happen — the last of three ways this path used to bill for silence.
+    const verdict = entries.length > 0 ? await ask(authorSessionId, verdictPrompt(ran), deps) : undefined;
     if (verdict) record({ round: ran, speaker: spec.author, role: 'verdict', text: verdict });
 
     return {

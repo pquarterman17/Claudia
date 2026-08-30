@@ -213,10 +213,18 @@ describe('total content budget', () => {
     const images = Array.from({ length: 4 }, () => ({
       mediaType: 'image/png',
       data: 'a'.repeat(MAX_IMAGE_DATA_LEN),
-      name: 'shot.png',
+      name: 'screenshot-with-a-long-but-ordinary-file-name.png',
     }));
-    const result = parseCommand({ type: 'send_prompt', sessionId: 's1', text: 'look', images });
-    expect(result.ok).toBe(true);
+    // A MAXIMAL prompt, not a token one. The earlier version of this test sent
+    // the word "look", so it never exercised the sum it was written to protect
+    // — and the budget was in fact 172 characters too small for the real thing.
+    const result = parseCommand({
+      type: 'send_prompt',
+      sessionId: 's1',
+      text: 'x'.repeat(MAX_TEXT_LEN),
+      images,
+    });
+    expect(result.ok, result.ok ? '' : result.reason).toBe(true);
   });
 
   it('leaves an ordinary command well inside the budget', () => {

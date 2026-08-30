@@ -183,9 +183,15 @@ Recording these so they are not rediscovered as bugs:
   Verified: the UI shows the literal rule string before it is written, never a paraphrase. Only
   Bash/PowerShell (command) and Edit/Write/Read/NotebookEdit (file_path) are covered — Glob/Grep
   were left out because they can carry both `pattern` and `path` at once with no given fact
-  settling which one the rule should key on, and the exact-match file-path rule syntax itself is
-  UNVERIFIED beyond what the given facts confirmed for Bash (the live-probed examples were all
-  Bash). `session.ts` and `gateway.ts` were both at the 400-line ratchet ceiling with no room to
+  settling which one the rule should key on. The Bash form was then VERIFIED end to end against a
+  live session on 2026-08-29: `rmdir nonexistent` prompts, the feature's own `deriveAllowRule` +
+  `addAllowRule` write `Bash(rmdir nonexistent)`, and the identical call then runs unprompted —
+  so an exact rule with no `:*` really does match. Two false readings had to be cleared first:
+  Claude Code auto-approves read-only commands (`whoami`) by its own heuristic regardless of any
+  rule, and an empty permission log means nothing unless the tool call is separately confirmed to
+  have happened. The file-path form (Edit/Write/Read/NotebookEdit) remains UNVERIFIED and cannot
+  be tested on this machine, because the owner's global settings bare-allow those tool names, so
+  they never prompt here for any project. `session.ts` and `gateway.ts` were both at the 400-line ratchet ceiling with no room to
   add a wired-up call; `gateway.ts`'s `broadcastSettings` was extracted to `settings-event.ts`
   to buy room (a real module boundary, not just a line-count trade), and `session.ts` landed
   exactly at 400 by adding one delegating line with no blank-line separator, matching that

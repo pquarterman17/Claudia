@@ -9,6 +9,9 @@ import { MAX_ROUNDS, reviewerIsSatisfied, runDebate, type DebateDeps, type Debat
  * terminate spends real money in a loop.
  */
 
+/** Mirrors TranscriptLog's default cap, scaled down so tests can reach it. */
+const HARNESS_CAP = 500;
+
 interface Harness {
   deps: DebateDeps;
   sent: Array<{ session: string; text: string }>;
@@ -19,6 +22,8 @@ interface Harness {
   /** Transcripts that GROW, as a real one does: a reply is appended, never
    * replaced, so a turn-aware read can tell this turn's answer from the last. */
   transcripts: Map<string, Array<{ kind: string; text: string }>>;
+  /** Total ever appended per session, which keeps counting after eviction. */
+  appended: Map<string, number>;
   cancelled: string[];
   states: Map<string, string>;
   diff: string | null;
@@ -32,6 +37,7 @@ function harness(replies: Record<string, string[]> = {}, diff: string | null = '
     notes: [],
     replies: new Map(Object.entries(replies)),
     transcripts: new Map(),
+    appended: new Map(),
     cancelled: [],
     states: new Map(),
     diff,
@@ -48,11 +54,24 @@ function harness(replies: Record<string, string[]> = {}, diff: string | null = '
       const queued = h.replies.get(session);
       const reply = queued?.shift();
       const items = h.transcripts.get(session) ?? [];
-      if (reply !== undefined) items.push({ kind: 'assistant', text: reply });
+      if (reply !== undefined) {
+        items.push({ kind: 'assistant', text: reply });
+        h.appended.set(session, (h.appended.get(session) ?? 0) + 1);
+        // Evicts from the front like the real TranscriptLog, so a cursor bug
+        // fails here rather than only in production.
+        if (items.length > HARNESS_CAP) items.splice(0, items.length - HARNESS_CAP);
+      }
       h.transcripts.set(session, items);
     },
     awaitSettled: (id) => Promise.resolve({ id, state: 'idle' } as SessionSummary),
     transcript: (id) => h.transcripts.get(id) ?? [],
+    // Models the real log: a cursor that keeps counting past eviction.
+    cursor: (id) => h.appended.get(id) ?? 0,
+    since: (id, cursor) => {
+      const items = h.transcripts.get(id) ?? [];
+      const total = h.appended.get(id) ?? 0;
+      return items.slice(Math.max(0, cursor - (total - items.length)));
+    },
     readDiff: () => Promise.resolve(h.diff),
     note: (entry) => h.notes.push(entry),
     cancel: (id) => h.cancelled.push(id),
@@ -71,12 +90,27 @@ const spec = {
 };
 
 describe('runDebate', () => {
+  it('finds the reply even when the transcript is at its eviction cap', async () => {
+    // Found in review. TranscriptLog splices from the front at 500, so the
+    // array length stays 500 forever — a length-based cursor reports "said
+    // nothing" on precisely the long-lived sessions a human has worked in.
+    const h = harness({ 'session-1': ['a real critique'], author: ['a rebuttal', 'a verdict'] });
+    // A session already at the cap: 500 held, 900 ever appended.
+    h.transcripts.set('session-1', Array.from({ length: 500 }, (_, i) => ({ kind: 'assistant', text: `old ${i}` })));
+    h.appended.set('session-1', 900);
+
+    const result = await runDebate({ ...spec, authorSessionId: 'author', rounds: 1 }, h.deps);
+    expect(result.entries.find((e) => e.role === 'review')?.text).toBe('a real critique');
+    expect(result.stoppedBecause).not.toBe('the reviewer said nothing');
+  });
+
   it('refuses a stopped author instead of reading its last reply as an answer', async () => {
     // Found in review. `awaitSettled` is satisfied instantly by a session that
     // is already settled, so a stopped author "answered" every question with
     // whatever it last said — real, fluent text about the right repository.
     const h = harness();
     h.transcripts.set('author', [{ kind: 'assistant', text: 'stale text from an earlier question' }]);
+    h.appended.set('author', 1);
     h.states.set('author', 'stopped');
     const result = await runDebate({ ...spec, authorSessionId: 'author' }, h.deps);
     expect(result.stoppedBecause).toContain('stopped');
@@ -100,6 +134,7 @@ describe('runDebate', () => {
     // and "the last thing it said" is only an answer if it came after the ask.
     const h = harness();
     h.transcripts.set('session-1', [{ kind: 'assistant', text: 'something it said earlier' }]);
+    h.appended.set('session-1', 1);
     const result = await runDebate({ ...spec, authorSessionId: 'author' }, h.deps);
     expect(result.stoppedBecause).toBe('the reviewer said nothing');
     expect(result.entries).toEqual([]);

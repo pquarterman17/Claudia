@@ -53,6 +53,24 @@ ctrl-click several folders to start a session in each), optionally type a first 
 a permission mode, **Launch**. A session launched with no prompt opens idle, costs nothing, and
 waits for you.
 
+## Desktop shell
+
+`src-tauri/` wraps the same web UI in a native window with a system tray and native
+notifications — no separate app, same server. It **attaches** to an already-running Claudia on
+`4317` instead of ever starting a second one (two servers would mean two disjoint boards of
+sessions), and only spawns one itself if nothing is answering there. Closing the window hides it
+to the tray rather than stopping anything; **Quit** in the tray menu is the only thing that stops
+a server this shell spawned — it never touches one it merely attached to.
+
+```bash
+npm install -g @tauri-apps/cli   # or: npx @tauri-apps/cli dev
+npm run tauri -- dev             # requires a Rust toolchain (rustup.rs)
+```
+
+This is a dev-only wrapper for now — no installer, no auto-updater, no signing. `cargo check`
+and `cargo test` inside `src-tauri/` cover the port-selection and health-probe logic without
+needing a display.
+
 ## Platform support
 
 | | Windows | macOS | Linux |

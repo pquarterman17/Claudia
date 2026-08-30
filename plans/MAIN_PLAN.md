@@ -166,6 +166,18 @@ Recording these so they are not rediscovered as bugs:
 
 ## Completed
 
+- ~~**Ideas taken from a rival orchestrator**~~ (2026-07-26) — the owner liked its controls, not
+  its look. Three gaps were real; the rest of its monitoring layer Claudia already had.
+  **Toolkit**: saved prompts fired at a session already RUNNING (templates only ever launch
+  one) — in the sidebar and the command palette, searchable by prompt text, targeting the
+  focused session or the only one, scopable to a directory. Deliberately not the grid of emoji
+  buttons it came from. **Branch on every tile**: the sharpest finding — tiles were labelled by
+  directory, but the workflow is a branch per feature IN ONE REPO, so parallel sessions looked
+  identical. Cached per directory, on a 15s clock. **Worktree launch**: a session on its own
+  branch beside the repo, reusing rather than failing, and never deleting — a worktree can hold
+  uncommitted work. Explicitly rejected: file tree and diff pane (not an IDE), mascots and
+  emoji, cross-machine agent rendezvous (multi-host was cut deliberately).
+
 - ~~**Licence: AGPL-3.0**~~ (2026-07-26) — Apache-2.0 was the first instinct, chosen to stop a
   company monetizing a fork; it would not, being permissive. Plain GPL would not either, since
   its obligations trigger on distribution and the realistic exploit is running a modified copy

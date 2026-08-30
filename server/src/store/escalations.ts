@@ -21,13 +21,23 @@ export type NewEscalation = Omit<
 };
 
 const COLUMNS =
-  'id, mission_id, task_id, run_id, source, request, reason, severity, resolution, expires_at, created_at, resolved_at, resolution_note';
+  'id, mission_id, task_id, run_id, source, request, reason, severity, resolution, expires_at, created_at, resolved_at, resolution_note, idempotency_key';
 
 export class EscalationRepo {
   constructor(private readonly db: DatabaseSync) {}
 
   create(input: NewEscalation): StoreResult<Escalation> {
     return attempt('raise the escalation', () => {
+      // The same stuck run produces the same escalation on every pulse. Return
+      // what is already there rather than filling the inbox a human is meant
+      // to be reading — and enforce it here, at the write, because a key
+      // checked anywhere above this is only advice.
+      if (input.idempotencyKey !== undefined) {
+        const existing = this.db
+          .prepare(`SELECT ${COLUMNS} FROM escalations WHERE idempotency_key = ?`)
+          .get(input.idempotencyKey);
+        if (existing) return toEscalation(existing as Row);
+      }
       const escalation: Escalation = {
         id: input.id ?? randomUUID(),
         missionId: input.missionId,
@@ -40,9 +50,10 @@ export class EscalationRepo {
         resolution: 'pending',
         expiresAt: input.expiresAt,
         createdAt: Date.now(),
+        ...(input.idempotencyKey !== undefined ? { idempotencyKey: input.idempotencyKey } : {}),
       };
       this.db
-        .prepare(`INSERT INTO escalations (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .prepare(`INSERT INTO escalations (${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           escalation.id,
           escalation.missionId,
@@ -57,6 +68,7 @@ export class EscalationRepo {
           escalation.createdAt,
           null,
           null,
+          escalation.idempotencyKey ?? null,
         );
       return escalation;
     });
@@ -126,5 +138,6 @@ function toEscalation(row: Row): Escalation {
     createdAt: int(row, 'created_at'),
     resolvedAt: optInt(row, 'resolved_at'),
     resolutionNote: optText(row, 'resolution_note'),
+    idempotencyKey: optText(row, 'idempotency_key'),
   };
 }

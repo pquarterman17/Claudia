@@ -5,7 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { applyMigrations } from './migrations.js';
+import { applyMigrations, type Migration } from './migrations.js';
 
 /**
  * The fleet database: one SQLite file beside settings.json.
@@ -132,7 +132,13 @@ export function fleetDbPath(): string {
  * ~/.claudia. ':memory:' works too, though a memory database defeats the point
  * of the thing being tested.
  */
-export function openFleetDb(path: string = fleetDbPath()): StoreResult<DatabaseSync> {
+export function openFleetDb(
+  path: string = fleetDbPath(),
+  /** Overridable so a test can open a database at an OLDER schema and then
+   * upgrade it — the only way to exercise a migration against the real list
+   * rather than a synthetic one appended to it. */
+  migrations?: readonly Migration[],
+): StoreResult<DatabaseSync> {
   return attempt('open the fleet database', () => {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     const db = new DatabaseSync(path, { enableForeignKeyConstraints: true });
@@ -148,7 +154,7 @@ export function openFleetDb(path: string = fleetDbPath()): StoreResult<DatabaseS
       // A second connection (a future reader, or a stale one during restart)
       // should wait briefly rather than fail the command outright.
       db.exec('PRAGMA busy_timeout = 5000');
-      applyMigrations(db);
+      applyMigrations(db, migrations);
       return db;
     } catch (err) {
       // A half-open connection is worse than none: close it before reporting,

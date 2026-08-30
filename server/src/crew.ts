@@ -1,4 +1,4 @@
-import type { AgentKind, CrewMemberStatus } from '@claudia/shared';
+import type { AgentKind, CrewMemberStatus, SessionSummary } from '@claudia/shared';
 import { crewBranch, memberPrompt, parseTasks, reportPrompt, splitPrompt, type CrewTask, type MemberReport } from './crew-plan.js';
 import { lastAssistantText } from './relay.js';
 
@@ -54,7 +54,7 @@ export interface CrewDeps {
   launch: (opts: { cwd: string; agent: AgentKind; branch?: string }) => Promise<LaunchedMember>;
   send: (sessionId: string, text: string) => void;
   /** Resolves when that session's turn ends, however it ends. */
-  awaitSettled: (sessionId: string, timeoutMs: number) => Promise<unknown>;
+  awaitSettled: (sessionId: string, timeoutMs: number) => Promise<SessionSummary>;
   transcript: (sessionId: string) => ReadonlyArray<{ kind: string; text: string }>;
   /** A marker for "everything said so far", stable under transcript eviction. */
   cursor: (sessionId: string) => number;
@@ -84,7 +84,12 @@ export interface CrewResult {
 async function ask(sessionId: string, text: string, deps: CrewDeps, timeoutMs: number): Promise<string | undefined> {
   const baseline = deps.cursor(sessionId);
   deps.send(sessionId, text);
-  await deps.awaitSettled(sessionId, timeoutMs);
+  const settled = await deps.awaitSettled(sessionId, timeoutMs);
+  // A turn that DIED is settled too — `error` and `stopped` both count. Its
+  // mid-turn preamble sits after the baseline and would otherwise be recorded
+  // as the member's summary and fed to the planner as its outcome. On a crew
+  // that report is what the human reads instead of the work.
+  if (settled.state !== 'idle') return undefined;
   return lastAssistantText(deps.since(sessionId, baseline));
 }
 
@@ -201,8 +206,16 @@ async function work(
       deps,
       MEMBER_TIMEOUT_MS,
     );
-    member.state = 'done';
-    if (summary) member.summary = summary;
+    // No summary means the turn did not finish. Reporting `done` with nothing
+    // to show would tell the planner — and the human — that a member that died
+    // mid-edit had completed its piece.
+    if (summary) {
+      member.state = 'done';
+      member.summary = summary;
+    } else {
+      member.state = 'failed';
+      member.error = 'its turn ended without a reply';
+    }
   } catch (err) {
     // Cancelled HERE, not by the run-level handler. Found in review: this
     // catch returns normally, so `Promise.all` resolves, the outer catch never

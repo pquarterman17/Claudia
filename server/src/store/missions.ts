@@ -36,6 +36,24 @@ export type NewMission = Omit<Mission, 'id' | 'createdAt' | 'updatedAt' | 'statu
   maxChildren?: number;
 };
 
+/**
+ * Dependencies checked on the way IN, not only on the way out.
+ *
+ * The column is plain TEXT and the reader refuses anything that is not a list
+ * of strings — and that refusal propagates out of the whole `listByMission`
+ * map, so one malformed row made an entire mission permanently unrenderable
+ * with no repair path. `events.ts` already made the opposite call for the same
+ * hazard, so that one corrupt row cannot break the read that would explain it.
+ * Validating the write is what lets the strict read stay strict.
+ */
+function dependencies(value: readonly string[] | undefined): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((id) => typeof id !== 'string' || id === '')) {
+    refuse('Task dependencies must be a list of task ids.');
+  }
+  return [...value];
+}
+
 export type NewTask = Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'priority' | 'dependsOn' | 'acceptance'> & {
   id?: string;
   status?: TaskStatus;
@@ -170,7 +188,7 @@ export class TaskRepo {
         cwd: input.cwd,
         status: input.status ?? 'proposed',
         priority: input.priority ?? 0,
-        dependsOn: input.dependsOn ?? [],
+        dependsOn: dependencies(input.dependsOn),
         acceptance: input.acceptance ?? '',
         createdAt: now,
         updatedAt: now,

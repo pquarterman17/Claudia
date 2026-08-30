@@ -60,6 +60,33 @@ export const MAX_IMAGES_PER_PROMPT = 4;
  * long list — a human is not going to hand-type sixty agent slots. */
 export const MAX_WORKERS = 8;
 
+/**
+ * Total string content in one command, summed over EVERY field including ones
+ * no command declares.
+ *
+ * Found in review: the structural scan bounded nesting, array length and key
+ * count, but never the size of a string sitting under an unknown key. So
+ * `{"type":"ping","junk":"<megabytes>"}` validated perfectly — `ping` declares
+ * no fields, the junk was never looked at, and the cost was paid anyway in
+ * allocation and parse time, repeatable as fast as a local page can send.
+ *
+ * The budget is the largest legitimate command plus headroom: four images at
+ * MAX_IMAGE_DATA_LEN each, and a prompt beside them. Anything past that is not
+ * a command this protocol has, whatever it calls its fields.
+ */
+export const MAX_TOTAL_TEXT_LEN = MAX_IMAGES_PER_PROMPT * MAX_IMAGE_DATA_LEN + MAX_TEXT_LEN;
+
+/**
+ * The ceiling on a single raw websocket frame, enforced by ws itself before
+ * the bytes are ever assembled into a message.
+ *
+ * Deliberately the outermost of the three limits: the budget above still has
+ * to parse the JSON before it can measure it, and this one does not. Sized
+ * just above MAX_TOTAL_TEXT_LEN so no legitimate command is rejected at the
+ * protocol layer for the sake of JSON punctuation.
+ */
+export const MAX_FRAME_BYTES = MAX_TOTAL_TEXT_LEN + 1_000_000;
+
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 export function isPlainObject(v: unknown): v is Rec {
@@ -81,12 +108,18 @@ export function isPlainObject(v: unknown): v is Rec {
  * bounded, though — `answers` is keyed by arbitrary question text, so a key
  * is exactly as attacker-reachable as a value.
  */
-export function scanStructure(v: unknown, depth = 0): string | undefined {
+export function scanStructure(v: unknown, depth = 0, budget = { text: MAX_TOTAL_TEXT_LEN }): string | undefined {
   if (depth > MAX_DEPTH) return `nesting too deep (max ${MAX_DEPTH})`;
+  if (typeof v === 'string') {
+    // Charged whatever field it is under, declared or not. A per-field check
+    // cannot see an undeclared one, which is precisely where the cost hid.
+    budget.text -= v.length;
+    return budget.text < 0 ? `too much text in one command (max ${MAX_TOTAL_TEXT_LEN})` : undefined;
+  }
   if (Array.isArray(v)) {
     if (v.length > MAX_ARRAY_LEN) return `array has too many entries (max ${MAX_ARRAY_LEN})`;
     for (const item of v) {
-      const err = scanStructure(item, depth + 1);
+      const err = scanStructure(item, depth + 1, budget);
       if (err) return err;
     }
     return undefined;
@@ -97,7 +130,9 @@ export function scanStructure(v: unknown, depth = 0): string | undefined {
     for (const key of keys) {
       if (FORBIDDEN_KEYS.has(key)) return `forbidden key "${key}"`;
       if (key.length > MAX_TEXT_LEN) return 'object key too long';
-      const err = scanStructure(v[key], depth + 1);
+      budget.text -= key.length;
+      if (budget.text < 0) return `too much text in one command (max ${MAX_TOTAL_TEXT_LEN})`;
+      const err = scanStructure(v[key], depth + 1, budget);
       if (err) return err;
     }
   }

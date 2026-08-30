@@ -396,3 +396,35 @@ describe('records from other missions', () => {
     expect(d.find((x) => x.kind === 'dispatch')).toMatchObject({ attempt: 1 });
   });
 });
+
+describe('found by adversarial review', () => {
+  it('does not unblock and re-block the same task on every pulse', () => {
+    // A task blocked because its attempts are spent was unblocked (its
+    // dependencies are fine) and immediately re-blocked — two events a
+    // minute, forever, describing a state that never changed.
+    const t = task({ status: 'blocked' });
+    const runs = [1, 2, 3].map((attempt) => run({ taskId: t.id, attempt, state: 'failed' }));
+    const d = reconcile({ mission: mission(), tasks: [t], runs, policy: POLICY });
+    expect(d.filter((x) => x.kind === 'unblock')).toEqual([]);
+    expect(d.filter((x) => x.kind === 'block')).toEqual([]);
+    expect(d.some((x) => x.kind === 'dispatch')).toBe(false);
+  });
+
+  it('still unblocks a task that can actually run once unblocked', () => {
+    // The fix must not silence the legitimate case.
+    const dep = task({ status: 'accepted' });
+    const t = task({ status: 'blocked', dependsOn: [dep.id] });
+    const d = reconcile({ mission: mission(), tasks: [dep, t], runs: [], policy: POLICY });
+    expect(d.some((x) => x.kind === 'unblock' && x.taskId === t.id)).toBe(true);
+    expect(d.some((x) => x.kind === 'dispatch' && x.taskId === t.id)).toBe(true);
+  });
+
+  it('says nothing new about a task already blocked on spent attempts', () => {
+    const t = task({ status: 'blocked' });
+    const runs = [run({ taskId: t.id, attempt: 3, state: 'failed' })];
+    const first = reconcile({ mission: mission(), tasks: [t], runs, policy: POLICY });
+    const second = reconcile({ mission: mission(), tasks: [t], runs, policy: POLICY });
+    expect(first).toEqual(second);
+    expect(first).toEqual([{ kind: 'hold', reason: 'no task is ready' }]);
+  });
+});

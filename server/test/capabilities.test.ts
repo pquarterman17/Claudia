@@ -74,8 +74,12 @@ describe('checkCapability', () => {
   it('refuses a stored grant recorded as child-issued', () => {
     // Should be unreachable, since a child cannot write to the store. Worth
     // failing on rather than honouring if it ever appears.
+    // The message changed with the fix: the check is now an allow-list, so a
+    // child is refused as one of many untrusted issuers rather than as the
+    // single denied one.
     const verdict = checkCapability('git.push', REQUEST, store(grant({ issuedBy: 'child', capabilities: ['git.push'] })), NOW);
-    expect(verdict).toMatchObject({ ok: false, reason: 'a child cannot grant a capability' });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok === false && verdict.reason).toContain('child');
   });
 
   it("refuses another run's grant, so approval cannot move sideways", () => {
@@ -244,5 +248,68 @@ describe('requestedCapability', () => {
     expect(requestedCapability(hostile)).toBe('git.push');
     const started = store(defaultGrant('g1', REQUEST));
     expect(checkCapability('git.push', REQUEST, started, NOW).ok).toBe(false);
+  });
+});
+
+describe('found by adversarial review', () => {
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])('refuses an elevated grant expiring at %s', (expiresAt) => {
+    // A non-finite deadline satisfied neither `now >= expiresAt` nor the
+    // `=== undefined` check, so one bad `Number(...)` in an approval handler
+    // produced a permanent elevated grant — through the very rule written to
+    // prevent standing permissions.
+    const g = grant({ capabilities: ['git.push'], expiresAt });
+    expect(checkCapability('git.push', REQUEST, store(g), NOW).ok).toBe(false);
+  });
+
+  it('refuses when the clock itself is unusable', () => {
+    const g = grant({ capabilities: ['git.push'], expiresAt: NOW + 1 });
+    expect(checkCapability('git.push', REQUEST, store(g), Number.NaN).ok).toBe(false);
+  });
+
+  it.each(['manager', 'Child', 'robot', undefined])('refuses a grant issued by %s', (issuedBy) => {
+    // The check was a denylist of exactly one value, so every other issuer
+    // passed — including `Child`, which defeated it on a capital letter, and
+    // `manager`, which is a model whose context is fed by child reports.
+    const g = grant({ capabilities: ['git.push'], expiresAt: NOW + 60_000, issuedBy: issuedBy as never });
+    expect(checkCapability('git.push', REQUEST, store(g), NOW).ok).toBe(false);
+  });
+
+  it.each([['human'], ['system']])('honours a grant issued by %s', (issuedBy) => {
+    const g = grant({ capabilities: ['git.push'], expiresAt: NOW + 60_000, issuedBy: issuedBy as never });
+    expect(checkCapability('git.push', REQUEST, store(g), NOW)).toEqual({ ok: true });
+  });
+
+  it('strips a carriage return, which can show a human the opposite of the record', () => {
+    // Rendered anywhere CR is honoured, this reads "tests: all passed" while
+    // the stored text says the run failed. A child showing a false green is
+    // the one thing this function exists to prevent.
+    const result = sanitizeReport('tests: 3 FAILED\rtests: all passed');
+    expect(result.ok && result.text).toBe('tests: 3 FAILEDtests: all passed');
+  });
+
+  it('strips bidirectional overrides, which reorder what a human reads', () => {
+    const result = sanitizeReport('safe \u202ereversed');
+    expect(result.ok && result.text).toBe('safe reversed');
+  });
+
+  it('counts CR-delimited output against the line bound', () => {
+    // `split` only knows about newlines, so a CR-delimited report of two
+    // thousand lines was one line to the bound.
+    const raw = Array.from({ length: 2_000 }, (_, i) => `line ${i}`).join('\r');
+    const result = sanitizeReport(raw);
+    expect(result.ok && result.text).not.toContain('\r');
+  });
+
+  it('reads a capability request from CRLF output', () => {
+    // Windows is the platform this app is developed on; a CRLF child request
+    // never matched, so it was silently never escalated and the run stalled.
+    expect(requestedCapability('done\r\nNEEDS CAPABILITY: git.push\r\n')).toBe('git.push');
+  });
+
+  it('does not let two different runs collide on one escalation key', () => {
+    // The key is unique in the store, so a collision merges two runs' distinct
+    // requests into one inbox row — and a human approves something other than
+    // what they read.
+    expect(escalationKey('r1', 'a:b')).not.toBe(escalationKey('r1:a', 'b'));
   });
 });

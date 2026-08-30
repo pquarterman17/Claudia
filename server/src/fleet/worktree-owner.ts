@@ -1,4 +1,4 @@
-import type { WorktreeRecord } from '@claudia/shared';
+import { isLegalRoute, WORKTREE_TRANSITIONS, type WorktreeRecord, type WorktreeState } from '@claudia/shared';
 
 /**
  * Whether two paths name the same place.
@@ -15,8 +15,14 @@ import type { WorktreeRecord } from '@claudia/shared';
  */
 export function samePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
   const normalize = (p: string): string => {
-    const slashed = p.replace(/\\/g, '/').replace(/\/+$/, '');
-    return platform === 'win32' ? slashed.toLowerCase() : slashed;
+    // Backslash is a SEPARATOR on Windows and a legal filename character on
+    // POSIX, so translating it everywhere made `/repo/a\b` and `/repo/a/b` —
+    // two different directories — compare equal. The trailing-slash strip
+    // keeps one character, or `/` reduces to `''` and an unwritten path
+    // equals the filesystem root.
+    const separated = platform === 'win32' ? p.replace(/\\/g, '/') : p;
+    const trimmed = separated.replace(/(.)\/+$/, '$1');
+    return platform === 'win32' ? trimmed.toLowerCase() : trimmed;
   };
   return normalize(a) === normalize(b);
 }
@@ -40,7 +46,11 @@ export function samePath(a: string, b: string, platform: NodeJS.Platform = proce
 
 /** What git actually says about a path, as opposed to what the fleet believes. */
 export interface ObservedWorktree {
-  exists: boolean;
+  /** Absent means nobody could tell. Every other fact here is tri-state and
+   * refuses on unknown; `exists` was the one required boolean, so a caller
+   * whose `statSync` threw had to say `false` — the single value that skips
+   * the identity, dirty, merged and confirmation vetoes and returns `remove`. */
+  exists?: boolean;
   /** Main repository this path is a worktree of, when it is one at all. */
   repo?: string;
   branch?: string;
@@ -76,6 +86,9 @@ export function claimWorktree(
   record: WorktreeRecord | undefined,
   observed: ObservedWorktree,
 ): ClaimVerdict {
+  if (observed.exists === undefined) {
+    return { kind: 'refuse', reason: 'cannot tell whether anything is at that path' };
+  }
   if (!record) {
     if (!observed.exists) return { kind: 'create', reason: 'no worktree here yet' };
     // The ambiguous case the plan calls out by name. Something is there and
@@ -143,8 +156,38 @@ export function claimWorktree(
 }
 
 export type CleanupVerdict =
-  | { kind: 'remove'; reason: string }
+  /**
+   * `path` is the legal route to `removed`, in order, and applying only its
+   * last element gets the write refused: `removed` is reachable only from
+   * `archived`, so a finished worktree goes `idle -> archived -> removed`.
+   * Carried here rather than left to the caller because a caller that has just
+   * been told "remove" will write `removed`, and this module knows better.
+   */
+  | { kind: 'remove'; path: readonly WorktreeState[]; reason: string }
   | { kind: 'keep'; reason: string };
+
+/**
+ * The route to `removed` from where the record actually is.
+ *
+ * Named per starting state rather than searched for: `removed` is reachable
+ * only through `archived`, and archiving first is the step that makes a
+ * removal previewable. A record already `removed` has no route and no work to
+ * do — saying "remove" there would be a decision nobody can act on.
+ */
+function removalRoute(state: WorktreeState): readonly WorktreeState[] | undefined {
+  if (state === 'archived') return ['removed'];
+  if (state === 'idle' || state === 'stale') return ['archived', 'removed'];
+  return undefined;
+}
+
+/** A removal that is legal from where the record actually is. */
+function removal(record: WorktreeRecord, reason: string): CleanupVerdict {
+  const route = removalRoute(record.state);
+  if (!route || !isLegalRoute(record.state, route, WORKTREE_TRANSITIONS)) {
+    return { kind: 'keep', reason: `a worktree that is ${record.state} cannot be removed` };
+  }
+  return { kind: 'remove', path: route, reason };
+}
 
 export interface CleanupOptions {
   /**
@@ -181,7 +224,12 @@ export function cleanupWorktree(
   observed: ObservedWorktree,
   options: CleanupOptions,
 ): CleanupVerdict {
-  if (record.ownerTaskId && options.busyTaskIds.has(record.ownerTaskId)) {
+  // An unowned record cannot be checked against the activity snapshot, so it
+  // cannot be shown to be idle. claimWorktree already refuses to WRITE into
+  // one of these ("no recorded owner"); deleting it on the same evidence
+  // would make the destructive path the more permissive of the two.
+  if (!record.ownerTaskId) return { kind: 'keep', reason: 'that worktree has no recorded owner' };
+  if (options.busyTaskIds.has(record.ownerTaskId)) {
     return { kind: 'keep', reason: 'a run is using it right now' };
   }
   // A record the fleet still considers active is not a cleanup candidate,
@@ -191,7 +239,7 @@ export function cleanupWorktree(
     return { kind: 'keep', reason: 'the fleet still has it marked active' };
   }
   if (!observed.exists) {
-    return { kind: 'remove', reason: 'the directory is already gone; clearing the record' };
+    return removal(record, 'the directory is already gone; clearing the record');
   }
 
   // Identity first, and required rather than compared-if-present. Removing the
@@ -224,7 +272,7 @@ export function cleanupWorktree(
     };
   }
 
-  return { kind: 'remove', reason: observed.merged ? 'merged and clean' : 'clean, and removal was confirmed' };
+  return removal(record, observed.merged ? 'merged and clean' : 'clean, and removal was confirmed');
 }
 
 /**

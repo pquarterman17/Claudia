@@ -102,6 +102,16 @@ export function malformedEvidence(evidence: Evidence): string | undefined {
   if (files !== undefined && (!Number.isSafeInteger(files) || files < 0)) {
     return `filesChanged is ${files}, which is not a number of files`;
   }
+  if (evidence.tests !== undefined && !Array.isArray(evidence.tests)) {
+    return 'the test results are not a list';
+  }
+  // A head that IS the base cannot have a diff: `git diff base..head` between
+  // one commit and itself is empty by definition. A positive `filesChanged`
+  // beside them is a working tree that was edited and never committed — the
+  // headline failure this gate exists to catch, walking straight through it.
+  if (evidence.headSha && evidence.baseSha && evidence.headSha === evidence.baseSha && (evidence.filesChanged ?? 0) > 0) {
+    return 'the head commit is the base commit, so no files can have changed';
+  }
   for (const test of evidence.tests ?? []) {
     if (typeof test?.command !== 'string' || test.command.trim() === '') {
       return 'a test result has no command';
@@ -197,10 +207,14 @@ export function blocksCleanup(
     return observed.dirty ? 'it has uncommitted work' : 'cannot confirm it is clean';
   }
   if (!accepted) return 'the task has not been accepted';
+  // A declared field may fill an UNKNOWN. It may not overrule a positive
+  // observation: git saying "not merged" beats a `prState` that was true when
+  // the PR merged and stale by the time the child pushed three more commits.
+  if (observed.merged === false) {
+    return `${evidence.branch ?? 'the branch'} is not merged anywhere`;
+  }
   if (observed.merged !== true && evidence.prState !== 'merged') {
-    return observed.merged === false
-      ? `${evidence.branch ?? 'the branch'} is not merged anywhere`
-      : `cannot confirm ${evidence.branch ?? 'the branch'} is merged anywhere`;
+    return `cannot confirm ${evidence.branch ?? 'the branch'} is merged anywhere`;
   }
   // The SAME policy the acceptance was made under. Found in review: this
   // recomputed with the default, so a task accepted under `allowMissingTests`

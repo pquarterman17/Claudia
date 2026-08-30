@@ -1,5 +1,6 @@
 import { GitCache } from './git-info.js';
-import type { FeedStep, FeedStepPatch, McpServerInfo, SessionSummary, SlashCommandInfo, TranscriptItem } from '@claudia/shared';
+import type { FeedStep, FeedStepPatch, FileMatch, McpServerInfo, SessionSummary, SlashCommandInfo, TranscriptItem } from '@claudia/shared';
+import { searchFiles as searchWorkingDir } from './file-search.js';
 import { ClaudiaSession, type LaunchOptions } from './session.js';
 
 const FEED_CAP = 500;
@@ -59,6 +60,12 @@ export class SessionManager {
 
   get(id: string): ClaudiaSession | undefined {
     return this.sessions.get(id);
+  }
+
+  /** Fuzzy file lookup for @-mention completion, scoped to one session's own directory. */
+  searchFiles(id: string, query: string): Promise<FileMatch[]> {
+    const session = this.get(id);
+    return session ? searchWorkingDir(session.cwd, query) : Promise.resolve([]);
   }
 
   remove(id: string): void {

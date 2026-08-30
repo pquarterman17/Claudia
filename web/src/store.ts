@@ -3,6 +3,7 @@ import {
   CLIENT_PING_MS,
   type ClientCommand,
   type FeedStep,
+  type FileMatch,
   type HostPlatform,
   type EffectiveSettings,
   type McpServerInfo,
@@ -45,6 +46,10 @@ export interface ClaudiaState {
   models: Record<string, ModelChoice[]>;
   /** Slash commands each session's CLI knows — richer once get_commands resolves. */
   commands: Record<string, SlashCommandInfo[]>;
+  /** Latest @-mention file search results, keyed by session. Paired with the
+   * query they answer so a slow reply for an old keystroke can never render
+   * over a newer one. */
+  fileMatches: Record<string, { query: string; matches: FileMatch[] }>;
   /** Full conversation transcript per session — the terminal-parity view. */
   transcripts: Record<string, TranscriptItem[]>;
   savedSessions: SavedSession[];
@@ -86,6 +91,7 @@ class Store {
     drafts: {},
     models: {},
     commands: {},
+    fileMatches: {},
     transcripts: {},
     savedSessions: [],
     checkpoints: {},
@@ -253,6 +259,7 @@ class Store {
           drafts: Object.fromEntries(Object.entries(this.state.drafts).filter(([k]) => k !== event.sessionId)),
           models: Object.fromEntries(Object.entries(this.state.models).filter(([k]) => k !== event.sessionId)),
           commands: Object.fromEntries(Object.entries(this.state.commands).filter(([k]) => k !== event.sessionId)),
+          fileMatches: Object.fromEntries(Object.entries(this.state.fileMatches).filter(([k]) => k !== event.sessionId)),
           transcripts: Object.fromEntries(
             Object.entries(this.state.transcripts).filter(([k]) => k !== event.sessionId),
           ),
@@ -302,6 +309,11 @@ class Store {
         return;
       case 'effective_settings':
         this.set({ effectiveSettings: { ...this.state.effectiveSettings, [event.sessionId]: event.settings } });
+        return;
+      case 'file_matches':
+        this.set({
+          fileMatches: { ...this.state.fileMatches, [event.sessionId]: { query: event.query, matches: event.matches } },
+        });
         return;
       case 'session_commands': {
         // An empty reply means the live supportedCommands() fetch failed or

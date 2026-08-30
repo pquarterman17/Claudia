@@ -2,10 +2,12 @@ import type { SessionSummary, SlashCommandInfo } from '@claudia/shared';
 import { useRef, useState } from 'react';
 import { fmtCost, fmtTokens } from '../format';
 import { capabilitiesFor } from '../agent-kinds';
+import { useMentionCompletion } from '../mention';
 import { PromptHistory } from '../prompt-history';
 import { send, useClaudia } from '../store';
 import { COLORS, statusOf } from '../status';
 import { ImageStrip, MAX_IMAGES, readImageFiles, type PendingImage } from './ImageStrip';
+import { MentionDropdown } from './MentionDropdown';
 import { ReasoningControls } from './ReasoningControls';
 
 interface Props {
@@ -43,11 +45,13 @@ function matchCommands(commands: SlashCommandInfo[], query: string): SlashComman
  * fresh-session shortcut, and a model picker.
  */
 export function Composer({ session }: Props) {
-  const { models, commands } = useClaudia();
+  const { models, commands, fileMatches } = useClaudia();
   const [draft, setDraft] = useState('');
   const [modelOpen, setModelOpen] = useState(false);
   const [images, setImages] = useState<PendingImage[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
+  const promptInput = useRef<HTMLInputElement>(null);
+  const mention = useMentionCompletion(session.id, fileMatches, draft, setDraft, promptInput);
   /** Whether Up/Down is currently walking history, and what to restore past the newest entry. */
   const recalling = useRef(false);
   const preRecallDraft = useRef('');
@@ -69,6 +73,7 @@ export function Composer({ session }: Props) {
     send({ type: 'send_prompt', sessionId: session.id, text, images: images.map(({ preview: _preview, id: _id, ...image }) => image) });
     if (text) historyFor(session.id).push(text);
     recalling.current = false;
+    mention.reset();
     setDraft('');
     setImages([]);
   };
@@ -169,6 +174,7 @@ export function Composer({ session }: Props) {
       >
         <ImageStrip images={images} onRemove={(id) => setImages((current) => current.filter((c) => c.id !== id))} />
         <input
+          ref={promptInput}
           aria-label="Session prompt"
           value={draft}
           placeholder={
@@ -179,6 +185,7 @@ export function Composer({ session }: Props) {
             const next = e.target.value;
             setDraft(next);
             if (next.startsWith('/')) requestCommandsOnce();
+            mention.onDraftChange(next, e.target.selectionStart ?? next.length);
           }}
           onPaste={(e) => {
             const files = e.clipboardData.files;
@@ -198,6 +205,11 @@ export function Composer({ session }: Props) {
               completeCommand(commandMatches[0]!.name);
               return;
             }
+            if (e.key === 'Tab' && mention.matches.length > 0) {
+              e.preventDefault();
+              mention.complete(mention.matches[0]!.path);
+              return;
+            }
             if (e.key === 'ArrowUp') {
               e.preventDefault();
               recallPrev();
@@ -209,6 +221,7 @@ export function Composer({ session }: Props) {
             }
           }}
         />
+        {commandMatches.length === 0 && <MentionDropdown matches={mention.matches} onSelect={mention.complete} />}
         {commandMatches.length > 0 && (
           <div
             className="mono"

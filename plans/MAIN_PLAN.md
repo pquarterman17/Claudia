@@ -147,21 +147,6 @@ path — measure before building.
     worth building, and saves a Read round-trip every time it is used.
 
 11. **Tauri wrap** — native window/tray/notifications around the web UI
-12. **Per-project auto-approve rules — RESPECIFIED, do not build as written.** The diff-peek
-    half shipped (approvals render a before/after preview). The auto-approve half should not be
-    built the way it is worded, because Claude Code ALREADY has a permission system and Claudia
-    inherits it: `~/.claude/settings.json` and a project's `.claude/settings.json` are what
-    decide whether a tool call needs asking. A second, Claudia-owned rule set on top would be
-    two places to look, free to disagree, with no answer to "which one won".
-    - What is actually wanted is the same outcome through the existing system: from an approval
-      banner, "always allow this in this project" writes an allow rule into the project's
-      `.claude/settings.json`, and the effective-settings inspector (already built) explains why
-      something was auto-approved.
-    - Worth doing carefully rather than quickly: it writes a file that grants standing
-      permission, and `resolveSettings()` already resolves the same merge the CLI uses, so
-      Claudia can show the result rather than guess it.
-    - Related and worth the owner's eye first: the current global allowlist grants bare `Write`
-      and `Edit`, so file writes anywhere on the machine auto-approve in every session.
 
 ### Terminal features with no SDK path (documented, not planned)
 
@@ -180,6 +165,31 @@ Recording these so they are not rediscovered as bugs:
 
 ## Completed
 
+- ~~**#12 Per-project auto-allow rule, respecified**~~ (2026-08-29) — an approval banner offers
+  a third action, "Always allow `<exact rule>` in this project", that writes into the project's
+  `.claude/settings.local.json` (not `.claude/settings.json` — that one is shared and often
+  committed; a personal convenience rule has no business in a commit, and the `.local` file
+  already wins on precedence) and approves the pending call. No parallel rule system: this is
+  the one place Claude Code itself looks. The derived rule is always an EXACT match, never a
+  `:*` prefix — a prefix would authorize more than the single call just approved (`Bash(npm run
+  build:*)` would also cover `npm run build && rm -rf /`), so `permission-rules.ts` only ever
+  emits the literal command or path, wrapped in `ToolName(...)`, and returns undefined (no
+  button offered) for anything it cannot narrow this way — bare wildcards, empty/whitespace,
+  oversized input, multi-line commands, `..` path traversal, and any tool name it does not
+  specifically recognise, which is what keeps a Codex tool call ('Codex Command'/'Codex Patch')
+  from ever getting a button that would write a rule Codex never reads. `settings-writer.ts`
+  merges the rule into `permissions.allow` via temp-file + fsync + rename, preserving every
+  other key and rule, exact-match deduping, and aborting untouched on unparseable existing JSON.
+  Verified: the UI shows the literal rule string before it is written, never a paraphrase. Only
+  Bash/PowerShell (command) and Edit/Write/Read/NotebookEdit (file_path) are covered — Glob/Grep
+  were left out because they can carry both `pattern` and `path` at once with no given fact
+  settling which one the rule should key on, and the exact-match file-path rule syntax itself is
+  UNVERIFIED beyond what the given facts confirmed for Bash (the live-probed examples were all
+  Bash). `session.ts` and `gateway.ts` were both at the 400-line ratchet ceiling with no room to
+  add a wired-up call; `gateway.ts`'s `broadcastSettings` was extracted to `settings-event.ts`
+  to buy room (a real module boundary, not just a line-count trade), and `session.ts` landed
+  exactly at 400 by adding one delegating line with no blank-line separator, matching that
+  file's existing one-liner cluster.
 - ~~**#43 Compaction visibility**~~ (2026-08-29) — a compaction now lands in the feed naming
   whether it was automatic or a `/compact` you ran, and the context size before it. Review
   caught the count being formatted with a bare `toLocaleString()`, which follows the HOST

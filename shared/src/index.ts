@@ -105,6 +105,13 @@ export interface PendingApproval {
   requestedAt: number;
   /** A bounded, typed preview for file mutations. Never contains raw tool input. */
   change?: ApprovalChange;
+  /**
+   * The exact settings.local.json rule text "Always allow in this project"
+   * would write, or absent when nothing narrow and safe could be derived.
+   * The UI must render this literal string, never a paraphrase, and must
+   * not offer the button at all when it is absent. See permission-rules.ts.
+   */
+  alwaysAllowRule?: string;
 }
 /**
  * Per-model cumulative usage, taken from the SDK result message's `modelUsage`.

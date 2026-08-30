@@ -361,6 +361,9 @@ export function SessionTile({
               send({ type: 'approve', sessionId: session.id, requestId: session.pendingApproval!.requestId })
             }
             onDeny={() => send({ type: 'deny', sessionId: session.id, requestId: session.pendingApproval!.requestId })}
+            onAlwaysAllow={() =>
+              send({ type: 'always_allow_project', sessionId: session.id, requestId: session.pendingApproval!.requestId })
+            }
           />
         )
       )}

@@ -6,10 +6,11 @@ interface Props {
   now: number;
   onApprove: () => void;
   onDeny: () => void;
+  onAlwaysAllow: () => void;
 }
 
 /** Inline permission prompt — resolves the session's canUseTool promise. */
-export function ApprovalBanner({ approval, now, onApprove, onDeny }: Props) {
+export function ApprovalBanner({ approval, now, onApprove, onDeny, onAlwaysAllow }: Props) {
   return (
     <div className="approval-banner" style={{ flexWrap: 'wrap' }}>
       <span
@@ -44,6 +45,19 @@ export function ApprovalBanner({ approval, now, onApprove, onDeny }: Props) {
       <button className="btn btn-ghost" style={{ fontSize: 11, padding: '3px 9px', color: '#9397ab' }} onClick={onDeny}>
         Deny
       </button>
+      {approval.alwaysAllowRule && (
+        // The literal rule text sits in the label itself, not just a tooltip —
+        // the user must see exactly what gets written before granting standing
+        // permission, never a paraphrase like "always allow this command".
+        <button
+          className="btn btn-ghost"
+          title={`Writes ${approval.alwaysAllowRule} to .claude/settings.local.json`}
+          style={{ fontSize: 11, padding: '3px 9px', color: '#9397ab' }}
+          onClick={onAlwaysAllow}
+        >
+          Always allow <span className="mono">{approval.alwaysAllowRule}</span>
+        </button>
+      )}
       <button className="btn btn-primary" style={{ fontSize: 11, padding: '3px 11px' }} onClick={onApprove}>
         Approve
       </button>

@@ -1,7 +1,9 @@
 import type { FeedStep, PendingQuestion, SessionState } from '@claudia/shared';
 import type { ApprovalGate, PermissionResult } from './approval-gate.js';
 import { approvalStep, infoStep, summarizeToolInput } from './feed.js';
+import { deriveAllowRule } from './permission-rules.js';
 import { parseQuestions } from './question-parser.js';
+import { addAllowRule } from './settings-writer.js';
 
 /** The slice of a session the user-decision actions need. */
 export interface GateCtx {
@@ -66,4 +68,39 @@ export function answerQuestion(ctx: GateCtx, requestId: string, answers: Record<
   ctx.feed(infoStep('Answered', Object.values(answers).join(' · ')));
   ctx.setState('working');
   return true;
+}
+
+export interface AlwaysAllowResult {
+  ok: boolean;
+  /** The rule that was written on success; a user-facing reason on failure. */
+  message: string;
+}
+
+/**
+ * Writes a standing allow rule for the pending call into the project's
+ * .claude/settings.local.json, then approves the call it was derived from.
+ *
+ * Re-derives the rule from the gate's OWN stored input rather than trusting
+ * anything the client sends — the client only ever echoed back a preview
+ * string for display, and this is the one function that actually grants
+ * standing permission, so it must not take rule text as an argument.
+ */
+export async function alwaysAllowProject(ctx: GateCtx, requestId: string, cwd: string): Promise<AlwaysAllowResult> {
+  const pending = ctx.gate.current;
+  const input = ctx.gate.rawInputFor(requestId);
+  if (!pending || pending.requestId !== requestId || !input) {
+    return { ok: false, message: 'That approval is no longer waiting.' };
+  }
+  const rule = deriveAllowRule(pending.toolName, input);
+  if (!rule) return { ok: false, message: 'This tool call has no safe, narrow rule to always-allow.' };
+
+  const written = await addAllowRule(cwd, rule);
+  if (!written.ok) return { ok: false, message: written.error ?? 'Could not write the settings file.' };
+
+  approve(ctx, requestId);
+  ctx.feed(infoStep(
+    written.alreadyPresent ? 'Already allowed in this project' : 'Always allowed in this project',
+    `${rule} — .claude/settings.local.json`,
+  ));
+  return { ok: true, message: rule };
 }

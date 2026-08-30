@@ -104,6 +104,13 @@ export type ClientCommand =
   | { type: 'send_prompt'; sessionId: string; text: string; images?: import('./prompt-image.js').PromptImage[] }
   | { type: 'approve'; sessionId: string; requestId: string }
   | { type: 'deny'; sessionId: string; requestId: string; message?: string }
+  /**
+   * Writes the pending call's exact-match allow rule into the project's
+   * .claude/settings.local.json, then approves that call. The server
+   * re-derives the rule from its own stored input rather than trusting
+   * whatever the client echoes back — see gate-actions.ts.
+   */
+  | { type: 'always_allow_project'; sessionId: string; requestId: string }
   /** Answers keyed by question text, as the AskUserQuestion tool expects. */
   | { type: 'answer_question'; sessionId: string; requestId: string; answers: Record<string, string> }
   | { type: 'interrupt'; sessionId: string }

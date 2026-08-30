@@ -5,6 +5,7 @@ import {
   backoffMs,
   DEFAULT_WATCHDOG,
   nextAction,
+  retryKey,
   type RunObservation,
 } from '../src/fleet/watchdog.js';
 
@@ -142,5 +143,39 @@ describe('backoffMs', () => {
 
   it('is deterministic, because there is one fleet and nothing to spread out', () => {
     expect(backoffMs(3)).toBe(backoffMs(3));
+  });
+});
+
+describe('a tick is not a launch', () => {
+  it('gives the same run and attempt the same retry key on every tick', () => {
+    // Found in review. Every tick over the same silent run returned the same
+    // retry, so a pulse each minute would have started a session each minute.
+    // A derived key makes repeated ticks collide on one reservation.
+    const r = run({ attempt: 1 });
+    const first = nextAction({ kind: 'silent', reason: 'x' }, r);
+    const second = nextAction({ kind: 'silent', reason: 'x' }, r);
+    expect(first).toEqual(second);
+    expect(first.kind === 'retry' && first.key).toBe(retryKey('r1', 2));
+  });
+
+  it('says when the backoff actually expires, not just how long it is', () => {
+    // A caller that has not reached notBefore does nothing, which is what
+    // makes a fast pulse safe.
+    const r = run({ attempt: 1, endedAt: 5_000 });
+    const action = nextAction({ kind: 'silent', reason: 'x' }, r);
+    expect(action.kind === 'retry' && action.notBefore).toBe(5_000 + DEFAULT_WATCHDOG.retryBaseMs);
+  });
+
+  it('gives each attempt its own key', () => {
+    const a = nextAction({ kind: 'silent', reason: 'x' }, run({ attempt: 1 }));
+    const b = nextAction({ kind: 'silent', reason: 'x' }, run({ attempt: 2 }));
+    expect(a.kind === 'retry' && a.key).not.toBe(b.kind === 'retry' && b.key);
+  });
+
+  it('files one escalation for a stuck run however often it is ticked', () => {
+    const r = run();
+    const first = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, r);
+    const second = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, r);
+    expect(first.kind === 'escalate' && first.key).toBe(second.kind === 'escalate' && second.key);
   });
 });

@@ -50,17 +50,48 @@ export const ELEVATED: ReadonlySet<Capability> = new Set<Capability>([
 ]);
 
 /**
- * A capability grant, bound to one run.
+ * A capability grant.
  *
- * Bound rather than ambient because the alternative — a mission-wide grant —
- * means approving a push for one task silently approves it for every task the
- * mission ever starts, including ones created after the human said yes.
+ * `id` is opaque and server-issued, and the grant is only ever reached by
+ * LOOKING IT UP for a run — never by being handed one. Found in review: the
+ * earlier version took a `Grant` object from the caller and trusted its
+ * `issuedBy` field, so an object claiming `issuedBy: "system"` passed every
+ * check. Provenance that travels with the thing being checked is not
+ * provenance; it is a suggestion.
+ *
+ * `scope` is here for the same reason the binding is per-run: an approval to
+ * push is an approval to push THIS task's branch from THIS worktree, not a
+ * standing permission the mission carries afterwards.
  */
 export interface Grant {
+  id: string;
   runId: string;
+  missionId: string;
+  taskId: string;
+  scope: GrantScope;
   capabilities: readonly Capability[];
+  /** Recorded for the audit trail. Never the basis of trust — see above. */
   issuedBy: FleetActor;
   expiresAt?: number;
+}
+
+export interface GrantScope {
+  repo: string;
+  worktreePath: string;
+}
+
+/** Where the server keeps grants. The only way to obtain one. */
+export interface GrantStore {
+  find: (runId: string) => Grant | undefined;
+}
+
+/** What is being attempted, and by whom, in the caller's own words. */
+export interface CapabilityRequest {
+  runId: string;
+  missionId: string;
+  taskId: string;
+  repo: string;
+  worktreePath: string;
 }
 
 export type CapabilityCheck =
@@ -68,24 +99,36 @@ export type CapabilityCheck =
   | { ok: false; reason: string; elevated: boolean };
 
 /**
- * Whether `runId` may do `needed` right now.
+ * Whether this run may do `needed` right now.
  *
- * Refuses a grant issued by a child outright, before looking at anything else.
- * A grant is a decision, and a child does not get to make one even if it
- * somehow constructed a well-formed object.
+ * The grant is fetched, not accepted. Everything else here is a comparison
+ * between what the server stored and what the caller says it is doing, and
+ * every mismatch refuses.
  */
 export function checkCapability(
   needed: Capability,
-  grant: Grant | undefined,
-  runId: string,
+  request: CapabilityRequest,
+  grants: GrantStore,
   now: number,
 ): CapabilityCheck {
+  const grant = grants.find(request.runId);
   if (!grant) return refuse(needed, 'nothing has been granted to this run');
+  // Defence in depth. A child cannot reach the store, so this should be
+  // unreachable — but a grant recorded as child-issued is a bug worth failing
+  // on rather than honouring.
   if (grant.issuedBy === 'child') return refuse(needed, 'a child cannot grant a capability');
   // Lateral movement: one run's approval must not become another's.
-  if (grant.runId !== runId) return refuse(needed, `that grant belongs to run ${grant.runId}`);
+  if (grant.runId !== request.runId) return refuse(needed, `that grant belongs to run ${grant.runId}`);
+  if (grant.missionId !== request.missionId || grant.taskId !== request.taskId) {
+    return refuse(needed, 'that grant was issued for a different task');
+  }
   if (grant.expiresAt !== undefined && now >= grant.expiresAt) {
     return refuse(needed, 'that grant has expired');
+  }
+  if (grant.scope.repo !== request.repo || grant.scope.worktreePath !== request.worktreePath) {
+    // The point of scope: an approval to push is an approval to push this
+    // branch from this checkout, not wherever the run later finds itself.
+    return refuse(needed, 'that grant is scoped to a different worktree');
   }
   if (!grant.capabilities.includes(needed)) return refuse(needed, `this run was not granted ${needed}`);
   return { ok: true };
@@ -100,9 +143,32 @@ function refuse(needed: Capability, reason: string): CapabilityCheck {
   return { ok: false, reason, elevated: ELEVATED.has(needed) };
 }
 
-/** The capabilities a task starts with, before anyone approves anything. */
-export function defaultGrant(runId: string): Grant {
-  return { runId, capabilities: [...DEFAULT_CHILD_CAPABILITIES], issuedBy: 'system' };
+/**
+ * The capabilities a task starts with, before anyone approves anything.
+ *
+ * Issued here so the id is the server's, and stored before it is ever checked.
+ */
+export function defaultGrant(id: string, request: CapabilityRequest): Grant {
+  return {
+    id,
+    runId: request.runId,
+    missionId: request.missionId,
+    taskId: request.taskId,
+    scope: { repo: request.repo, worktreePath: request.worktreePath },
+    capabilities: [...DEFAULT_CHILD_CAPABILITIES],
+    issuedBy: 'system',
+  };
+}
+
+/**
+ * A stable key for the escalation a stuck run raises.
+ *
+ * Without one, a pulse every sixty seconds files the same request sixty times
+ * an hour, and the inbox a human is supposed to act on becomes the thing they
+ * stop opening.
+ */
+export function escalationKey(runId: string, request: string): string {
+  return `escalation:${runId}:${request}`;
 }
 
 export interface ReportLimits {

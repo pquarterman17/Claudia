@@ -79,24 +79,38 @@ export function claimWorktree(
     return { kind: 'create', reason: 'the recorded worktree is missing from disk' };
   }
 
-  if (observed.repo && observed.repo !== record.repo) {
-    return { kind: 'refuse', reason: `that path belongs to ${observed.repo}, not ${record.repo}` };
+  // Everything below decides whether to WRITE into a directory that already
+  // has work in it, so every check fails closed. Found in review: the earlier
+  // version only compared the fields it happened to have, so an observation
+  // that could not see the repository or the branch — a git call that failed,
+  // a path that is not a worktree at all — skipped the comparison entirely and
+  // fell through to `reuse`. Not knowing must never read as agreement.
+  const identity: Array<[string, string | undefined, string]> = [
+    ['repository', observed.repo, record.repo],
+    ['branch', observed.branch, record.branch],
+  ];
+  for (const [what, seen, expected] of identity) {
+    if (seen === undefined) return { kind: 'refuse', reason: `cannot tell which ${what} that worktree is on` };
+    if (seen !== expected) return { kind: 'refuse', reason: `that worktree is on ${what} ${seen}, not ${expected}` };
   }
+
   if (request.repo !== record.repo) {
     return { kind: 'refuse', reason: `the record is for ${record.repo}, not ${request.repo}` };
   }
-  if (observed.branch && observed.branch !== record.branch) {
-    return {
-      kind: 'refuse',
-      reason: `the worktree is on ${observed.branch} but the record says ${record.branch}`,
-    };
-  }
-  if (record.branch !== request.branch) {
+  if (request.branch !== record.branch) {
     return { kind: 'refuse', reason: `that worktree is for ${record.branch}, not ${request.branch}` };
   }
+  if (request.path !== record.path) {
+    return { kind: 'refuse', reason: `the record is for ${record.path}, not ${request.path}` };
+  }
 
-  const owner = ownerOf(record);
-  if (owner && owner !== `${request.missionId}/${request.taskId}`) {
+  // Ownership must be COMPLETE and match. A half-recorded owner is a record
+  // written by something that crashed midway, which is not evidence that this
+  // task may write into it.
+  if (!record.ownerMissionId || !record.ownerTaskId) {
+    return { kind: 'refuse', reason: 'that worktree has no recorded owner' };
+  }
+  if (record.ownerMissionId !== request.missionId || record.ownerTaskId !== request.taskId) {
     // Refused even when clean. A clean worktree on somebody else's branch is
     // still their branch, and two tasks sharing one is the collision the
     // whole scheme exists to prevent.
@@ -106,12 +120,6 @@ export function claimWorktree(
   return { kind: 'reuse', reason: 'the same task is picking up where it left off' };
 }
 
-function ownerOf(record: WorktreeRecord): string | undefined {
-  return record.ownerMissionId && record.ownerTaskId
-    ? `${record.ownerMissionId}/${record.ownerTaskId}`
-    : undefined;
-}
-
 export type CleanupVerdict =
   | { kind: 'remove'; reason: string }
   | { kind: 'keep'; reason: string };
@@ -119,17 +127,25 @@ export type CleanupVerdict =
 export interface CleanupOptions {
   /** Task ids with a live run; their worktrees are never touched. */
   busyTaskIds?: ReadonlySet<string>;
-  /** A human said to remove it anyway. Still cannot override uncommitted work. */
-  confirmedUnmerged?: boolean;
+  /**
+   * Worktree IDS a human confirmed for removal despite being unmerged.
+   *
+   * Found in review: this used to be one batch-wide boolean, so approving the
+   * removal of a single worktree in a preview authorised every unmerged one in
+   * the same plan. Confirmation is per worktree because that is the unit the
+   * human actually looked at.
+   */
+  confirmedUnmerged?: ReadonlySet<string>;
 }
 
 /**
  * Whether one recorded worktree may be removed.
  *
- * Uncommitted work is an absolute veto — not overridable by a flag, because
- * the only way to be sure is to look, and a fleet running unattended cannot.
- * Unmerged-but-committed is a softer case: the commits survive on the branch,
- * so a human who has seen the preview may confirm it.
+ * Every unknown is treated as unsafe. This is the destructive direction: being
+ * wrong about `claim` costs a refused launch, being wrong here deletes work
+ * that exists nowhere else. So it removes only when it can see, positively,
+ * that the thing in front of it is the recorded worktree, that it is clean,
+ * and that its commits are somewhere else.
  */
 export function cleanupWorktree(
   record: WorktreeRecord,
@@ -142,12 +158,37 @@ export function cleanupWorktree(
   if (!observed.exists) {
     return { kind: 'remove', reason: 'the directory is already gone; clearing the record' };
   }
-  if (observed.dirty ?? record.dirty) {
-    return { kind: 'keep', reason: 'it has uncommitted work' };
+
+  // Identity first, and required rather than compared-if-present. Removing the
+  // wrong directory is the one mistake here with no undo, and an observation
+  // that cannot name the repository or branch is not evidence of anything.
+  if (observed.repo === undefined || observed.branch === undefined) {
+    return { kind: 'keep', reason: 'cannot confirm which worktree that path is' };
   }
-  if (observed.merged === false && !options.confirmedUnmerged) {
-    return { kind: 'keep', reason: `${record.branch} is not merged into its base` };
+  if (observed.repo !== record.repo || observed.branch !== record.branch) {
+    return {
+      kind: 'keep',
+      reason: `that path is ${observed.repo} on ${observed.branch}, not ${record.repo} on ${record.branch}`,
+    };
   }
+
+  // Uncommitted work is an absolute veto, and it must be positively observed:
+  // trusting a `dirty` flag last written before the crash, or an observation
+  // that simply did not look, is how a fleet deletes an afternoon of edits.
+  if (observed.dirty !== false) {
+    return { kind: 'keep', reason: observed.dirty ? 'it has uncommitted work' : 'cannot confirm it is clean' };
+  }
+
+  if (observed.merged !== true && !options.confirmedUnmerged?.has(record.id)) {
+    return {
+      kind: 'keep',
+      reason:
+        observed.merged === false
+          ? `${record.branch} is not merged into its base`
+          : `cannot confirm ${record.branch} is merged anywhere`,
+    };
+  }
+
   return { kind: 'remove', reason: observed.merged ? 'merged and clean' : 'clean, and removal was confirmed' };
 }
 

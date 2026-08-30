@@ -95,9 +95,23 @@ export function assess(observation: RunObservation, policy: WatchdogPolicy = DEF
 
 export type WatchdogAction =
   | { kind: 'wait' }
-  | { kind: 'retry'; afterMs: number; attempt: number; reason: string }
-  | { kind: 'escalate'; request: string; reason: string; severity: EscalationSeverity }
+  /**
+   * `key` and `notBefore` are what stop a tick becoming a launch.
+   *
+   * Found in review: every tick over the same silent run returned the same
+   * retry, so a pulse each minute would start a new session each minute. The
+   * key is derived, so repeated ticks collide on one reservation; `notBefore`
+   * is when the backoff actually expires, so a caller that has not yet reached
+   * it does nothing at all.
+   */
+  | { kind: 'retry'; afterMs: number; notBefore: number; attempt: number; reason: string; key: string }
+  | { kind: 'escalate'; request: string; reason: string; severity: EscalationSeverity; key: string }
   | { kind: 'give_up'; reason: string };
+
+/** The reservation key for one retry of one run. Derived, never random. */
+export function retryKey(runId: string, attempt: number): string {
+  return `retry:${runId}:${attempt}`;
+}
 
 /**
  * What to do about it.
@@ -114,6 +128,7 @@ export function nextAction(
   health: RunHealth,
   run: ChildRun,
   policy: WatchdogPolicy = DEFAULT_WATCHDOG,
+  now = 0,
 ): WatchdogAction {
   if (health.kind === 'healthy' || health.kind === 'finished') return { kind: 'wait' };
 
@@ -123,6 +138,9 @@ export function nextAction(
       request: health.reason,
       reason: 'only a human can clear an approval, and retrying would park on the same one',
       severity: 'blocking',
+      // Stable, so a pulse every minute files one request rather than sixty an
+      // hour into the inbox a human is supposed to be reading.
+      key: `escalation:${run.id}:${health.reason}`,
     };
   }
 
@@ -133,11 +151,14 @@ export function nextAction(
       reason: `${run.attempt} attempt${run.attempt === 1 ? '' : 's'} spent on this task; not starting another`,
     };
   }
+  const afterMs = backoffMs(run.attempt, policy);
   return {
     kind: 'retry',
     attempt: next,
-    afterMs: backoffMs(run.attempt, policy),
+    afterMs,
+    notBefore: (run.endedAt ?? now) + afterMs,
     reason: health.reason,
+    key: retryKey(run.id, next),
   };
 }
 

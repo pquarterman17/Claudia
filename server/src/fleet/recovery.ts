@@ -75,23 +75,29 @@ export function recoverTasks(
   runs: readonly ChildRun[],
   adoptedRunIds: ReadonlySet<string>,
 ): TaskRecovery[] {
-  const stillRunning = new Set(
-    runs.filter((run) => adoptedRunIds.has(run.id)).map((run) => run.taskId),
-  );
-  // A run that finished and reported before the crash did real work, and its
-  // evidence is in the worktree. Found in review: resetting such a task to
-  // `ready` throws that away and pays for it again, which is the one recovery
-  // outcome worse than doing nothing.
-  const reported = new Set(runs.filter((run) => run.state === 'reported').map((run) => run.taskId));
+  // The LATEST attempt decides, not whichever attempt happens to look best.
+  // Found in review: taking "any run reported" meant a task whose attempt 1
+  // was reported and rejected, and whose attempt 2 was running at the crash,
+  // came back as `reported` from the stale attempt — restoring a claim that
+  // had already been considered and turned down.
+  const latest = new Map<string, ChildRun>();
+  for (const run of runs) {
+    const held = latest.get(run.taskId);
+    if (!held || run.attempt > held.attempt) latest.set(run.taskId, run);
+  }
+
   const recoveries: TaskRecovery[] = [];
   for (const task of tasks) {
     if (task.status !== 'running') continue;
-    if (stillRunning.has(task.id)) continue;
-    if (reported.has(task.id)) {
+    const run = latest.get(task.id);
+    if (run && adoptedRunIds.has(run.id)) continue;
+    if (run?.state === 'reported') {
+      // That attempt finished and its evidence is in the worktree. Sending it
+      // back to the queue throws the work away and pays for it twice.
       recoveries.push({
         taskId: task.id,
         to: 'reported',
-        reason: 'its run reported before the server stopped; the work is waiting on review',
+        reason: 'its latest run reported before the server stopped; the work is waiting on review',
       });
       continue;
     }
@@ -132,5 +138,14 @@ export function planRecovery(
 export function describeRecovery(runs: readonly RunRecovery[], tasks: readonly TaskRecovery[]): string {
   const adopted = runs.filter((r) => r.kind === 'adopt').length;
   const orphaned = runs.filter((r) => r.kind === 'orphan').length;
-  return `recovered ${adopted} run(s), orphaned ${orphaned}, reset ${tasks.length} task(s) to ready`;
+  // Counted per destination. Found in review: saying "reset to ready" for
+  // tasks actually restored to `reported` describes the opposite of what
+  // happened, in the one line a human reads to find out what a restart did.
+  const byDestination = new Map<string, number>();
+  for (const task of tasks) byDestination.set(task.to, (byDestination.get(task.to) ?? 0) + 1);
+  const moved = [...byDestination.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([to, count]) => `${count} to ${to}`)
+    .join(', ');
+  return `recovered ${adopted} run(s), orphaned ${orphaned}, moved ${tasks.length} task(s)${moved ? `: ${moved}` : ''}`;
 }

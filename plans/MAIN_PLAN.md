@@ -11,7 +11,7 @@ architecture does not. The Claude Design export that started this is deliberatel
 **Updated:** 2026-08-29
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
-genuinely new work or was deliberately deferred for a decision. 532 tests, clean typecheck.
+genuinely new work or was deliberately deferred for a decision. 624 tests, clean typecheck.
 Everything so far was built and verified on Windows only — see #13.
 
 ---
@@ -128,10 +128,6 @@ path — measure before building.
 
 ## Tier 3 — Nice-to-Have
 
-29. **Plan-mode review surface** — plan mode is selectable and edit approvals already show a
-    before/after preview; what remains is rendering a proposed plan with approve/revise from
-    the tile.
-
 42. ~~**`@file` mention expansion**~~ — **probed 2026-07-26: it DOES expand.** A prompt of
     "@SECURITY.md — reply with only the first heading" answered correctly with ZERO tool calls,
     so the file was included before the model saw it. That settles #28: an autocomplete is
@@ -196,6 +192,14 @@ Recording these so they are not rediscovered as bugs:
   bounded at four per prompt and 5 MB each. The `@file` half remains as #28.
 - ~~**#29 edit-approval diffs**~~ (2026-07-26) — approvals render a before/after preview. The
   plan-mode half remains as #29.
+- ~~**#29 plan-mode review surface**~~ (2026-08-29) — `ExitPlanMode` already reached `canUseTool`
+  (probed live: input is exactly `{ plan, planFilePath }`, no `file_path`), so the plan branch in
+  `approval-change.ts` had to be checked before the file_path bail-out or it would never fire.
+  Gets its own preview bound (20,000 chars vs. the 1,000-char diff preview) since a plan is prose
+  meant to be read, not a diff — the first plan probed ran 1,140 chars, already past the old
+  limit. New `PlanReview.tsx` tile renders it via the existing markdown-lite renderer and offers
+  Approve or a free-text "ask for changes", which needed no new protocol: it rides the `deny`
+  command's existing optional `message`.
 
 - ~~**Ideas taken from a rival orchestrator**~~ (2026-07-26) — the owner liked its controls, not
   its look. Three gaps were real; the rest of its monitoring layer Claudia already had.

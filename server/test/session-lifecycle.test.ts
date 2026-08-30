@@ -434,3 +434,37 @@ describe('touched-file vectors', () => {
     expect(rec.session.touchedFiles).toEqual(['C:/x/one.ts']);
   });
 });
+
+describe('agent vectors', () => {
+  it('V28: an unstarted session records the agent for its first prompt, with no relaunch', () => {
+    // Launched idle and never prompted: nothing to leave behind, so switching
+    // is free and must not spawn anything.
+    const rec = launch();
+    const before = fakes.length;
+    expect(rec.session.switchAgent('codex')).toBe('recorded');
+    expect(fakes.length, 'no driver was built').toBe(before);
+    expect(rec.session.summary().agent).toBe('codex');
+    expect(rec.feeds.some((f) => f.title === 'Agent switched')).toBe(true);
+  });
+
+  it('V29: switching to the agent already in use changes nothing', () => {
+    const rec = launch();
+    const feeds = rec.feeds.length;
+    expect(rec.session.switchAgent('claude')).toBe('unchanged');
+    expect(rec.feeds).toHaveLength(feeds);
+  });
+
+  it('V30: a recorded switch is what the next prompt actually launches', () => {
+    // The point of recording it: the first prompt must start the agent the
+    // user picked. Switched away and back, so the assertion cannot pass just
+    // because Claude was the default all along — a Codex driver would never
+    // reach the mocked Claude query factory at all.
+    const rec = launch();
+    expect(rec.session.switchAgent('codex')).toBe('recorded');
+    expect(rec.session.switchAgent('claude')).toBe('recorded');
+    expect(rec.session.summary().agent).toBe('claude');
+    const before = fakes.length;
+    rec.session.sendPrompt('go');
+    expect(fakes.length, 'a Claude driver was built').toBe(before + 1);
+  });
+});

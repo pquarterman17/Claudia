@@ -177,6 +177,9 @@ export type ClientCommand =
   | { type: 'search_files'; sessionId: string; query: string }
   /** Switch the output style; takes effect on the next turn, like the model does. */
   | { type: 'set_output_style'; sessionId: string; style: string }
+  /** Point one session at a different agent. Always starts a fresh
+   * conversation — the two agents cannot resume each other's history. */
+  | { type: 'set_agent'; sessionId: string; agent: AgentKind }
   | { type: 'save_toolkit_action'; action: ToolkitAction }
   | { type: 'delete_toolkit_action'; id: string }
   | { type: 'delete_template'; name: string }

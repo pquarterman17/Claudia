@@ -3,6 +3,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { runBulkOp } from './bulk-ops.js';
 import { buildHello, ownedSessionIds } from './hello-event.js';
 import { setHookMonitor } from './hook-commands.js';
+import { handleSessionSettingCommand } from './session-setting-commands.js';
 import { handleSettingsCommand } from './settings-commands.js';
 import type { HookMonitor } from './hook-monitor.js';
 import { isClientLive } from './client-liveness.js';
@@ -185,7 +186,9 @@ export class Gateway {
   }
 
   private dispatch(cmd: ClientCommand, socket: WebSocket): void {
-    // Preference writes all share one shape and live in their own module.
+    // One-session setting changes and preference writes each share one shape,
+    // and each lives in its own module.
+    if (handleSessionSettingCommand(cmd, this.manager)) return;
     if (
       handleSettingsCommand(cmd, {
         settings: this.settings,
@@ -295,18 +298,6 @@ export class Gateway {
         return;
       case 'set_permission_mode':
         void this.manager.get(cmd.sessionId)?.setPermissionMode(cmd.mode);
-        return;
-      case 'set_model':
-        void this.manager.get(cmd.sessionId)?.switchModel(cmd.model);
-        return;
-      case 'set_effort':
-        void this.manager.get(cmd.sessionId)?.setEffort(cmd.effortLevel);
-        return;
-      case 'set_thinking':
-        void this.manager.get(cmd.sessionId)?.setThinking(cmd.thinkingMode);
-        return;
-      case 'set_output_style':
-        void this.manager.get(cmd.sessionId)?.setOutputStyle(cmd.style);
         return;
       case 'refresh_context':
         this.manager.get(cmd.sessionId)?.refreshContext();

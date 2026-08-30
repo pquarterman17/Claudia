@@ -11,7 +11,7 @@ architecture does not. The Claude Design export that started this is deliberatel
 **Updated:** 2026-08-30
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
-genuinely new work or was deliberately deferred for a decision. 779 tests, clean typecheck.
+genuinely new work or was deliberately deferred for a decision. 796 tests, clean typecheck.
 Everything so far was built and verified on Windows only — see #13.
 
 ---
@@ -156,6 +156,32 @@ Recording these so they are not rediscovered as bugs:
   construction; Claudia is not the Claude Code product.
 
 ## Completed
+
+- ~~**Agent per window**~~ (2026-08-30, owner ask) — the agent was chosen once in the launch bar,
+  which decides what the NEXT session starts as; the owner wanted the choice to belong to each
+  window. The per-tile badge became a picker, and `set_agent` re-points a live session.
+  The rule that shapes it: a conversation CANNOT cross agents. Claude and Codex keep separate
+  stores and neither can resume the other's id, so a switch always starts fresh — and passing a
+  resume id across would fail in a way that reads like corrupt history rather than a mismatch,
+  which is why a test pins that it is never passed. What makes that acceptable is that nothing
+  is destroyed: `allSavedSessions` reads BOTH agents' history from disk per directory, so the
+  conversation left behind stays in the resume picker, and the feed line says exactly that
+  rather than warning vaguely. A session launched idle and never prompted has nothing to leave
+  behind, so its agent is merely recorded for the first prompt and nothing is spawned.
+  The UI keys its confirm on TOKEN COUNTS, not cost: Codex reports tokens but never a dollar
+  cost, so a cost-based test would treat every finished Codex session as untouched and switch
+  it away silently.
+  Verified live on both paths: a Claude session with a real conversation switched to Codex
+  surfaced "Codex is not installed" — which is the proof the driver was genuinely REPLACED
+  rather than the tile relabelled — with the conversation ids forgotten; and an unstarted
+  session switched to Codex and back spawned nothing, then launched as Claude on its first
+  prompt and replied.
+  Two ratchet-forced extractions, both real: `session-gate.ts` now owns the approval gate and
+  the pending question together (they were two fields on ClaudiaSession with a context rebuilt
+  at five call sites), and `session-setting-commands.ts` owns the five one-session setting
+  commands. `setPermissionMode` and `switchAgent` now share ONE relaunch context, which is what
+  stops them drifting apart on how a relaunch is performed, and three near-copies of "abandon
+  everything in flight" collapsed into one helper.
 
 - ~~**#8 Hooks monitor tier**~~ (2026-08-30) — terminal sessions Claudia never launched now
   appear on the board as read-only tiles, which is the only way to see them at all: there is no

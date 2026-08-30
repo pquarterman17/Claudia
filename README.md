@@ -124,6 +124,14 @@ Wrap-up script location: `~/bin/wrapup.sh` (macOS/Linux) or `C:\bin\wrapup.ps1` 
   attempted and fails stops the chain, so a shutdown never follows one.
   Files changed by a `Bash` command are *not* claimed — a command's effect on the filesystem
   is not knowable from its text — so those stay in the tree for you.
+- **Agent per window** — the chip on every tile names the agent backing it (Claude or Codex)
+  and is a picker, so the choice belongs to the window rather than to the board. The launch
+  bar's picker still decides what a *new* session starts as; this changes one that already
+  exists. Switching always starts a **new conversation** — Claude and Codex keep separate
+  stores and neither can resume the other's history — so a session that has actually done
+  something asks for a second, confirming click. Nothing is lost: the conversation left behind
+  stays in that directory's resume picker. A session launched idle and never prompted switches
+  for free, and nothing is spawned until its first prompt.
 - **Terminal sessions** — sessions you start in a terminal are invisible to Claudia by
   default: there is no attach path to a running CLI. Turn on **watch terminal sessions** and
   Claudia adds an `http` hook to your **global** `~/.claude/settings.json` that posts each
@@ -184,6 +192,7 @@ npm run build      # production UI bundle into web/dist
 | `server/src/trigger-engine.ts` | The finish chain: arm → countdown → run in order |
 | `server/src/finish-actions.ts` | Per-OS command table |
 | `server/src/commit-action.ts` | The commit + push step: per-repo planning, branch rules, git |
+| `server/src/agent-switch.ts` | Re-points a session at the other agent, conversation rules and all |
 | `server/src/hook-monitor.ts` | Terminal sessions rebuilt from hook events |
 | `server/src/hook-install.ts` | Writes/removes Claudia's hook in global settings, with a backup |
 | `server/src/touched-files.ts` | What each session wrote, so a commit can be scoped to it |

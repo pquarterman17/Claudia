@@ -6,7 +6,7 @@ import { elapsed, fmtModel } from '../format';
 import { PERMISSION_MODES } from '../permission-modes';
 import { send } from '../store';
 import { COLORS, statusOf } from '../status';
-import { AgentBadge } from './AgentBadge';
+import { AgentPicker } from './AgentPicker';
 import { BranchChip } from './BranchChip';
 import { ApprovalBanner } from './ApprovalBanner';
 import { Composer } from './Composer';
@@ -199,7 +199,7 @@ export function SessionTile({
         <span style={{ flex: 'none', fontSize: 10.5, color: '#75798c', fontVariantNumeric: 'tabular-nums' }}>
           {elapsed(session.startedAt, now)}
         </span>
-        <AgentBadge agent={session.agent} />
+        <AgentPicker session={session} />
         <span
           style={{
             flex: 'none',

@@ -1,4 +1,5 @@
 import type {
+  AgentKind,
   EffortLevel,
   ModelChoice,
   ModelUsage,
@@ -11,18 +12,18 @@ import type {
   ThinkingMode,
 } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
-import { ApprovalGate } from './approval-gate.js';
+import { SessionGate } from './session-gate.js';
 import type { LaunchOptions, SessionCallbacks } from './session-contract.js';
 import { AsyncQueue } from './async-queue.js';
 import { DraftBuffer } from './draft-buffer.js';
 import { errorStep, infoStep } from './feed.js';
-import * as gateActions from './gate-actions.js';
 import type { RoutedMessage } from './message-router.js';
 import { listCommands, listModels, maybeGenerateTitle, modelMatches, type ParityQuery } from './parity-controls.js';
 import { TranscriptLog } from './transcript-log.js';
 import { abandonRunningSteps, applyToolEvents, patchSubAgent } from './step-patcher.js';
 import { describeAttachments } from './query-factory.js';
 import { switchPermissionMode } from './permission-switch.js';
+import { applyAgentSwitch, type AgentSwitchCtx, type AgentSwitchOutcome } from './agent-switch.js';
 import { PromptQueue } from './prompt-queue.js';
 import { SubAgentTracker } from './sub-agent-tracker.js';
 import { buildSessionSummary } from './session-summary.js';
@@ -39,7 +40,11 @@ export type { LaunchOptions, SessionCallbacks } from './session-contract.js';
 
 export class ClaudiaSession {
   readonly id = randomUUID();
-  private readonly gate = new ApprovalGate();
+  private readonly gate = new SessionGate({
+    feed: (step) => this.cb.onFeed(this.id, step),
+    setState: (state) => this.setState(state),
+    cwd: () => this.opts.cwd,
+  });
   private readonly tools = new ToolTracker();
   private readonly touched = new TouchedFiles();
   private readonly todos = new TodoTracker();
@@ -56,7 +61,6 @@ export class ClaudiaSession {
   private claudeSessionId: string | undefined;
   private errorMessage: string | undefined;
   private needsAction: NeedsAction | undefined;
-  private pendingQuestion: PendingQuestion | undefined;
   private readonly subAgents = new SubAgentTracker();
   private readonly promptQueue = new PromptQueue();
   private readonly draft = new DraftBuffer();
@@ -77,7 +81,7 @@ export class ClaudiaSession {
   }
 
   summary() {
-    return buildSessionSummary(this.opts, this.gate, this.promptQueue, {
+    return buildSessionSummary(this.opts, this.gate.raw, this.promptQueue, {
       id: this.id,
       state: this.state,
       startedAt: this.startedAt,
@@ -89,7 +93,7 @@ export class ClaudiaSession {
       claudeSessionId: this.claudeSessionId,
       errorMessage: this.errorMessage,
       needsAction: this.needsAction,
-      pendingQuestion: this.pendingQuestion,
+      pendingQuestion: this.gate.pending,
       customTitle: this.customTitle,
       generatedTitle: this.generatedTitle,
       controls: this.controls,
@@ -143,7 +147,7 @@ export class ClaudiaSession {
       resume,
       forkSession: this.opts.forkSession,
       input,
-      gateCtx: this.gateCtx(),
+      gateCtx: this.gate.ctx(),
     });
   }
 
@@ -226,29 +230,10 @@ export class ClaudiaSession {
     }
   }
 
-  private gateCtx(): gateActions.GateCtx {
-    return {
-      gate: this.gate,
-      feed: (step) => this.cb.onFeed(this.id, step),
-      setState: (state) => this.setState(state),
-      getQuestion: () => this.pendingQuestion,
-      setQuestion: (question) => (this.pendingQuestion = question),
-      clearQuestion: () => (this.pendingQuestion = undefined),
-    };
-  }
-
-  answerQuestion(requestId: string, answers: Record<string, string>): boolean {
-    return gateActions.answerQuestion(this.gateCtx(), requestId, answers);
-  }
-
-  approve(requestId: string): boolean {
-    return gateActions.approve(this.gateCtx(), requestId);
-  }
-
-  deny(requestId: string, message?: string): boolean {
-    return gateActions.deny(this.gateCtx(), requestId, message);
-  }
-  alwaysAllowProject(requestId: string) { return gateActions.alwaysAllowProject(this.gateCtx(), requestId, this.opts.cwd); }
+  answerQuestion(requestId: string, answers: Record<string, string>) { return this.gate.answerQuestion(requestId, answers); }
+  approve(requestId: string) { return this.gate.approve(requestId); }
+  deny(requestId: string, message?: string) { return this.gate.deny(requestId, message); }
+  alwaysAllowProject(requestId: string) { return this.gate.alwaysAllowProject(requestId); }
 
   rename(title: string): void {
     this.customTitle = title.trim() || undefined;
@@ -327,36 +312,47 @@ export class ClaudiaSession {
     this.setState('working');
   }
 
+  /** The mutable slice a relaunch touches. One context for both switches on
+   * purpose: changing permissions and changing agent both replace the driver
+   * and keep the tile, so sharing it stops the two drifting apart. */
+  private restartCtx(): AgentSwitchCtx {
+    return {
+      getMode: () => this.opts.permissionMode,
+      setMode: (m) => (this.opts.permissionMode = m),
+      getAgent: () => this.opts.agent ?? 'claude',
+      setAgent: (a) => (this.opts.agent = a),
+      forgetConversation: () => (this.claudeSessionId = undefined),
+      getQuery: () => this.raw,
+      getInput: () => this.input,
+      setInput: (queue) => (this.input = queue),
+      bumpGeneration: () => (this.queryGen += 1),
+      resumeId: () => this.claudeSessionId,
+      abandonForRestart: () => {
+        if (this.draft.clear()) this.cb.onDraft(this.id, null);
+        this.abandonAll('Restarting this session', 'session restarted');
+        this.queryGen += 1;
+      },
+      feedInfo: (title, meta) => this.cb.onFeed(this.id, infoStep(title, meta)),
+      updated: () => this.cb.onUpdate(this.summary()),
+      replaceQuery: (m, resume, input) => {
+        this.driver = this.makeDriver(m, resume, input);
+        void this.consume(this.queryGen);
+      },
+    };
+  }
+
   /**
    * See permission-switch.ts — tighten in place, loosen via relaunch. Codex's
    * `raw` is always falsy, so it takes the same "no live query" path as an
    * unstarted Claude session: mode recorded, no relaunch attempted.
    */
   setPermissionMode(mode: PermissionLaunchMode): Promise<'in-place' | 'relaunched' | 'unchanged'> {
-    return switchPermissionMode(
-      {
-        getMode: () => this.opts.permissionMode,
-        setMode: (m) => (this.opts.permissionMode = m),
-        getQuery: () => this.raw,
-        getInput: () => this.input,
-        setInput: (queue) => (this.input = queue),
-        bumpGeneration: () => (this.queryGen += 1),
-        resumeId: () => this.claudeSessionId,
-        abandonForRestart: () => {
-          this.gate.abandon('Restarting with new permissions');
-          if (this.draft.clear()) this.cb.onDraft(this.id, null);
-          abandonRunningSteps(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), 'session restarted');
-          this.queryGen += 1;
-        },
-        feedInfo: (title, meta) => this.cb.onFeed(this.id, infoStep(title, meta)),
-        updated: () => this.cb.onUpdate(this.summary()),
-        replaceQuery: (m, resume, input) => {
-          this.driver = this.makeDriver(m, resume, input);
-          void this.consume(this.queryGen);
-        },
-      },
-      mode,
-    );
+    return switchPermissionMode(this.restartCtx(), mode);
+  }
+
+  /** See agent-switch.ts — always a fresh conversation, never a lost one. */
+  switchAgent(agent: AgentKind): AgentSwitchOutcome {
+    return applyAgentSwitch(this.restartCtx(), agent);
   }
 
   async interrupt(): Promise<void> {
@@ -370,11 +366,18 @@ export class ClaudiaSession {
     return rewindFiles(this.raw, checkpointId);
   }
 
+  /** Everything in flight, given up at once: the parked approval, every
+   * running feed step, and the queue behind them. Stopping, failing and
+   * relaunching all need exactly this and differ only in what they say. */
+  private abandonAll(gateReason: string, stepReason: string): void {
+    this.gate.abandon(gateReason);
+    abandonRunningSteps(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), stepReason);
+    this.promptQueue.clear();
+  }
+
   stop(): void {
     if (this.draft.clear()) this.cb.onDraft(this.id, null);
-    this.gate.abandon('Session stopped');
-    abandonRunningSteps(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), 'session stopped');
-    this.promptQueue.clear();
+    this.abandonAll('Session stopped', 'session stopped');
     this.input.close();
     this.driver?.close();
     this.setState('stopped');
@@ -382,9 +385,7 @@ export class ClaudiaSession {
 
   private fail(message: string): void {
     this.errorMessage = message;
-    this.gate.abandon(`Session failed: ${message}`);
-    abandonRunningSteps(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), message);
-    this.promptQueue.clear();
+    this.abandonAll(`Session failed: ${message}`, message);
     this.cb.onFeed(this.id, errorStep('Session error', message));
     this.setState('error');
   }

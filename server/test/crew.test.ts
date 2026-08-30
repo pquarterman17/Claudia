@@ -19,6 +19,7 @@ interface Harness {
   /** Sessions currently mid-turn, to prove members overlap and launches do not. */
   inFlight: Set<string>;
   peakInFlight: number;
+  cancelled: string[];
 }
 
 interface HarnessOpts {
@@ -30,7 +31,9 @@ interface HarnessOpts {
 
 function harness(opts: HarnessOpts = {}): Harness {
   const replies = new Map(Object.entries(opts.replies ?? {}));
-  const said = new Map<string, string>();
+  // Transcripts GROW, as a real one does. A replacing map would hide the very
+  // defect the turn-aware read exists to catch.
+  const transcripts = new Map<string, Array<{ kind: string; text: string }>>();
   let next = 0;
   let openLaunches = 0;
 
@@ -42,6 +45,7 @@ function harness(opts: HarnessOpts = {}): Harness {
     concurrentAtLaunch: [],
     inFlight: new Set(),
     peakInFlight: 0,
+    cancelled: [],
   };
 
   h.deps = {
@@ -64,7 +68,9 @@ function harness(opts: HarnessOpts = {}): Harness {
     send: (session, text) => {
       h.sent.push({ session, text });
       const reply = replies.get(session)?.shift();
-      if (reply !== undefined) said.set(session, reply);
+      const items = transcripts.get(session) ?? [];
+      if (reply !== undefined) items.push({ kind: 'assistant', text: reply });
+      transcripts.set(session, items);
       h.inFlight.add(session);
       h.peakInFlight = Math.max(h.peakInFlight, h.inFlight.size);
     },
@@ -76,11 +82,9 @@ function harness(opts: HarnessOpts = {}): Harness {
       h.inFlight.delete(session);
       return undefined;
     },
-    transcript: (session) => {
-      const text = said.get(session);
-      return text === undefined ? [] : [{ kind: 'assistant', text }];
-    },
+    transcript: (session) => transcripts.get(session) ?? [],
     progress: (update) => h.progress.push(update),
+    cancel: (id) => h.cancelled.push(id),
   };
   return h;
 }
@@ -100,6 +104,38 @@ function spec(over: Partial<Parameters<typeof runCrew>[0]> = {}) {
 }
 
 describe('runCrew', () => {
+  it('stops every session it started when the planner turn fails', async () => {
+    // Found in review. The bookkeeping promise rejecting is not a reason to
+    // leave several agents editing several worktrees with nobody reading it.
+    const h = harness({ replies: { 'session-1': [PLAN] } });
+    const settle = h.deps.awaitSettled;
+    let calls = 0;
+    h.deps.awaitSettled = (session, ms) => {
+      calls += 1;
+      // Fail the closing report, by which point the members exist.
+      return calls > 3 ? Promise.reject(new Error('turn timed out')) : settle(session, ms);
+    };
+    await expect(runCrew(spec(), h.deps)).rejects.toThrow('turn timed out');
+    expect(h.cancelled).toContain('session-1');
+    expect(h.cancelled).toContain('session-2');
+    expect(h.cancelled).toContain('session-3');
+  });
+
+  it('stops the planner when the split itself times out, before any member exists', async () => {
+    const h = harness();
+    h.deps.awaitSettled = () => Promise.reject(new Error('turn timed out'));
+    await expect(runCrew(spec(), h.deps)).rejects.toThrow('turn timed out');
+    expect(h.cancelled).toEqual(['session-1']);
+  });
+
+  it("never reports a member\u2019s earlier words as its summary", async () => {
+    // A member whose turn produced nothing must read as silence, not as
+    // whatever it happened to say before the crew existed.
+    const h = harness({ replies: { 'session-1': [PLAN, 'the report'] } });
+    const result = await runCrew(spec(), h.deps);
+    expect(result.members.map((m) => m.summary)).toEqual([undefined, undefined]);
+  });
+
   it('plans first, then launches one session per piece', async () => {
     const h = harness({ replies: { 'session-1': [PLAN, 'the report'] } });
     const result = await runCrew(spec(), h.deps);

@@ -29,6 +29,29 @@ describe('ApprovalGate', () => {
     expect(gate.current?.change).toEqual({ kind: 'edit', path: '/repo/a.ts', before: 'old', after: 'new', truncated: false });
   });
 
+  it('surfaces the derived always-allow rule on the pending request', () => {
+    const gate = new ApprovalGate();
+    void gate.request('Bash', 'npm test', { command: 'npm test' });
+    expect(gate.current?.alwaysAllowRule).toBe('Bash(npm test)');
+  });
+
+  it('omits alwaysAllowRule entirely when nothing safe can be derived, rather than a falsy placeholder', () => {
+    const gate = new ApprovalGate();
+    void gate.request('WebFetch', 'https://example.com', { url: 'https://example.com' });
+    expect(gate.current).not.toHaveProperty('alwaysAllowRule');
+  });
+
+  it('exposes the raw input only while that exact request is still pending', () => {
+    const gate = new ApprovalGate();
+    const input = { command: 'npm test' };
+    void gate.request('Bash', 'npm test', input);
+    const requestId = gate.current!.requestId;
+    expect(gate.rawInputFor(requestId)).toBe(input);
+    expect(gate.rawInputFor('some-other-id')).toBeUndefined();
+    gate.approve(requestId);
+    expect(gate.rawInputFor(requestId)).toBeUndefined(); // settled — no longer "pending"
+  });
+
   it('supplies a default deny message', async () => {
     const gate = new ApprovalGate();
     const promise = gate.request('Bash', 'x', {});

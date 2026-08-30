@@ -7,6 +7,7 @@ import { launchSession, resumeSavedSession } from './launch-session.js';
 import { decideRewind, describeRewind } from './rewind-flow.js';
 import { allSavedSessions, retagSavedSession, retitleSavedSession, savedSessionDetail } from './saved-sessions.js';
 import type { SessionManager } from './session-manager.js';
+import { buildSettingsEvent } from './settings-event.js';
 import type { SettingsStore } from './settings-store.js';
 import type { TriggerEngine } from './trigger-engine.js';
 import type { UsageService } from './usage-service.js';
@@ -136,17 +137,7 @@ export class Gateway {
   }
 
   private broadcastSettings(): void {
-    const s = this.settings.get();
-    this.broadcast({
-      type: 'settings',
-      recentDirectories: s.recentDirectories,
-      toolkit: s.toolkit,
-      countdownSec: s.countdownSec,
-      stopSessionsWhenClosedSec: s.stopSessionsWhenClosedSec,
-      defaultPermissionMode: s.defaultPermissionMode,
-      templates: s.templates,
-      customCeilings: s.customCeilings,
-    });
+    this.broadcast(buildSettingsEvent(this.settings.get()));
   }
 
   broadcast(event: ServerEvent): void {
@@ -229,6 +220,11 @@ export class Gateway {
         return;
       case 'deny':
         this.manager.get(cmd.sessionId)?.deny(cmd.requestId, cmd.message);
+        return;
+      case 'always_allow_project':
+        void this.manager.get(cmd.sessionId)?.alwaysAllowProject(cmd.requestId).then((r) => {
+          if (!r.ok) this.sendTo(socket, { type: 'server_error', message: r.message });
+        });
         return;
       case 'answer_question':
         this.manager.get(cmd.sessionId)?.answerQuestion(cmd.requestId, cmd.answers);

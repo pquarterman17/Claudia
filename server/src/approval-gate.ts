@@ -1,6 +1,7 @@
 import type { PendingApproval } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import { approvalChange } from './approval-change.js';
+import { deriveAllowRule } from './permission-rules.js';
 
 /**
  * The SDK's PermissionResult union: `allow` must carry updatedInput,
@@ -37,11 +38,24 @@ export class ApprovalGate {
       this.resolver({ behavior: 'deny', message: 'Superseded by a newer permission request' });
     }
     const change = approvalChange(toolName, input);
-    this.pending = { requestId: randomUUID(), toolName, summary, requestedAt: Date.now(), ...(change ? { change } : {}) };
+    const alwaysAllowRule = deriveAllowRule(toolName, input);
+    this.pending = {
+      requestId: randomUUID(),
+      toolName,
+      summary,
+      requestedAt: Date.now(),
+      ...(change ? { change } : {}),
+      ...(alwaysAllowRule ? { alwaysAllowRule } : {}),
+    };
     this.input = input;
     return new Promise<PermissionResult>((resolve) => {
       this.resolver = resolve;
     });
+  }
+
+  /** Raw input behind the currently pending request, or undefined for a stale id. */
+  rawInputFor(requestId: string): Record<string, unknown> | undefined {
+    return this.pending?.requestId === requestId ? this.input : undefined;
   }
 
   /** Returns false if the id doesn't match the outstanding request (stale click). */

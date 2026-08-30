@@ -243,6 +243,7 @@ export class ClaudiaSession {
   deny(requestId: string, message?: string): boolean {
     return gateActions.deny(this.gateCtx(), requestId, message);
   }
+  alwaysAllowProject(requestId: string) { return gateActions.alwaysAllowProject(this.gateCtx(), requestId, this.opts.cwd); }
 
   rename(title: string): void {
     this.customTitle = title.trim() || undefined;

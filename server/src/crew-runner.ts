@@ -111,6 +111,9 @@ export class CrewRunner {
         return { sessionId: session.id, cwd, ...(branch ? { branch } : {}) };
       },
       send: (sessionId, text) => this.manager.get(sessionId)?.sendPrompt(text),
+      // Every session a crew touches is one it launched, so stopping one can
+      // never take down a tile the human is using.
+      cancel: (sessionId) => this.manager.get(sessionId)?.stop(),
       awaitSettled: (sessionId, timeoutMs) => this.manager.awaitSettled(sessionId, timeoutMs),
       transcript: (sessionId) => this.manager.get(sessionId)?.transcript.list() ?? [],
       progress: (update) => {

@@ -8,7 +8,7 @@ architecture does not. The Claude Design export that started this is deliberatel
 
 **Status:** Active
 **Created:** 2026-07-25
-**Updated:** 2026-07-26
+**Updated:** 2026-08-29
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
 genuinely new work or was deliberately deferred for a decision. 532 tests, clean typecheck.
@@ -128,23 +128,14 @@ path — measure before building.
 
 ## Tier 3 — Nice-to-Have
 
-28. **`@file` autocomplete** — a small server file-search endpoint plus completion in the
-    composer. Image paste shipped with the composer work; this is the remaining half, and the
-    probe below makes it worth doing.
 29. **Plan-mode review surface** — plan mode is selectable and edit approvals already show a
     before/after preview; what remains is rendering a proposed plan with approve/revise from
     the tile.
 
-41. **Output style per session** — **probed, buildable.** `outputStyle` is a key on the same
-    `Settings` interface `applyFlagSettings()` accepts, and `initializationResult()` reports
-    `output_style` plus `available_output_styles`. List from the former, set with the latter.
 42. ~~**`@file` mention expansion**~~ — **probed 2026-07-26: it DOES expand.** A prompt of
     "@SECURITY.md — reply with only the first heading" answered correctly with ZERO tool calls,
     so the file was included before the model saw it. That settles #28: an autocomplete is
     worth building, and saves a Read round-trip every time it is used.
-43. **Compaction visibility** — `/compact [instructions]` runs as prompt text and the SDK emits
-    `system/compact_boundary` with `pre_tokens`. Show compaction in the feed instead of a
-    mysterious context drop.
 
 11. **Tauri wrap** — native window/tray/notifications around the web UI
 12. **Per-project auto-approve rules — RESPECIFIED, do not build as written.** The diff-peek
@@ -179,6 +170,24 @@ Recording these so they are not rediscovered as bugs:
   construction; Claudia is not the Claude Code product.
 
 ## Completed
+
+- ~~**#43 Compaction visibility**~~ (2026-08-29) — a compaction now lands in the feed naming
+  whether it was automatic or a `/compact` you ran, and the context size before it. Review
+  caught the count being formatted with a bare `toLocaleString()`, which follows the HOST
+  locale: the same session read "152,341" here and "152.341" under a European locale, and the
+  test asserting it would have flipped depending on where CI ran. Pinned at the source.
+- ~~**#28 `@file` autocomplete**~~ (2026-08-29) — bounded server-side file search
+  (`file-search.ts`: 200 ms budget, depth 10, never descends `node_modules`/`.git`/dist, never
+  rejects) plus completion in the composer. Measured on this repo: 6 ms and no `node_modules`
+  leakage. Stale replies are keyed to the query that produced them, so a slow answer for `@ses`
+  cannot repopulate a dropdown that has moved on to `@sess`.
+- ~~**#41 Output style per session**~~ (2026-08-29) — per-tile picker fed by one
+  `initializationResult()` call, cached per session. Degrades to "not supported" on Codex for
+  free, since the capability is read from `agent-kinds` rather than tested inline.
+- ~~**Parallel-lane collision**~~ (2026-08-29) — #28 and #41 were built concurrently and both
+  extracted the same `runBulk` out of `gateway.ts` to make ratchet room, under two different
+  filenames. Merged to one. Worth remembering: concurrent lanes each measure headroom against a
+  base the other is about to change, so re-measure after merging, never before.
 
 - ~~**#27 Session todo list**~~ (2026-07-26) — shipped with the external stack as
   `todo-tracker.ts` + `TodoPanel.tsx`; found already done during a reconciliation pass, never

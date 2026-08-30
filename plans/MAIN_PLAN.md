@@ -191,7 +191,7 @@ Recording these so they are not rediscovered as bugs:
 - ~~**#28 image paste**~~ (2026-07-26) — the composer takes pasted, dropped and chosen images,
   bounded at four per prompt and 5 MB each. The `@file` half remains as #28.
 - ~~**#29 edit-approval diffs**~~ (2026-07-26) — approvals render a before/after preview. The
-  plan-mode half remains as #29.
+  plan-mode half shipped separately on 2026-08-29; see below.
 - ~~**#29 plan-mode review surface**~~ (2026-08-29) — `ExitPlanMode` already reached `canUseTool`
   (probed live: input is exactly `{ plan, planFilePath }`, no `file_path`), so the plan branch in
   `approval-change.ts` had to be checked before the file_path bail-out or it would never fire.

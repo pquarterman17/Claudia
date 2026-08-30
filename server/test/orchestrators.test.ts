@@ -16,7 +16,12 @@ function fakeManager(): SessionManager {
   return {
     launch: () => {
       const id = `s${(n += 1)}`;
-      const session = { id, sendPrompt: () => undefined, transcript: { list: () => [] } };
+      const session = {
+        id,
+        sendPrompt: () => undefined,
+        summary: () => ({ id, state: 'idle' }),
+        transcript: { list: () => [], cursor: () => 0, since: () => [] },
+      };
       sessions.set(id, session);
       return session;
     },

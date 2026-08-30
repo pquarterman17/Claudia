@@ -122,19 +122,35 @@ describe('describeRecovery', () => {
   it('says something even when nothing needed recovering', () => {
     // "recovered 0" and "never ran recovery" are indistinguishable later
     // unless one of them writes a line.
-    expect(describeRecovery([], [])).toBe('recovered 0 run(s), orphaned 0, reset 0 task(s) to ready');
+    expect(describeRecovery([], [])).toBe('recovered 0 run(s), orphaned 0, moved 0 task(s)');
   });
 
   it('counts each kind', () => {
     const summary = describeRecovery(
       [
         { kind: 'adopt', runId: 'a', sessionId: 's', reason: '' },
-        { kind: 'orphan', runId: 'b', reason: '' },
+        { kind: 'orphan', runId: 'b', to: 'failed', reason: '' },
         { kind: 'leave', runId: 'c' },
       ],
       [{ taskId: 't', to: 'ready', reason: '' }],
     );
-    expect(summary).toBe('recovered 1 run(s), orphaned 1, reset 1 task(s) to ready');
+    expect(summary).toBe('recovered 1 run(s), orphaned 1, moved 1 task(s): 1 to ready');
+  });
+
+  it('names where the tasks actually went, not where most of them went', () => {
+    // Found in review: it always said "reset to ready", which describes the
+    // opposite of what happened to a task restored to reported — in the one
+    // line a human reads to find out what a restart did.
+    const summary = describeRecovery(
+      [],
+      [
+        { taskId: 'a', to: 'ready', reason: '' },
+        { taskId: 'b', to: 'reported', reason: '' },
+        { taskId: 'c', to: 'ready', reason: '' },
+      ],
+    );
+    expect(summary).toContain('2 to ready');
+    expect(summary).toContain('1 to reported');
   });
 });
 
@@ -161,6 +177,33 @@ describe('planRecovery', () => {
     expect(plan.runs[0]?.kind).toBe('adopt');
   });
 
+  it('decides from the LATEST attempt, not a stale reported one', () => {
+    // Found in review. Attempt 1 reported and was rejected; attempt 2 was
+    // running at the crash. Taking "any run reported" restored a claim that
+    // had already been considered and turned down.
+    const plan = planRecovery(
+      [task({ id: 't1' })],
+      [
+        run({ id: 'r1', taskId: 't1', attempt: 1, state: 'reported' }),
+        run({ id: 'r2', taskId: 't1', attempt: 2, state: 'running' }),
+      ],
+      new Set(),
+    );
+    expect(plan.tasks[0]).toMatchObject({ taskId: 't1', to: 'ready' });
+  });
+
+  it('restores to reported when the latest attempt is the reported one', () => {
+    const plan = planRecovery(
+      [task({ id: 't1' })],
+      [
+        run({ id: 'r1', taskId: 't1', attempt: 1, state: 'failed' }),
+        run({ id: 'r2', taskId: 't1', attempt: 2, state: 'reported' }),
+      ],
+      new Set(),
+    );
+    expect(plan.tasks[0]).toMatchObject({ taskId: 't1', to: 'reported' });
+  });
+
   it('sends a task whose run already reported to review, not back to the queue', () => {
     // Found in review. That run did real work and its evidence is in the
     // worktree; re-dispatching throws it away and pays for it twice.
@@ -174,10 +217,15 @@ describe('planRecovery', () => {
     expect(plan.runs).toEqual([{ kind: 'leave', runId: 'r1' }]);
   });
 
-  it('prefers the surviving run when a task has both a reported and a live one', () => {
+  it('leaves the task alone when the latest attempt is still alive', () => {
+    // Attempts are unique per task in the store, so the later one is the one
+    // that matters — here it survived the restart and is still working.
     const plan = planRecovery(
       [task({ id: 't1' })],
-      [run({ id: 'r1', taskId: 't1', state: 'reported' }), run({ id: 'r2', taskId: 't1', sessionId: 's9' })],
+      [
+        run({ id: 'r1', taskId: 't1', attempt: 1, state: 'reported' }),
+        run({ id: 'r2', taskId: 't1', attempt: 2, sessionId: 's9' }),
+      ],
       new Set(['s9']),
     );
     expect(plan.tasks).toEqual([]);

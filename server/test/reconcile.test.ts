@@ -301,3 +301,98 @@ describe('counting', () => {
     expect(d.some((x) => x.kind === 'hold' && x.reason.includes('2 of 2'))).toBe(true);
   });
 });
+
+describe('budgets', () => {
+  it('stops dispatching once the time budget is spent', () => {
+    // Found in review: budgetSec and budgetTokens were persisted, shown, and
+    // read by nothing — a limit that enforces nothing is a promise the app is
+    // quietly breaking.
+    const d = reconcile({
+      mission: mission({ budgetSec: 600 }),
+      tasks: [task()],
+      runs: [],
+      policy: POLICY,
+      spend: { elapsedSec: 600, tokens: 0 },
+    });
+    expect(d).toEqual([{ kind: 'hold', reason: 'spent its 600s budget' }]);
+  });
+
+  it('stops dispatching once the token budget is spent', () => {
+    const d = reconcile({
+      mission: mission({ budgetTokens: 1_000 }),
+      tasks: [task()],
+      runs: [],
+      policy: POLICY,
+      spend: { elapsedSec: 0, tokens: 1_000 },
+    });
+    expect(d[0]).toMatchObject({ kind: 'hold' });
+    expect(d[0]?.kind === 'hold' && d[0].reason).toContain('token');
+  });
+
+  it('keeps going while inside both budgets', () => {
+    const d = reconcile({
+      mission: mission({ budgetSec: 600, budgetTokens: 1_000 }),
+      tasks: [task()],
+      runs: [],
+      policy: POLICY,
+      spend: { elapsedSec: 599, tokens: 999 },
+    });
+    expect(d.some((x) => x.kind === 'dispatch')).toBe(true);
+  });
+
+  it('reports being out of budget differently from being busy', () => {
+    // One clears itself when a run finishes; the other does not clear until a
+    // human raises the limit.
+    const d = reconcile({
+      mission: mission({ budgetSec: 1 }),
+      tasks: [task()],
+      runs: [],
+      policy: POLICY,
+      spend: { elapsedSec: 99, tokens: 0 },
+    });
+    expect(d[0]?.kind === 'hold' && d[0].reason).not.toContain('busy');
+  });
+
+  it('dispatches normally when no budget is set', () => {
+    const d = reconcile({
+      mission: mission(),
+      tasks: [task()],
+      runs: [],
+      policy: POLICY,
+      spend: { elapsedSec: 1_000_000, tokens: 1_000_000 },
+    });
+    expect(d.some((x) => x.kind === 'dispatch')).toBe(true);
+  });
+});
+
+describe('records from other missions', () => {
+  it("never dispatches another mission's task", () => {
+    // A caller passing a broad query would otherwise start work that does not
+    // belong to this mission, and nothing downstream would call it an error.
+    const foreign = task({ missionId: 'm2' });
+    const d = reconcile({ mission: mission(), tasks: [foreign], runs: [], policy: POLICY });
+    expect(d).toEqual([{ kind: 'hold', reason: 'no task is ready' }]);
+  });
+
+  it("does not let another mission's runs consume this one's capacity", () => {
+    const mine = task();
+    const d = reconcile({
+      mission: mission(),
+      tasks: [mine],
+      runs: [run({ taskId: 'someone-else', missionId: 'm2' }), run({ taskId: 'other', missionId: 'm2' })],
+      policy: POLICY,
+    });
+    expect(d.some((x) => x.kind === 'dispatch')).toBe(true);
+  });
+
+  it('does not count a foreign run when numbering attempts', () => {
+    const mine = task();
+    const d = reconcile({
+      mission: mission(),
+      tasks: [mine],
+      runs: [run({ taskId: mine.id, missionId: 'm2', attempt: 9, state: 'failed' })],
+      policy: POLICY,
+    });
+    expect(d.find((x) => x.kind === 'dispatch')).toMatchObject({ attempt: 1 });
+  });
+});

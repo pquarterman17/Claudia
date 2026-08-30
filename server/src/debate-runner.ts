@@ -125,6 +125,8 @@ export class DebateRunner {
       send: (sessionId, text) => this.manager.get(sessionId)?.sendPrompt(text),
       awaitSettled: (sessionId, timeoutMs) => this.manager.awaitSettled(sessionId, timeoutMs),
       transcript: (sessionId) => this.manager.get(sessionId)?.transcript.list() ?? [],
+      cursor: (sessionId) => this.manager.get(sessionId)?.transcript.cursor() ?? 0,
+      since: (sessionId, cursor) => this.manager.get(sessionId)?.transcript.since(cursor) ?? [],
       readDiff: (cwd) => readDiff(cwd),
       // Only sessions this exchange launched are ever passed here, so stopping
       // one can never take down a tile the human is using.

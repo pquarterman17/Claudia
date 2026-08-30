@@ -25,6 +25,12 @@ export interface FleetPolicy {
   maxAttempts: number;
 }
 
+/** What the mission has spent so far, measured by the caller. */
+export interface MissionSpend {
+  elapsedSec: number;
+  tokens: number;
+}
+
 export interface ReconcileInput {
   mission: Mission;
   tasks: readonly Task[];
@@ -32,6 +38,8 @@ export interface ReconcileInput {
    * count and the duplicate-dispatch check are both derived from them. */
   runs: readonly ChildRun[];
   policy: FleetPolicy;
+  /** Absent means nothing has been spent yet, not that nothing counts. */
+  spend?: MissionSpend;
 }
 
 export type Decision =
@@ -51,7 +59,14 @@ export type Decision =
 const ACTIVE_RUN_STATES = new Set(['dispatched', 'running']);
 
 export function reconcile(input: ReconcileInput): Decision[] {
-  const { mission, tasks, runs, policy } = input;
+  const { mission, policy } = input;
+
+  // Records are filtered to this mission before anything else looks at them.
+  // Found in review: a caller passing a broad query — every task in the store,
+  // say — could dispatch another mission's work or consume the wrong mission's
+  // capacity, and neither would look like an error anywhere.
+  const tasks = input.tasks.filter((t) => t.missionId === mission.id);
+  const runs = input.runs.filter((r) => r.missionId === mission.id);
 
   // Paused is a first-class state, not an absence of work: the plan requires
   // pause/resume to lose nothing, so this returns a reason rather than an
@@ -62,6 +77,12 @@ export function reconcile(input: ReconcileInput): Decision[] {
   if (mission.watch !== 'watching') {
     return [{ kind: 'hold', reason: 'mission is paused' }];
   }
+
+  // Budgets are checked before capacity, because being out of budget is a
+  // different answer from being busy: one clears itself when a run finishes,
+  // the other does not clear until a human raises it.
+  const overspent = overBudget(mission, input.spend);
+  if (overspent) return [{ kind: 'hold', reason: overspent }];
 
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const cyclic = tasksInCycles(tasks);
@@ -156,6 +177,24 @@ export function reconcile(input: ReconcileInput): Decision[] {
     });
   }
   return decisions;
+}
+
+/**
+ * Whether the mission has spent what it was given.
+ *
+ * Found in review: these were persisted and never read, which is the worst
+ * shape for a limit — visible in the UI, settable by a human, and enforcing
+ * nothing. A budget nobody checks is a promise the app is quietly breaking.
+ */
+function overBudget(mission: Mission, spend: MissionSpend | undefined): string | undefined {
+  if (!spend) return undefined;
+  if (mission.budgetSec !== undefined && spend.elapsedSec >= mission.budgetSec) {
+    return `spent its ${mission.budgetSec}s budget`;
+  }
+  if (mission.budgetTokens !== undefined && spend.tokens >= mission.budgetTokens) {
+    return `spent its ${mission.budgetTokens}-token budget`;
+  }
+  return undefined;
 }
 
 /**

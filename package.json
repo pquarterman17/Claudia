@@ -17,9 +17,11 @@
     "build": "npm run build -w shared && npm run build -w web",
     "typecheck": "tsc -b shared server web",
     "test": "npm run test -w server && npm run test -w web",
-    "start": "node scripts/ensure-build.mjs && npm run start -w server"
+    "start": "node scripts/ensure-build.mjs && npm run start -w server",
+    "tauri": "tauri"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.2",
     "npm-run-all2": "^9.0.3",
     "typescript": "^7.0.2"
   },

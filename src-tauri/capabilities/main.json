@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Lets the main window's content use native notifications. `local` defaults to true, so this also covers the bundled claudia-splash:// loading page; `remote` extends the same grant to the real UI, which is always loaded from http://127.0.0.1:<port> (attach or spawn, the port varies) rather than the tauri:// origin.",
+  "windows": ["main"],
+  "permissions": ["notification:default"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*/*"]
+  }
+}

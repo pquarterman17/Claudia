@@ -165,6 +165,44 @@ describe('routeMessage', () => {
     expect(r.toolEnds).toBeUndefined();
   });
 
+  it('reports an automatic compaction with how large it was before', () => {
+    const r = routeMessage(
+      {
+        type: 'system',
+        subtype: 'compact_boundary',
+        compact_metadata: { trigger: 'auto', pre_tokens: 152341 },
+        uuid: 'u1',
+        session_id: 's1',
+      },
+      T0,
+    );
+    expect(r.steps).toHaveLength(1);
+    expect(r.steps[0]?.kind).toBe('info');
+    expect(r.steps[0]?.title).toContain('automatic');
+    expect(r.steps[0]?.meta).toContain('152,341 tokens');
+  });
+
+  it('distinguishes a user-invoked /compact from an automatic one', () => {
+    const r = routeMessage(
+      {
+        type: 'system',
+        subtype: 'compact_boundary',
+        compact_metadata: { trigger: 'manual', pre_tokens: 98000 },
+      },
+      T0,
+    );
+    expect(r.steps[0]?.title).toContain('requested');
+    expect(r.steps[0]?.title).not.toContain('automatic');
+    expect(r.steps[0]?.meta).toContain('/compact');
+  });
+
+  it('tolerates a compact_boundary message with metadata missing', () => {
+    expect(() => routeMessage({ type: 'system', subtype: 'compact_boundary' }, T0)).not.toThrow();
+    const r = routeMessage({ type: 'system', subtype: 'compact_boundary' }, T0);
+    expect(r.steps).toHaveLength(1);
+    expect(r.steps[0]?.kind).toBe('info');
+  });
+
   it('turns post_turn_summary into a needs-action signal', () => {
     // Structured, so a question does not have to be spotted in the prose.
     const r = routeMessage(

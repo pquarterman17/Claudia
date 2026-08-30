@@ -115,6 +115,22 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
     };
   }
 
+  // The SDK announces compaction explicitly rather than leaving it to be
+  // inferred from a sudden drop in context. Surfacing it as a feed step is
+  // the whole point: without this, a compaction reads as the session
+  // mysteriously forgetting instead of an event that actually happened.
+  if (type === 'system' && message['subtype'] === 'compact_boundary') {
+    const metadata = (message['compact_metadata'] ?? {}) as Record<string, unknown>;
+    const manual = metadata['trigger'] === 'manual';
+    const preTokens = metadata['pre_tokens'];
+    const before = typeof preTokens === 'number' ? `${preTokens.toLocaleString()} tokens` : 'a large amount of context';
+    const title = manual ? 'Context compacted (requested)' : 'Context compacted (automatic)';
+    const reason = manual ? 'you ran /compact' : 'the conversation grew too large to keep in full';
+    return {
+      steps: [infoStep(title, `Summarized the conversation to free up context (${reason}) — was ${before} before`)],
+    };
+  }
+
   // The SDK reports, per turn, whether it stopped because it needs the user.
   // Structured, so the question does not have to be spotted in the prose.
   if (type === 'system' && message['subtype'] === 'post_turn_summary') {

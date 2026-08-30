@@ -66,6 +66,19 @@ desktop and a MacBook at different times, so the app must run natively on both �
 - Item 7 (trigger engine) needs 4. Item 8 (hooks monitor) is independent of everything.
 - Item 10 (cross-platform) is continuous, not a milestone — verify on both OSes as you go.
 
+### Resolved decisions
+
+- **2026-08-29 — #7 commit+push:** commits and pushes, but **refuses outright on `main`/`master`**.
+  Encodes the owner's standing branch-before-implement rule: work happens on `feat/`/`fix/`
+  branches and main is reached only by a deliberate merge. Scope the commit to files the session
+  touched, so an unrelated dirty tree is not swept in.
+- **2026-08-29 — #16 release:** tag + CHANGELOG generated from commits since the last tag + a
+  `gh release`. No package publishing.
+- **2026-08-29 — #8 hooks monitor:** approved to edit the owner's global
+  `~/.claude/settings.json` directly, with the existing file copied aside first and the exact
+  change reported back.
+- **2026-08-29 — #11 Tauri wrap:** wanted. Native window, tray and notifications around the web UI.
+
 ## Tier 1 — High Impact
 
 ### Terminal-parity initiative (2026-07-26)

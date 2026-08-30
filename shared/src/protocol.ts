@@ -79,6 +79,11 @@ export type ClientCommand =
       cwd: string;
       /** Which agent to run. Defaults to Claude when absent. */
       agent?: AgentKind;
+      /**
+       * Create (or reuse) a git worktree for this branch and run the session
+       * there, leaving the checkout you are looking at untouched.
+       */
+      worktreeBranch?: string;
       /** Optional — an empty session opens idle and waits for a prompt. */
       prompt?: string;
       model?: string;

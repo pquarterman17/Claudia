@@ -96,6 +96,11 @@ Wrap-up script location: `~/bin/wrapup.sh` (macOS/Linux) or `C:\bin\wrapup.ps1` 
 - **Notifications** — turn on **notify** in the header: desktop notification when a session
   blocks on approval, errors, or asks a question. Fires only on the transition, stays quiet
   while the window is focused.
+- **Worktrees** — give a branch name when launching and the session gets its own git worktree
+  beside the repo, so parallel sessions cannot disturb the checkout you are looking at. An
+  existing branch is checked out, a new one is created, and relaunching on the same branch
+  returns to the work already there. **Worktrees are never deleted for you** — one can hold
+  hours of uncommitted work; remove them yourself with `git worktree remove`.
 - **Templates** — save a cwd + prompt + permission mode; relaunch from a chip.
 - **Toolkit** — saved prompts fired at a session that is *already running*: run and fix the
   tests, summarise the diff, review my changes. Templates only ever launch a session; the

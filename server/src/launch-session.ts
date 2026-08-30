@@ -1,6 +1,7 @@
 import type { ClientCommand } from '@claudia/shared';
 import { assertUsableDirectory, normalizePath } from './folder-picker.js';
 import type { SessionManager } from './session-manager.js';
+import { ensureWorktree } from './worktree.js';
 import type { SettingsStore } from './settings-store.js';
 
 /**
@@ -11,13 +12,25 @@ import type { SettingsStore } from './settings-store.js';
  * also the one spot that decides which agent a new session runs, so launch
  * and resume cannot drift apart on it.
  */
-export function launchSession(
+export async function launchSession(
   cmd: Extract<ClientCommand, { type: 'launch_session' }>,
   manager: SessionManager,
   settings: SettingsStore,
-): void {
-  const cwd = normalizePath(cmd.cwd);
-  assertUsableDirectory(cwd);
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const repo = normalizePath(cmd.cwd);
+  assertUsableDirectory(repo);
+
+  // A worktree launch runs the session on its own branch in its own directory,
+  // leaving the checkout the user is looking at untouched. Reusing an existing
+  // one is deliberate: relaunching on the same branch should land back in the
+  // work already there, not fail.
+  let cwd = repo;
+  if (cmd.worktreeBranch?.trim()) {
+    const tree = await ensureWorktree(repo, cmd.worktreeBranch);
+    if (!tree.ok) return tree;
+    cwd = tree.path;
+  }
+
   manager.launch({
     cwd,
     agent: cmd.agent ?? 'claude',
@@ -27,9 +40,12 @@ export function launchSession(
     effortLevel: cmd.effortLevel ?? 'high',
     thinkingMode: cmd.thinkingMode ?? 'adaptive',
   });
-  settings.rememberDirectory(cwd);
+  // Remember the repository, not the worktree: the worktree is derived from it
+  // and offering a list of them back would bury the repo you actually work in.
+  settings.rememberDirectory(repo);
   // The launch mode is sticky: most people keep one posture.
   settings.update({ defaultPermissionMode: cmd.permissionMode ?? 'auto' });
+  return { ok: true };
 }
 
 /**

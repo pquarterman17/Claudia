@@ -162,8 +162,19 @@ export class Gateway {
   private dispatch(cmd: ClientCommand, socket: WebSocket): void {
     switch (cmd.type) {
       case 'launch_session':
-        launchSession(cmd, this.manager, this.settings);
-        this.broadcastSettings();
+        // Creating a worktree is the only async part; a failure there must
+        // reach the user rather than vanish, and must never reject unhandled.
+        void launchSession(cmd, this.manager, this.settings)
+          .then((result) => {
+            if (!result.ok) this.sendTo(socket, { type: 'server_error', message: result.message });
+            this.broadcastSettings();
+          })
+          .catch((err: unknown) => {
+            this.sendTo(socket, {
+              type: 'server_error',
+              message: err instanceof Error ? err.message : 'The session could not be launched.',
+            });
+          });
         return;
       case 'list_saved_sessions':
         void allSavedSessions(cmd.cwd).then((sessions) => this.sendTo(socket, { type: 'saved_sessions', sessions }));

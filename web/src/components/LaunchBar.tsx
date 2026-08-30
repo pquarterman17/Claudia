@@ -19,6 +19,8 @@ interface Props {
 export function LaunchBar({ recentDirectories, defaultMode, templates, savedSessions, checkpoints, platform }: Props) {
   const [cwd, setCwd] = useState('');
   const [prompt, setPrompt] = useState('');
+  /** Non-empty means: run this session on its own branch, in its own worktree. */
+  const [worktreeBranch, setWorktreeBranch] = useState('');
   const [mode, setMode] = useState<PermissionLaunchMode>(defaultMode);
   // Claude is the default agent — picking it takes no action from the user.
   const [agent, setAgent] = useState<AgentKind>('claude');
@@ -71,11 +73,13 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
     send({
       type: 'launch_session',
       cwd: cwd.trim(),
+      ...(worktreeBranch.trim() ? { worktreeBranch: worktreeBranch.trim() } : {}),
       agent,
       ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
       permissionMode: mode,
     });
     setPrompt('');
+    setWorktreeBranch('');
   };
 
   const launchTemplate = (t: SessionTemplate) => {
@@ -182,6 +186,19 @@ export function LaunchBar({ recentDirectories, defaultMode, templates, savedSess
           ))}
         </select>
       </label>
+      <input
+        className="input mono"
+        aria-label="Run on a new branch in its own worktree"
+        value={worktreeBranch}
+        onChange={(e) => setWorktreeBranch(e.target.value)}
+        placeholder="worktree branch (optional)…"
+        title={
+          'Leave empty to run in the folder itself. Give a branch name and the session gets its own ' +
+          'git worktree beside the repo, so it cannot disturb the checkout you are looking at. ' +
+          'An existing branch is checked out; a new one is created. Worktrees are never deleted for you.'
+        }
+        style={{ flex: '0 1 190px', fontSize: 11.5, padding: '4px 8px' }}
+      />
       <label className={`launch-mode ${danger ? 'danger' : ''}`}>
         <span className="sr-only">Permission mode</span>
         <select

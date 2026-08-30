@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process';
-import { realpathSync } from 'node:fs';
-import path from 'node:path';
+import { basename, dirname, isAbsolute, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
@@ -63,6 +62,7 @@ export async function commitAndPush(work: RepoWork[]): Promise<string> {
   // committing them separately would produce two commits that each report the
   // other's files as somebody else's uncommitted work.
   const byRoot = new Map<string, { candidates: Set<string>; titles: Set<string> }>();
+  const facts = new Map<string, DirFacts>();
   for (const item of work) {
     if (item.files.length === 0) continue;
     const root = (await tryGit(item.cwd, ['rev-parse', '--show-toplevel']))?.trim();
@@ -71,10 +71,7 @@ export async function commitAndPush(work: RepoWork[]): Promise<string> {
       continue;
     }
     const entry = byRoot.get(root) ?? { candidates: new Set<string>(), titles: new Set<string>() };
-    for (const file of item.files) {
-      const rel = toRepoPath(root, item.cwd, file);
-      if (rel) entry.candidates.add(rel);
-    }
+    for (const rel of await candidatePaths(root, item.cwd, item.files, facts)) entry.candidates.add(rel);
     for (const title of item.titles) entry.titles.add(title);
     byRoot.set(root, entry);
   }
@@ -205,42 +202,62 @@ async function dirtyPaths(root: string): Promise<Set<string>> {
   return paths;
 }
 
-/**
- * The part of `node:path` this needs, taken as a parameter so the Windows
- * behaviour can be pinned from a POSIX host — the same trick the per-OS finish
- * command table uses. Without it the separator conversion below is a no-op
- * everywhere the tests run, and only the Windows CI leg would ever notice it
- * being wrong.
- */
-export type PathFlavour = Pick<typeof path, 'isAbsolute' | 'resolve' | 'relative' | 'sep'>;
-
-/**
- * Repo-relative and forward-slashed, or null when the file is outside the repo.
- *
- * Forward slashes because that is the only vocabulary git speaks: `git status`
- * reports `server/src/x.ts` on every platform, while `path.relative` hands back
- * `server\src\x.ts` on Windows. Comparing those two directly matches nothing,
- * so the action would commit nothing and report nothing wrong.
- *
- * Symlinks have to be resolved for the same reason. `git rev-parse
- * --show-toplevel` reports the physical path, while a session's cwd is whatever
- * the user typed — and on macOS that is routinely a symlink (`/tmp`, and the
- * synced folders some of these repositories live under).
- */
-export function toRepoPath(root: string, cwd: string, file: string, p: PathFlavour = path): string | null {
-  const absolute = p.isAbsolute(file) ? file : p.resolve(real(cwd), file);
-  const rel = p.relative(real(root), real(absolute));
-  if (!rel || rel.startsWith('..') || p.isAbsolute(rel)) return null;
-  return rel.split(p.sep).join('/');
+/** Where a directory sits, as git sees it. */
+interface DirFacts {
+  /** The repository it belongs to, in git's spelling, or null for none. */
+  top: string | null;
+  /** Its path inside that repository: '' at the root, 'server/src/' below. */
+  prefix: string;
 }
 
-/** The path with symlinks resolved, or unchanged when it no longer exists. */
-function real(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return path;
+/**
+ * The files' paths as git spells them, dropping any that belong elsewhere.
+ *
+ * Asking git rather than computing this with `path.relative` is the whole
+ * point, and the Windows CI leg is what taught it. git reports a repository
+ * root canonically, while a session's cwd is whatever reached it — a symlink on
+ * macOS, an 8.3 short name (`C:\Users\RUNNER~1\...`) under a Windows temp
+ * directory, a different drive-letter case. Whenever those two spellings of the
+ * same directory differ, `relative()` answers "outside the repository" for
+ * every single file, and the action commits nothing while reporting nothing
+ * wrong — silent, and invisible on POSIX.
+ *
+ * `rev-parse --show-prefix` is git answering that question in the same
+ * vocabulary `git status` reports in, on every platform: forward-slashed,
+ * relative to the root. The only thing Node contributes is the basename, which
+ * no spelling difference can change. Two spellings of one directory still
+ * compare equal here, because both sides of every comparison came from git.
+ */
+async function candidatePaths(
+  root: string,
+  cwd: string,
+  files: readonly string[],
+  facts: Map<string, DirFacts>,
+): Promise<Set<string>> {
+  const paths = new Set<string>();
+  for (const file of files) {
+    // resolve() only turns a relative path into an absolute one against the cwd
+    // it was reported against; it never has to agree with git about spelling.
+    const absolute = isAbsolute(file) ? file : resolve(cwd, file);
+    const dir = dirname(absolute);
+    let known = facts.get(dir);
+    if (!known) {
+      known = await readDirFacts(dir);
+      facts.set(dir, known);
+    }
+    // A different repository, or none at all — not this commit's business.
+    if (known.top !== root) continue;
+    paths.add(`${known.prefix}${basename(absolute)}`);
   }
+  return paths;
+}
+
+/** One directory's repository and prefix. Both answers come from git, so they
+ * are directly comparable with the root git already reported. */
+async function readDirFacts(dir: string): Promise<DirFacts> {
+  const top = (await tryGit(dir, ['rev-parse', '--show-toplevel']))?.trim();
+  if (!top) return { top: null, prefix: '' };
+  return { top, prefix: (await tryGit(dir, ['rev-parse', '--show-prefix']))?.trim() ?? '' };
 }
 
 /**

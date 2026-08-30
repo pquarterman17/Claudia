@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, posix, win32 } from 'node:path';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { commitAndPush, commitMessage, repoName, toRepoPath } from '../src/commit-action.js';
+import { commitAndPush, commitMessage, repoName } from '../src/commit-action.js';
 
 /**
  * Driven against real repositories, like git-info.test.ts. What matters here is
@@ -149,6 +149,29 @@ describe('commitAndPush', () => {
     expect(log(dir)).toEqual(['first']);
   });
 
+  it('ignores a written file that belongs to a DIFFERENT repository', async () => {
+    // Sharper than a plain directory: this one is inside a repo, just not this
+    // one, so "is it under the root" has to be answered by identity rather than
+    // by whether some repository claims it.
+    const dir = repo();
+    const other = repo('feat/other');
+    const result = await commitAndPush([{ cwd: dir, files: [write(other, 'theirs.txt', 'not ours')], titles: [] }]);
+    expect(result).toMatch(/nothing of its own/);
+    expect(log(dir)).toEqual(['first']);
+    expect(log(other)).toEqual(['first']);
+  });
+
+  it('commits a file reported from a subdirectory of the repository', async () => {
+    // The path git reports back is prefixed ('server/'), and that prefix has to
+    // come from git rather than from arithmetic on two strings that may spell
+    // the same directory differently.
+    const dir = repo();
+    mkdirSync(join(dir, 'server'));
+    const file = write(dir, join('server', 'deep.ts'), 'export {};');
+    await commitAndPush([{ cwd: join(dir, 'server'), files: [file], titles: ['Sub'] }]);
+    expect(git(dir, ['show', '--name-only', '--format=', 'HEAD'])).toBe('server/deep.ts');
+  });
+
   it('says nothing was there rather than committing an empty change', async () => {
     const dir = repo();
     // A file the session wrote and then reverted: written, but not dirty now.
@@ -260,69 +283,6 @@ describe('commitMessage', () => {
     const message = commitMessage({ titles: [`${'x'.repeat(200)}\nsecond line`], paths: ['a.ts'] });
     const subject = message.split('\n')[0] ?? '';
     expect(subject.length).toBeLessThanOrEqual(72);
-  });
-});
-
-/**
- * Slashes, pinned from whatever host this runs on.
- *
- * `path.relative` hands back `server\src\x.ts` on Windows while `git status`
- * says `server/src/x.ts` everywhere, so the conversion between them decides
- * whether any candidate path matches at all. On a POSIX host that conversion is
- * a no-op — `sep` is already `/` — so nothing below would fail here however
- * wrong it were, and only the Windows CI leg would ever have noticed. Taking
- * the path flavour as a parameter is the same trick the per-OS finish command
- * table uses to test three platforms from one.
- *
- * Every expectation here was measured against `node:path` first, not assumed.
- */
-describe('toRepoPath, on a Windows path flavour', () => {
-  const ROOT = 'C:\\Users\\p\\repo';
-
-  it('converts a backslashed relative path into what git speaks', () => {
-    expect(toRepoPath(ROOT, ROOT, 'C:\\Users\\p\\repo\\server\\src\\x.ts', win32)).toBe('server/src/x.ts');
-  });
-
-  it('matches a forward-slashed root against a backslashed file', () => {
-    // The normal Windows case, and the reason both sides cannot be assumed to
-    // agree: git reports the root with forward slashes, the Edit tool reports
-    // the file with backslashes.
-    expect(toRepoPath('C:/Users/p/repo', ROOT, 'C:\\Users\\p\\repo\\a.ts', win32)).toBe('a.ts');
-  });
-
-  it('resolves a relative file against the session directory', () => {
-    expect(toRepoPath(ROOT, `${ROOT}\\sub`, 'a.ts', win32)).toBe('sub/a.ts');
-  });
-
-  it('drops a file outside the repository', () => {
-    expect(toRepoPath(ROOT, ROOT, 'C:\\Users\\p\\elsewhere\\a.ts', win32)).toBeNull();
-  });
-
-  it('drops a file on another drive', () => {
-    // Measured: relative() across drives returns an ABSOLUTE path, not a
-    // ..-prefixed one, so the absolute check — not the .. check — is what
-    // catches this. Without it a `D:` path would enter the candidate set.
-    expect(toRepoPath(ROOT, ROOT, 'D:\\repo\\a.ts', win32)).toBeNull();
-  });
-
-  it('drops the repository root itself, which names no file', () => {
-    expect(toRepoPath(ROOT, ROOT, ROOT, win32)).toBeNull();
-  });
-});
-
-describe('toRepoPath, on a POSIX path flavour', () => {
-  it('leaves a backslash inside a filename alone', () => {
-    // A backslash is a legal character in a POSIX filename, so it is part of
-    // the name here and not a separator to be rewritten.
-    expect(toRepoPath('/repo', '/repo', '/repo/we\\ird.txt', posix)).toBe('we\\ird.txt');
-  });
-
-  it('keeps a nested path as git already writes it', () => {
-    expect(toRepoPath('/repo', '/repo', '/repo/server/src/x.ts', posix)).toBe('server/src/x.ts');
-  });
-
-  it('drops a file outside the repository', () => {
-    expect(toRepoPath('/repo', '/repo', '/elsewhere/x.ts', posix)).toBeNull();
   });
 });
 

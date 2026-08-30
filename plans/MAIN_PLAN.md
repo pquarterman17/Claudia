@@ -11,7 +11,7 @@ architecture does not. The Claude Design export that started this is deliberatel
 **Updated:** 2026-08-30
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
-genuinely new work or was deliberately deferred for a decision. 738 tests, clean typecheck.
+genuinely new work or was deliberately deferred for a decision. 731 tests, clean typecheck.
 Everything so far was built and verified on Windows only — see #13.
 
 ---
@@ -194,16 +194,30 @@ Recording these so they are not rediscovered as bugs:
   unpushed rather than failed — the commit already made the work durable, which is what the
   chain's ordering protects; an attempted push that fails does throw, so a shutdown cannot
   follow one. Over 100 changed files it refuses and asks for a human.
-  A fourth finding is about the TESTS, not git: the `path.relative` → git
-  conversion (`server\src\x.ts` → `server/src/x.ts`) is a NO-OP on any POSIX
-  host, since `sep` is already `/`. Every test of it passed here no matter how
-  wrong it was, and only the Windows CI leg would ever have noticed — so
-  `toRepoPath` now takes the path flavour as a parameter and the Windows cases
-  are pinned from this host, the same trick the per-OS finish command table
-  already used. Measuring rather than assuming paid off immediately: across
-  drives `relative()` returns an ABSOLUTE `D:\repo\x.ts`, not a `..` path, so
-  it is the absolute check and not the `..` check that keeps another drive out
-  of the candidate set. Both guards were proven to fail before being trusted.
+  A fourth finding cost two CI rounds and is the most useful one. Building the
+  repo-relative path with `path.relative` and comparing it against `git status`
+  output means replicating git's path semantics in Node, and the two spell the
+  same directory differently. First attempt: convert `server\src\x.ts` to
+  `server/src/x.ts` with `split(sep).join('/')` — a NO-OP on any POSIX host, so
+  every test passed here however wrong it was. Second attempt: parameterise the
+  path flavour so the Windows cases could be pinned from a POSIX host; those
+  tests passed, and the Windows CI leg then failed 14 tests anyway, ALL with one
+  signature — "has nothing of its own left to commit", every candidate judged
+  outside its own repository. The conversion was right; the two SPELLINGS never
+  converged. GitHub's Windows runner has `os.tmpdir()` =
+  `C:\Users\RUNNER~1\...`, an 8.3 short name, while git reports the long
+  canonical path — and Node's `realpathSync` resolves symlinks but does not
+  expand 8.3 names. macOS symlinks and drive-letter case are the same class of
+  problem.
+  The fix was to stop doing the arithmetic at all: `rev-parse --show-prefix`
+  has git answer in the same vocabulary `git status` reports in ('' at the
+  root, `server/src/` below, forward-slashed everywhere), and the only
+  comparison left — does this file's directory belong to THIS repository — has
+  git's `--show-toplevel` on both sides. Node contributes a basename, which no
+  spelling can change. The canonicalization is gone entirely, and the symlinked
+  -cwd case now passes with none. LESSON: a conversion that is inert on the host
+  you test on is not merely untested, it is a sign you are duplicating another
+  tool's semantics — ask that tool instead.
   Verified live end to end on 2026-08-30, both halves: a real session wrote `hello.txt`, the
   chain fired and committed exactly that file with the session's own auto-title as the subject,
   pushed it to a bare origin setting the upstream, and left the human's `unrelated.txt`

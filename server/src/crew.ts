@@ -1,6 +1,6 @@
 import type { AgentKind, CrewMemberStatus } from '@claudia/shared';
 import { crewBranch, memberPrompt, parseTasks, reportPrompt, splitPrompt, type CrewTask, type MemberReport } from './crew-plan.js';
-import { lastAssistantText } from './relay.js';
+import { assistantTextAfter } from './relay.js';
 
 /**
  * One objective, split by an agent and worked by several at once.
@@ -57,6 +57,8 @@ export interface CrewDeps {
   awaitSettled: (sessionId: string, timeoutMs: number) => Promise<unknown>;
   transcript: (sessionId: string) => ReadonlyArray<{ kind: string; text: string }>;
   progress: (update: CrewProgress) => void;
+  /** Stops a session this run started. Every session here is one of ours. */
+  cancel: (sessionId: string) => void;
 }
 
 export interface CrewResult {
@@ -67,6 +69,21 @@ export interface CrewResult {
   stoppedBecause?: string;
 }
 
+/**
+ * Asks one session something and reads only what it says in reply.
+ *
+ * Same guard as the debate: a settled session satisfies `awaitSettled` the
+ * instant it is asked, so without a mark in the transcript a member that never
+ * ran "reports" whatever it last said. On a crew that is worse than on a
+ * debate, because the report is what the human reads INSTEAD of the work.
+ */
+async function ask(sessionId: string, text: string, deps: CrewDeps, timeoutMs: number): Promise<string | undefined> {
+  const baseline = deps.transcript(sessionId).length;
+  deps.send(sessionId, text);
+  await deps.awaitSettled(sessionId, timeoutMs);
+  return assistantTextAfter(deps.transcript(sessionId), baseline);
+}
+
 export async function runCrew(spec: CrewSpec, deps: CrewDeps): Promise<CrewResult> {
   const cap = Math.max(1, Math.min(MAX_TASKS, Math.round(spec.maxTasks) || DEFAULT_TASKS));
   const agents = spec.workers.length ? spec.workers : [spec.planner];
@@ -74,9 +91,17 @@ export async function runCrew(spec: CrewSpec, deps: CrewDeps): Promise<CrewResul
   const planner = await deps.launch({ cwd: spec.cwd, agent: spec.planner });
   deps.progress({ kind: 'planner', sessionId: planner.sessionId });
 
-  deps.send(planner.sessionId, splitPrompt(spec.objective, cap));
-  await deps.awaitSettled(planner.sessionId, PLAN_TIMEOUT_MS);
-  const plan = lastAssistantText(deps.transcript(planner.sessionId));
+  // Every session in a crew is one this run started, so all of them are ours
+  // to stop. Collected as they appear rather than at the end: the failure this
+  // guards against is a planner turn timing out while members are still
+  // editing, and at that moment the members are the ones costing money.
+  const launched: string[] = [planner.sessionId];
+  // Declared out here so the cleanup below can reach the members even when the
+  // failure happened before they were all populated.
+  const members: CrewMemberStatus[] = [];
+  try {
+
+  const plan = await ask(planner.sessionId, splitPrompt(spec.objective, cap), deps, PLAN_TIMEOUT_MS);
 
   let stoppedBecause: string | undefined;
   let tasks = plan ? parseTasks(plan, cap) : [];
@@ -89,13 +114,15 @@ export async function runCrew(spec: CrewSpec, deps: CrewDeps): Promise<CrewResul
     stoppedBecause = 'the planner did not return a usable split, so one agent took the whole objective';
   }
 
-  const members: CrewMemberStatus[] = tasks.map((task, i) => ({
-    title: task.title,
-    brief: task.brief,
-    agent: agents[i % agents.length] ?? spec.planner,
-    branch: crewBranch(spec.runId, i, task.title),
-    state: 'planned',
-  }));
+  members.push(
+    ...tasks.map((task, i): CrewMemberStatus => ({
+      title: task.title,
+      brief: task.brief,
+      agent: agents[i % agents.length] ?? spec.planner,
+      branch: crewBranch(spec.runId, i, task.title),
+      state: 'planned',
+    })),
+  );
   deps.progress({ kind: 'planned', members: members.map((m) => ({ ...m })) });
 
   await openCheckouts(members, spec, deps);
@@ -107,16 +134,21 @@ export async function runCrew(spec: CrewSpec, deps: CrewDeps): Promise<CrewResul
     ...(m.summary ? { summary: m.summary } : {}),
     ...(m.error ? { error: m.error } : {}),
   }));
-  deps.send(planner.sessionId, reportPrompt(spec.objective, reports));
-  await deps.awaitSettled(planner.sessionId, PLAN_TIMEOUT_MS);
-  const report = lastAssistantText(deps.transcript(planner.sessionId));
+  const report = await ask(planner.sessionId, reportPrompt(spec.objective, reports), deps, PLAN_TIMEOUT_MS);
 
-  return {
-    plannerSessionId: planner.sessionId,
-    members,
-    ...(report ? { report } : {}),
-    ...(stoppedBecause ? { stoppedBecause } : {}),
-  };
+    return {
+      plannerSessionId: planner.sessionId,
+      members,
+      ...(report ? { report } : {}),
+      ...(stoppedBecause ? { stoppedBecause } : {}),
+    };
+  } catch (err) {
+    // The bookkeeping promise failing is not a reason to leave several agents
+    // editing several worktrees with nobody reading the result.
+    for (const member of members) if (member.sessionId) launched.push(member.sessionId);
+    for (const id of launched) deps.cancel(id);
+    throw err;
+  }
 }
 
 /**
@@ -159,12 +191,12 @@ async function work(
   const task = tasks[index];
   if (!task) return;
   try {
-    deps.send(
+    const summary = await ask(
       member.sessionId,
       memberPrompt(spec.objective, task, member.branch ?? '(this branch)', tasks.map((t) => t.title)),
+      deps,
+      MEMBER_TIMEOUT_MS,
     );
-    await deps.awaitSettled(member.sessionId, MEMBER_TIMEOUT_MS);
-    const summary = lastAssistantText(deps.transcript(member.sessionId));
     member.state = 'done';
     if (summary) member.summary = summary;
   } catch (err) {

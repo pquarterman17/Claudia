@@ -31,7 +31,12 @@ export function DebateStrip({ debates, sessions }: { debates: DebateStatus[]; se
   const [subject, setSubject] = useState<DebateSubject>('diff');
   const [objective, setObjective] = useState('');
   const [authorId, setAuthorId] = useState('');
-  const author = sessions.find((s) => s.id === authorId) ?? sessions[0];
+  // Only an idle session can take part. A stopped one never answers, and a
+  // working one answers the question it was already busy with — which the
+  // exchange would read as the reply it asked for. The server refuses these
+  // too; offering them here would only be a slower way to be told no.
+  const eligible = sessions.filter((s) => s.state === 'idle');
+  const author = eligible.find((s) => s.id === authorId) ?? eligible[0];
   const canStart = Boolean(author && objective.trim());
 
   const start = () => {
@@ -60,11 +65,13 @@ export function DebateStrip({ debates, sessions }: { debates: DebateStatus[]; se
         <span style={{ flex: 1 }} />
         <button
           onClick={() => setOpen(!open)}
-          disabled={sessions.length === 0}
+          disabled={eligible.length === 0}
           title={
             sessions.length === 0
               ? 'Launch a session first — the exchange runs in its directory'
-              : 'Hand this problem to both agents and let them settle it'
+              : eligible.length === 0
+                ? 'Every session is busy or stopped; an exchange needs an idle one'
+                : 'Hand this problem to both agents and let them settle it'
           }
           className="btn btn-ghost"
           style={{
@@ -72,8 +79,8 @@ export function DebateStrip({ debates, sessions }: { debates: DebateStatus[]; se
             padding: '2px 8px',
             borderRadius: 6,
             border: '1px solid #33364a',
-            color: sessions.length === 0 ? '#4f5364' : '#9397ab',
-            cursor: sessions.length === 0 ? 'not-allowed' : 'pointer',
+            color: eligible.length === 0 ? '#4f5364' : '#9397ab',
+            cursor: eligible.length === 0 ? 'not-allowed' : 'pointer',
           }}
         >
           {open ? 'cancel' : 'new exchange'}
@@ -120,7 +127,7 @@ export function DebateStrip({ debates, sessions }: { debates: DebateStatus[]; se
               title="Whose work is under discussion; the other agent reviews it"
               style={{ background: '#12141d', border: '1px solid #33364a', borderRadius: 6, color: '#9397ab', fontSize: 10.5, padding: '2px 4px' }}
             >
-              {sessions.map((s) => (
+              {eligible.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.title ?? s.name} · {agentKindLabel(s.agent)}
                 </option>

@@ -179,6 +179,8 @@ describe('routeMessage', () => {
     expect(r.steps).toHaveLength(1);
     expect(r.steps[0]?.kind).toBe('info');
     expect(r.steps[0]?.title).toContain('automatic');
+    // Grouping is pinned to en-US in the router precisely so this assertion is
+    // not a coin flip on the host locale.
     expect(r.steps[0]?.meta).toContain('152,341 tokens');
   });
 

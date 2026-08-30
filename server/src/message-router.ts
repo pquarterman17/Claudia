@@ -123,7 +123,12 @@ export function routeMessage(message: Record<string, unknown>, turnStartedAt: nu
     const metadata = (message['compact_metadata'] ?? {}) as Record<string, unknown>;
     const manual = metadata['trigger'] === 'manual';
     const preTokens = metadata['pre_tokens'];
-    const before = typeof preTokens === 'number' ? `${preTokens.toLocaleString()} tokens` : 'a large amount of context';
+    // Locale pinned deliberately. A bare toLocaleString() follows the HOST's
+    // locale, so the same session would read "152,341" on one machine and
+    // "152.341" on another — and a test asserting either becomes a coin flip
+    // depending on where CI runs.
+    const before =
+      typeof preTokens === 'number' ? `${preTokens.toLocaleString('en-US')} tokens` : 'a large amount of context';
     const title = manual ? 'Context compacted (requested)' : 'Context compacted (automatic)';
     const reason = manual ? 'you ran /compact' : 'the conversation grew too large to keep in full';
     return {

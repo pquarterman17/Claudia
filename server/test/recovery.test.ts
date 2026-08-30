@@ -86,6 +86,10 @@ describe('recoverTasks', () => {
       {
         taskId: 't1',
         to: 'ready',
+        // Via `failed`, because that attempt did fail. The state machine also
+        // allows `running -> reported -> ready`, which would assert a child
+        // claimed the work was finished — legal and untrue.
+        path: ['failed', 'ready'],
         reason: 'it was running when the server stopped, and nothing is running now',
       },
     ]);
@@ -163,6 +167,7 @@ describe('planRecovery', () => {
       {
         taskId: 't1',
         to: 'ready',
+        path: ['failed', 'ready'],
         reason: 'it was running when the server stopped, and nothing is running now',
       },
     ]);
@@ -244,5 +249,33 @@ describe('planRecovery', () => {
       if (decision.kind === 'orphan') expect(decision.to).toBe('failed');
     }
     expect(plan.runs.filter((r) => r.kind === 'orphan')).toHaveLength(3);
+  });
+});
+
+describe('found by adversarial review', () => {
+  it('never requeues a task that still has a live run, whatever the latest attempt did', () => {
+    // Attempt 2 failed, attempt 1 is still alive and adopted. Requeueing here
+    // dispatches a second agent into the same worktree as one already working.
+    const plan = planRecovery(
+      [task({ id: 't1' })],
+      [
+        run({ id: 'r1', taskId: 't1', attempt: 1, sessionId: 'alive', state: 'running' }),
+        run({ id: 'r2', taskId: 't1', attempt: 2, sessionId: 'dead', state: 'failed' }),
+      ],
+      new Set(['alive']),
+    );
+    expect(plan.tasks).toEqual([]);
+  });
+
+  it('still requeues when every run for the task is gone', () => {
+    const plan = planRecovery(
+      [task({ id: 't1' })],
+      [
+        run({ id: 'r1', taskId: 't1', attempt: 1, sessionId: 'dead1', state: 'running' }),
+        run({ id: 'r2', taskId: 't1', attempt: 2, sessionId: 'dead2', state: 'running' }),
+      ],
+      new Set(),
+    );
+    expect(plan.tasks[0]).toMatchObject({ to: 'ready', path: ['failed', 'ready'] });
   });
 });

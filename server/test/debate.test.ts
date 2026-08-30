@@ -63,7 +63,7 @@ function harness(replies: Record<string, string[]> = {}, diff: string | null = '
       }
       h.transcripts.set(session, items);
     },
-    awaitSettled: (id) => Promise.resolve({ id, state: 'idle' } as SessionSummary),
+    awaitSettled: (id) => Promise.resolve({ id, state: h.states.get(id) ?? 'idle' } as SessionSummary),
     transcript: (id) => h.transcripts.get(id) ?? [],
     // Models the real log: a cursor that keeps counting past eviction.
     cursor: (id) => h.appended.get(id) ?? 0,
@@ -90,6 +90,48 @@ const spec = {
 };
 
 describe('runDebate', () => {
+  it("does not read a dead turn's preamble as the critique", async () => {
+    // Found in review. `error` and `stopped` are settled too, so waiting for a
+    // turn to end cannot tell finishing from dying — and a turn that died has
+    // already written its opener ("Let me read the diff first.") after the
+    // baseline, where every other guard waves it through.
+    const h = harness({ 'session-1': ['Let me read the diff first.'] });
+    h.states.set('session-1', 'error');
+    const result = await runDebate({ ...spec, authorSessionId: 'author' }, h.deps);
+    expect(result.stoppedBecause).toBe('the reviewer said nothing');
+    expect(result.entries).toEqual([]);
+  });
+
+  it('does not bill the author for rebutting a turn that died', async () => {
+    // The cost of the bug above: the human's OWN tile pays for a rebuttal to
+    // a non-critique, and then for a verdict.
+    const h = harness({ 'session-1': ['Let me read the diff first.'] });
+    h.states.set('session-1', 'error');
+    await runDebate({ ...spec, authorSessionId: 'author' }, h.deps);
+    expect(h.sent.filter((entry) => entry.session === 'author')).toEqual([]);
+  });
+
+  it('spends nothing when there is nothing uncommitted to review', async () => {
+    // `readDiff` returns a truthy marker for a clean tree, and `diff` is the
+    // default subject — so asking for a review just after committing bought a
+    // reviewer session and five model turns about "(no tracked changes)".
+    const h = harness({}, '(no tracked changes)');
+    const result = await runDebate({ ...spec, authorSessionId: 'author' }, h.deps);
+    expect(result.stoppedBecause).toBe('there is nothing uncommitted to review');
+    expect(h.launched).toEqual([]);
+    expect(h.sent).toEqual([]);
+  });
+
+  it('still reviews a tree whose only changes are untracked files', async () => {
+    const h = harness(
+      { 'session-1': ['a critique'], author: ['a rebuttal', 'a verdict'] },
+      '(no tracked changes)\n\nUntracked files not shown in the diff:\n- new.ts',
+    );
+    const result = await runDebate({ ...spec, authorSessionId: 'author', rounds: 1 }, h.deps);
+    expect(result.stoppedBecause).not.toBe('there is nothing uncommitted to review');
+    expect(h.launched).toHaveLength(1);
+  });
+
   it('finds the reply even when the transcript is at its eviction cap', async () => {
     // Found in review. TranscriptLog splices from the front at 500, so the
     // array length stays 500 forever — a length-based cursor reports "said

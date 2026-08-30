@@ -1,4 +1,4 @@
-import type { AgentKind } from '@claudia/shared';
+import type { AgentKind, SessionSummary } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
 import { MAX_TASKS, runCrew, type CrewDeps, type CrewProgress, type LaunchedMember } from '../src/crew.js';
 
@@ -20,6 +20,8 @@ interface Harness {
   inFlight: Set<string>;
   peakInFlight: number;
   cancelled: string[];
+  /** How each session's turn ends. Defaults to `idle`. */
+  states: Map<string, string>;
 }
 
 interface HarnessOpts {
@@ -47,6 +49,7 @@ function harness(opts: HarnessOpts = {}): Harness {
     inFlight: new Set(),
     peakInFlight: 0,
     cancelled: [],
+    states: new Map(),
   };
 
   h.deps = {
@@ -84,7 +87,10 @@ function harness(opts: HarnessOpts = {}): Harness {
       await Promise.resolve();
       await Promise.resolve();
       h.inFlight.delete(session);
-      return undefined;
+      // A real settle carries the state it settled INTO — `idle` for a turn
+      // that finished, `error`/`stopped` for one that died. Returning nothing
+      // is what let a dead turn read as an answer.
+      return { id: session, state: h.states.get(session) ?? 'idle' } as SessionSummary;
     },
     transcript: (session) => transcripts.get(session) ?? [],
     cursor: (session) => appended.get(session) ?? 0,
@@ -118,7 +124,7 @@ describe('runCrew', () => {
     // Found in review. The per-member catch returns normally, so Promise.all
     // resolves and the run-level cleanup never fires — the planner writes a
     // report while a timed-out member is still editing and still spending.
-    const h = harness({ replies: { 'session-1': [PLAN, 'the report'] } });
+    const h = harness({ replies: { 'session-1': [PLAN, 'the report'], 'session-3': ['did beta'] } });
     const settle = h.deps.awaitSettled;
     h.deps.awaitSettled = (session, ms) =>
       session === 'session-2' ? Promise.reject(new Error('member timed out')) : settle(session, ms);
@@ -235,7 +241,7 @@ describe('runCrew', () => {
   it('carries on when one member cannot get a checkout', async () => {
     // One failed worktree must not cost the other members' work.
     const h = harness({
-      replies: { 'session-1': [PLAN, 'r'] },
+      replies: { 'session-1': [PLAN, 'r'], 'session-2': ['did beta'] },
       refuseBranch: (b) => b.includes('alpha'),
     });
     const result = await runCrew(spec(), h.deps);

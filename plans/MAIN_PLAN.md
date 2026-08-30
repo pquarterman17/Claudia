@@ -11,7 +11,7 @@ architecture does not. The Claude Design export that started this is deliberatel
 **Updated:** 2026-08-30
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
-genuinely new work or was deliberately deferred for a decision. 726 tests, clean typecheck.
+genuinely new work or was deliberately deferred for a decision. 738 tests, clean typecheck.
 Everything so far was built and verified on Windows only — see #13.
 
 ---
@@ -194,6 +194,16 @@ Recording these so they are not rediscovered as bugs:
   unpushed rather than failed — the commit already made the work durable, which is what the
   chain's ordering protects; an attempted push that fails does throw, so a shutdown cannot
   follow one. Over 100 changed files it refuses and asks for a human.
+  A fourth finding is about the TESTS, not git: the `path.relative` → git
+  conversion (`server\src\x.ts` → `server/src/x.ts`) is a NO-OP on any POSIX
+  host, since `sep` is already `/`. Every test of it passed here no matter how
+  wrong it was, and only the Windows CI leg would ever have noticed — so
+  `toRepoPath` now takes the path flavour as a parameter and the Windows cases
+  are pinned from this host, the same trick the per-OS finish command table
+  already used. Measuring rather than assuming paid off immediately: across
+  drives `relative()` returns an ABSOLUTE `D:\repo\x.ts`, not a `..` path, so
+  it is the absolute check and not the `..` check that keeps another drive out
+  of the candidate set. Both guards were proven to fail before being trusted.
   Verified live end to end on 2026-08-30, both halves: a real session wrote `hello.txt`, the
   chain fired and committed exactly that file with the session's own auto-title as the subject,
   pushed it to a bare origin setting the upstream, and left the human's `unrelated.txt`

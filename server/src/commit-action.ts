@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { realpathSync } from 'node:fs';
-import { isAbsolute, resolve, relative, sep } from 'node:path';
+import path from 'node:path';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
@@ -67,7 +67,7 @@ export async function commitAndPush(work: RepoWork[]): Promise<string> {
     if (item.files.length === 0) continue;
     const root = (await tryGit(item.cwd, ['rev-parse', '--show-toplevel']))?.trim();
     if (!root) {
-      skipped.push(`${name(item.cwd)} is not a git repository`);
+      skipped.push(`${repoName(item.cwd)} is not a git repository`);
       continue;
     }
     const entry = byRoot.get(root) ?? { candidates: new Set<string>(), titles: new Set<string>() };
@@ -89,7 +89,7 @@ export async function commitAndPush(work: RepoWork[]): Promise<string> {
   // sees every repository that needs attention instead of one at a time.
   const refusals = plans
     .filter((p) => PROTECTED_BRANCHES.has(p.branch))
-    .map((p) => `${name(p.root)} is on ${p.branch}`);
+    .map((p) => `${repoName(p.root)} is on ${p.branch}`);
   if (refusals.length > 0) {
     throw new Error(`Refused: ${refusals.join(', ')} — Claudia never commits to main or master`);
   }
@@ -97,7 +97,7 @@ export async function commitAndPush(work: RepoWork[]): Promise<string> {
   const oversized = plans.find((p) => p.paths.length > MAX_FILES);
   if (oversized) {
     throw new Error(
-      `Refused: ${oversized.paths.length} changed files in ${name(oversized.root)} is more than this action commits unattended`,
+      `Refused: ${oversized.paths.length} changed files in ${repoName(oversized.root)} is more than this action commits unattended`,
     );
   }
 
@@ -123,11 +123,11 @@ async function planRepo(
   // commit onto that unborn branch works perfectly well. Empty means a detached
   // HEAD, which has no branch to push and would strand the commit.
   const branch = (await tryGit(root, ['branch', '--show-current']))?.trim();
-  if (!branch) return `${name(root)} has no branch checked out`;
+  if (!branch) return `${repoName(root)} has no branch checked out`;
 
   const dirty = await dirtyPaths(root);
   const paths = [...dirty].filter((p) => entry.candidates.has(p));
-  if (paths.length === 0) return `${name(root)} has nothing of its own left to commit`;
+  if (paths.length === 0) return `${repoName(root)} has nothing of its own left to commit`;
 
   return { root, branch, paths, leftover: dirty.size - paths.length, titles: [...entry.titles] };
 }
@@ -142,7 +142,7 @@ async function commitRepo(plan: RepoPlan): Promise<string> {
 
   const files = `${plan.paths.length} file${plan.paths.length === 1 ? '' : 's'}`;
   const left = plan.leftover > 0 ? `, left ${plan.leftover} other changed alone` : '';
-  return `${name(plan.root)} (${plan.branch}): committed ${files}${left}${await push(plan)}`;
+  return `${repoName(plan.root)} (${plan.branch}): committed ${files}${left}${await push(plan)}`;
 }
 
 /**
@@ -206,20 +206,32 @@ async function dirtyPaths(root: string): Promise<Set<string>> {
 }
 
 /**
+ * The part of `node:path` this needs, taken as a parameter so the Windows
+ * behaviour can be pinned from a POSIX host — the same trick the per-OS finish
+ * command table uses. Without it the separator conversion below is a no-op
+ * everywhere the tests run, and only the Windows CI leg would ever notice it
+ * being wrong.
+ */
+export type PathFlavour = Pick<typeof path, 'isAbsolute' | 'resolve' | 'relative' | 'sep'>;
+
+/**
  * Repo-relative and forward-slashed, or null when the file is outside the repo.
  *
- * Symlinks have to be resolved first. `git rev-parse --show-toplevel` reports
- * the physical path, while a session's cwd is whatever the user typed — and on
- * macOS that is routinely a symlink (`/tmp`, and the synced folders some of
- * these repositories live under). Comparing the two directly makes every file
- * look as though it were outside the repository, and the action would commit
- * nothing while reporting nothing wrong.
+ * Forward slashes because that is the only vocabulary git speaks: `git status`
+ * reports `server/src/x.ts` on every platform, while `path.relative` hands back
+ * `server\src\x.ts` on Windows. Comparing those two directly matches nothing,
+ * so the action would commit nothing and report nothing wrong.
+ *
+ * Symlinks have to be resolved for the same reason. `git rev-parse
+ * --show-toplevel` reports the physical path, while a session's cwd is whatever
+ * the user typed — and on macOS that is routinely a symlink (`/tmp`, and the
+ * synced folders some of these repositories live under).
  */
-function toRepoPath(root: string, cwd: string, file: string): string | null {
-  const absolute = isAbsolute(file) ? file : resolve(real(cwd), file);
-  const rel = relative(real(root), real(absolute));
-  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
-  return rel.split(sep).join('/');
+export function toRepoPath(root: string, cwd: string, file: string, p: PathFlavour = path): string | null {
+  const absolute = p.isAbsolute(file) ? file : p.resolve(real(cwd), file);
+  const rel = p.relative(real(root), real(absolute));
+  if (!rel || rel.startsWith('..') || p.isAbsolute(rel)) return null;
+  return rel.split(p.sep).join('/');
 }
 
 /** The path with symlinks resolved, or unchanged when it no longer exists. */
@@ -231,7 +243,15 @@ function real(path: string): string {
   }
 }
 
-const name = (dir: string): string => dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
+/**
+ * Last segment of a directory, for messages. Splits on BOTH separators
+ * regardless of host, because the strings reaching it are mixed: git reports a
+ * forward-slashed root even on Windows, while a session's cwd came from a
+ * native folder picker. This is display text only — nothing builds a path from
+ * it — so a POSIX directory whose name legitimately contains a backslash being
+ * shortened here is cosmetic, not a correctness bug.
+ */
+export const repoName = (dir: string): string => dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
 
 const clamp = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
@@ -242,7 +262,7 @@ async function git(cwd: string, args: string[], timeout = 15_000): Promise<strin
   } catch (err) {
     // git says why on stderr; the Error's own message is just the argv.
     const stderr = (err as { stderr?: string }).stderr?.trim();
-    throw new Error(`git ${args[0]} failed in ${name(cwd)}: ${clamp(stderr || String(err), 200)}`);
+    throw new Error(`git ${args[0]} failed in ${repoName(cwd)}: ${clamp(stderr || String(err), 200)}`);
   }
 }
 

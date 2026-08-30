@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { BoardControls } from './components/BoardControls';
 import { ControlSidebar } from './components/ControlSidebar';
 import { LaunchBar } from './components/LaunchBar';
+import { ObservedStrip } from './components/ObservedStrip';
 import { SessionTile } from './components/SessionTile';
 import { StatusFooter } from './components/StatusFooter';
 import { TopBar } from './components/TopBar';
@@ -23,6 +24,9 @@ export function App() {
     transcripts,
     connected,
     lastError,
+    lastNotice,
+    observed,
+    monitoring,
     trigger,
     usage,
     recentDirectories,
@@ -146,7 +150,7 @@ export function App() {
         checkpoints={checkpoints}
         platform={platform}
       />
-      {lastError && (
+      {(lastError ?? lastNotice) && (
         <div
           style={{
             flex: 'none',
@@ -154,12 +158,12 @@ export function App() {
             alignItems: 'center',
             gap: 10,
             padding: '6px 16px',
-            background: '#2a2027',
-            color: '#d98484',
+            background: lastError ? '#2a2027' : '#1f2430',
+            color: lastError ? '#d98484' : '#9fb2d8',
             fontSize: 11.5,
           }}
         >
-          <span style={{ flex: 1, minWidth: 0 }}>{lastError}</span>
+          <span style={{ flex: 1, minWidth: 0 }}>{lastError ?? lastNotice}</span>
           <button
             onClick={() => store.clearError()}
             title="Dismiss"
@@ -249,6 +253,7 @@ export function App() {
               </div>
             )}
           </div>
+          <ObservedStrip observed={observed} monitoring={monitoring} now={now} />
         </div>
       </div>
 

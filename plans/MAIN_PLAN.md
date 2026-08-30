@@ -11,7 +11,7 @@ architecture does not. The Claude Design export that started this is deliberatel
 **Updated:** 2026-08-30
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
-genuinely new work or was deliberately deferred for a decision. 731 tests, clean typecheck.
+genuinely new work or was deliberately deferred for a decision. 779 tests, clean typecheck.
 Everything so far was built and verified on Windows only — see #13.
 
 ---
@@ -131,9 +131,6 @@ path — measure before building.
 16. **"Make a release" finish action** — mentioned as a chain example. Not built: a release
     means different things per repo (tag? changelog? `gh release`? npm publish?). The wrap-up
     script action covers it today; a first-class version needs the owner's actual process.
-8. **Hooks monitor tier** — global hook POSTs to server so plain-terminal sessions appear as
-   read-only tiles. The only way to see sessions Claudia did not launch. Requires editing the
-   owner's global `~/.claude/settings.json`, so ask before touching it.
 
 ## Tier 3 — Nice-to-Have
 
@@ -159,6 +156,47 @@ Recording these so they are not rediscovered as bugs:
   construction; Claudia is not the Claude Code product.
 
 ## Completed
+
+- ~~**#8 Hooks monitor tier**~~ (2026-08-30) — terminal sessions Claudia never launched now
+  appear on the board as read-only tiles, which is the only way to see them at all: there is no
+  attach path to a running CLI.
+  **The docs were wrong about four field names, and every one would have failed silently.** A
+  hook that dumped its stdin, run against a real session on claude-code 2.1.251, showed
+  SessionStart carries `source` (documented `start_reason`), SessionEnd `reason`
+  (documented `end_reason`), UserPromptSubmit `prompt` (documented `user_input`) and
+  PostToolUse `tool_response`, an object (documented `tool_output`, a string). Built from the
+  documented names the tiles would have shown no prompt, no reply, and sessions that never
+  ended. The captured payloads are now the test fixtures.
+  **`type: "http"` is the find that shaped the design.** The plan assumed a script that curls,
+  which would have meant shipping and maintaining a bash script AND a PowerShell one. Claude
+  Code takes an http handler natively — verified by pointing one at a local sink and watching
+  real payloads arrive — so the installed block is plain JSON that works identically on all
+  three platforms. Also observed: over the http handler SessionStart did NOT arrive, though it
+  does over a command handler; nothing depends on it, since a tile is created by whichever
+  event lands first.
+  The global-settings write is the risky part and is treated as such: the previous file is
+  copied aside before the first change, every other key and every foreign hook is preserved
+  (including one sharing a group with ours), it refuses outright on unparseable JSON, it is
+  idempotent, and uninstall restores the file exactly — proven by writing the original back
+  byte for byte. The entries are identified by the URL they post to, so nothing else is ever
+  touched. Verified live end to end on 2026-08-30: a real terminal session walked
+  `working -> working [Write] -> idle -> ended` onto the board, and a session Claudia launched
+  in the same hooked directory produced NO ghost tile, the `claudeSessionId` match holding
+  against real data. The JSON the installer writes was then confirmed byte-identical to the
+  block that had just worked live.
+  `gateway.ts` was at the ceiling again; `hello-event.ts` (the whole-board greeting) and
+  `settings-commands.ts` (seven preference writes that share one shape) came out of it, both
+  real seams rather than line-count trades.
+  **OPEN DECISION for the owner:** observed sessions are shown but do NOT hold the finish
+  chain. Claudia cannot approve or interrupt them, and a terminal killed with Ctrl+C never
+  sends SessionEnd — so letting one block a chain would invent a way to wedge a shutdown
+  forever. This matches today's behaviour (the chain has always waited only on Claudia's own
+  sessions); the monitor just makes the gap visible. If the answer is "wait for them too", it
+  needs a staleness rule decided alongside it.
+  Not verified: the `Notification` payload, which needs an interactive permission prompt and
+  could not be provoked headlessly. Its type strings are confirmed present in the CLI binary
+  and it is handled defensively — an unrecognised notification leaves the state alone rather
+  than inventing one.
 
 - ~~**#7 "Commit + push" finish action**~~ (2026-08-30) — the chain's natural first link, shipped
   against the 2026-08-29 decision: commit and push, but refuse outright on `main`/`master`, and

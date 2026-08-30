@@ -1,6 +1,6 @@
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 export interface AddAllowRuleResult {
   ok: boolean;
@@ -16,9 +16,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-type ReadResult = { ok: true; value: Record<string, unknown> } | { ok: false; error: string };
+export type ReadResult = { ok: true; value: Record<string, unknown> } | { ok: false; error: string };
 
-async function readExisting(file: string): Promise<ReadResult> {
+/** A JSON object from disk, or a readable reason why not. Missing is not an
+ * error: an absent settings file is an empty one. Exported because the global
+ * hook installer needs exactly these semantics against a different file. */
+export async function readExisting(file: string): Promise<ReadResult> {
   let raw: string;
   try {
     raw = await readFile(file, 'utf8');
@@ -42,9 +45,13 @@ async function readExisting(file: string): Promise<ReadResult> {
  * Temp sibling + fsync + rename, so a crash between those steps leaves the
  * ORIGINAL file untouched rather than a half-written one — the rename is the
  * only step observable as "done" from outside this function.
+ *
+ * Exported so the global hook installer shares this exact crash-safety rather
+ * than growing a second, subtly different copy of it. The temp name is derived
+ * from the target so two writers in one directory cannot collide.
  */
-async function writeAtomic(file: string, content: string): Promise<void> {
-  const tmp = join(dirname(file), `.settings.local.json.${randomUUID()}.tmp`);
+export async function writeAtomic(file: string, content: string): Promise<void> {
+  const tmp = join(dirname(file), `.${basename(file)}.${randomUUID()}.tmp`);
   const handle = await open(tmp, 'w');
   try {
     await handle.writeFile(content, 'utf8');

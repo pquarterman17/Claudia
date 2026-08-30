@@ -1,6 +1,10 @@
 import type { ClientCommand, HostPlatform, ServerEvent } from '@claudia/shared';
 import { WebSocket, WebSocketServer } from 'ws';
 import { runBulkOp } from './bulk-ops.js';
+import { buildHello, ownedSessionIds } from './hello-event.js';
+import { setHookMonitor } from './hook-commands.js';
+import { handleSettingsCommand } from './settings-commands.js';
+import type { HookMonitor } from './hook-monitor.js';
 import { isClientLive } from './client-liveness.js';
 import { pickFolders } from './folder-picker.js';
 import { launchSession, resumeSavedSession } from './launch-session.js';
@@ -19,6 +23,9 @@ export class Gateway {
   private trigger!: TriggerEngine;
   private usage!: UsageService;
   private settings!: SettingsStore;
+  private monitor!: HookMonitor;
+  /** Whether the global hook is installed, as last established. */
+  private monitoring = false;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   /** Last time each socket proved a live page was behind it. */
   private lastSeen = new WeakMap<WebSocket, number>();
@@ -27,6 +34,8 @@ export class Gateway {
   constructor(
     wss: WebSocketServer,
     private readonly platform: HostPlatform,
+    /** The port actually bound, which is the URL the installed hook posts to. */
+    private port = 4317,
   ) {
     this.wss = wss;
   }
@@ -36,33 +45,30 @@ export class Gateway {
     trigger: TriggerEngine,
     usage: UsageService,
     settings: SettingsStore,
+    monitor: HookMonitor,
   ): void {
     this.manager = manager;
     this.trigger = trigger;
     this.usage = usage;
     this.settings = settings;
+    this.monitor = monitor;
     // Re-evaluate periodically: a socket going stale produces no event of its own.
     this.sweepTimer = setInterval(() => this.onClientCountChanged(), 5_000);
     this.sweepTimer.unref?.();
     this.wss.on('connection', (socket) => {
       // .catch is not optional here: an unhandled rejection ends the process
       // on modern Node, and this fires on every browser connect.
-      void manager.mcpSnapshot().catch(() => ({})).then((mcp) => this.sendTo(socket, {
-        type: 'hello',
-        sessions: manager.summaries(),
-        feeds: manager.feedSnapshot(),
-        trigger: trigger.status(),
+      void buildHello({
+        manager,
+        trigger,
+        usage,
+        settings,
+        monitor: this.monitor,
         platform: this.platform,
-        usage: usage.snapshot(),
-        recentDirectories: settings.get().recentDirectories,
-        countdownSec: settings.get().countdownSec,
-        stopSessionsWhenClosedSec: settings.get().stopSessionsWhenClosedSec,
-        defaultPermissionMode: settings.get().defaultPermissionMode,
-        templates: settings.get().templates,
-        toolkit: settings.get().toolkit,
-        customCeilings: settings.get().customCeilings,
-        mcp,
-      }));
+        port: this.port,
+      })
+        .then((hello) => this.sendTo(socket, hello))
+        .catch(() => undefined);
       this.lastSeen.set(socket, Date.now());
       this.onClientCountChanged();
       socket.on('close', () => this.onClientCountChanged());
@@ -147,11 +153,50 @@ export class Gateway {
     }
   }
 
+  /** The bound port, known only once the server is listening — with
+   * CLAUDIA_PORT=0 the requested one is meaningless, and the hook URL written
+   * into the owner's settings has to be the port that actually answers. */
+  setPort(port: number): void {
+    this.port = port;
+  }
+
+  /** Terminal sessions, minus the ones Claudia owns a tile for already. */
+  broadcastObserved(monitoring = this.monitoring): void {
+    this.monitoring = monitoring;
+    this.broadcast({ type: 'observed_sessions', sessions: this.monitor.list(ownedSessionIds(this.manager)), monitoring });
+  }
+
+  /**
+   * Installs or removes the global hook, then says exactly what happened.
+   *
+   * The account goes to the one socket that asked rather than to everyone:
+   * this writes the owner's global settings, and the person who clicked is the
+   * person who needs to read the backup path.
+   */
+  private async setHookMonitor(enabled: boolean, socket: WebSocket): Promise<void> {
+    const outcome = await setHookMonitor(enabled, this.port);
+    if (outcome.error) this.sendTo(socket, { type: 'server_error', message: outcome.error });
+    if (outcome.notice) this.sendTo(socket, { type: 'notice', message: outcome.notice });
+    this.broadcastObserved(outcome.monitoring);
+  }
+
   private sendTo(socket: WebSocket, event: ServerEvent): void {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event));
   }
 
   private dispatch(cmd: ClientCommand, socket: WebSocket): void {
+    // Preference writes all share one shape and live in their own module.
+    if (
+      handleSettingsCommand(cmd, {
+        settings: this.settings,
+        trigger: this.trigger,
+        usage: this.usage,
+        broadcast: () => this.broadcastSettings(),
+      })
+    ) {
+      return;
+    }
+
     switch (cmd.type) {
       case 'launch_session':
         // Creating a worktree is the only async part; a failure there must
@@ -323,12 +368,11 @@ export class Gateway {
       case 'disarm_trigger':
         this.trigger.disarm();
         return;
+      case 'set_hook_monitor':
+        void this.setHookMonitor(cmd.enabled, socket);
+        return;
       case 'bulk':
         runBulkOp(this.manager, cmd.op);
-        return;
-      case 'set_plan_tier':
-        this.usage.setTier(cmd.tier);
-        this.settings.update({ planTier: cmd.tier });
         return;
       case 'fetch_real_usage': {
         const session = this.manager.get(cmd.sessionId);
@@ -340,45 +384,6 @@ export class Gateway {
         this.usage.requestReal(cmd.sessionId, () => session.sendControlPrompt('/cost'));
         return;
       }
-      case 'set_custom_ceilings': {
-        // A zero or negative ceiling is meaningless, so floor it above zero.
-        const customCeilings = {
-          sessionTokens: Math.max(1000, Math.round(cmd.sessionTokens)),
-          weeklyTokens: Math.max(1000, Math.round(cmd.weeklyTokens)),
-        };
-        this.settings.update({ customCeilings });
-        this.usage.setCustomCeilings(customCeilings);
-        this.broadcastSettings();
-        return;
-      }
-      case 'set_stop_on_close': {
-        // Clamped: a few seconds is not enough to survive a page reload.
-        const seconds = cmd.seconds <= 0 ? 0 : Math.max(10, Math.min(3600, Math.round(cmd.seconds)));
-        this.settings.update({ stopSessionsWhenClosedSec: seconds });
-        this.broadcastSettings();
-        return;
-      }
-      case 'set_countdown':
-        this.trigger.setCountdown(cmd.seconds);
-        this.settings.update({ countdownSec: this.trigger.countdownLength });
-        this.broadcastSettings();
-        return;
-      case 'save_toolkit_action':
-        this.settings.saveToolkitAction(cmd.action);
-        this.broadcastSettings();
-        return;
-      case 'delete_toolkit_action':
-        this.settings.deleteToolkitAction(cmd.id);
-        this.broadcastSettings();
-        return;
-      case 'save_template':
-        this.settings.saveTemplate(cmd.template);
-        this.broadcastSettings();
-        return;
-      case 'delete_template':
-        this.settings.deleteTemplate(cmd.name);
-        this.broadcastSettings();
-        return;
       case 'search_files':
         // searchFiles itself never rejects, but sendTo can: the socket may
         // have closed during the walk. An unhandled rejection ends the whole

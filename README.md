@@ -124,6 +124,18 @@ Wrap-up script location: `~/bin/wrapup.sh` (macOS/Linux) or `C:\bin\wrapup.ps1` 
   attempted and fails stops the chain, so a shutdown never follows one.
   Files changed by a `Bash` command are *not* claimed — a command's effect on the filesystem
   is not knowable from its text — so those stay in the tree for you.
+- **Terminal sessions** — sessions you start in a terminal are invisible to Claudia by
+  default: there is no attach path to a running CLI. Turn on **watch terminal sessions** and
+  Claudia adds an `http` hook to your **global** `~/.claude/settings.json` that posts each
+  session's events to `127.0.0.1:4317/hooks`, so they appear on the board as **read-only**
+  tiles — working / idle / needs-you, current tool, last prompt and reply, and how long since
+  anything happened. They carry no buttons, because nothing could be wired to them.
+  The edit is conservative and reversible: your existing file is copied aside first, every
+  other setting and hook is preserved (including your own hooks on the same events), it
+  refuses outright on a file it cannot parse, and turning it back off removes exactly what it
+  added. It tells you the path it wrote and where the backup went.
+  Sessions Claudia launched are filtered out, so nothing appears twice. **They do not hold the
+  finish chain** — Claudia cannot approve or interrupt them, so it does not wait on them.
 - **Usage** — read from Claude Code's own local logs (covers your terminal sessions too).
   No API exposes real plan limits, so bars compare against a **typical day of your own history**
   by default, or ceilings you enter yourself under the Custom tier. Past the reference it shows
@@ -172,6 +184,8 @@ npm run build      # production UI bundle into web/dist
 | `server/src/trigger-engine.ts` | The finish chain: arm → countdown → run in order |
 | `server/src/finish-actions.ts` | Per-OS command table |
 | `server/src/commit-action.ts` | The commit + push step: per-repo planning, branch rules, git |
+| `server/src/hook-monitor.ts` | Terminal sessions rebuilt from hook events |
+| `server/src/hook-install.ts` | Writes/removes Claudia's hook in global settings, with a backup |
 | `server/src/touched-files.ts` | What each session wrote, so a commit can be scoped to it |
 | `server/src/usage-reader.ts` | Incremental streaming reader for `~/.claude` JSONL logs |
 | `server/src/plan-limits.ts` | Token weighting + the self-derived usage baseline |

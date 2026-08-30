@@ -8,6 +8,7 @@ import {
   type EffectiveSettings,
   type McpServerInfo,
   type ModelChoice,
+  type ObservedSession,
   type PermissionLaunchMode,
   type ServerEvent,
   type SessionSummary,
@@ -67,6 +68,12 @@ export interface ClaudiaState {
   toolkit: ToolkitAction[];
   customCeilings?: { sessionTokens: number; weeklyTokens: number };
   lastError?: string;
+  /** Something that happened and worked, as distinct from lastError. */
+  lastNotice?: string;
+  /** Terminal sessions Claudia did not launch, seen through the global hook. */
+  observed: ObservedSession[];
+  /** Whether that hook is installed in the owner's global settings. */
+  monitoring: boolean;
 }
 
 type Listener = () => void;
@@ -103,6 +110,8 @@ class Store {
     defaultPermissionMode: 'auto',
     templates: [],
     toolkit: [],
+    observed: [],
+    monitoring: false,
   };
   private listeners = new Set<Listener>();
   private ws: WebSocket | null = null;
@@ -183,6 +192,7 @@ class Store {
 
   clearError = (): void => {
     if (this.state.lastError !== undefined) this.set({ lastError: undefined });
+    if (this.state.lastNotice !== undefined) this.set({ lastNotice: undefined });
   };
 
   /** Reports rather than silently swallowing a command sent while offline. */
@@ -220,8 +230,16 @@ class Store {
           toolkit: event.toolkit,
           customCeilings: event.customCeilings,
           mcp: event.mcp,
+          observed: event.observed,
+          monitoring: event.monitoring,
           lastError: undefined,
         });
+        return;
+      case 'observed_sessions':
+        this.set({ observed: event.sessions, monitoring: event.monitoring });
+        return;
+      case 'notice':
+        this.set({ lastNotice: event.message });
         return;
       case 'settings':
         this.set({

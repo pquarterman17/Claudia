@@ -14,6 +14,7 @@ import type {
   FileCheckpoint, FinishActionKey, HostPlatform, McpServerInfo, ModelChoice,
   PermissionLaunchMode, PromptImage, SavedSession, SessionSummary, SessionTemplate,
   FileMatch,
+  ObservedSession,
   SlashCommandInfo,
   ToolkitAction, ThinkingMode, TranscriptItem, TriggerStatus,
 } from './index.js';
@@ -37,6 +38,9 @@ export type ServerEvent =
       toolkit: ToolkitAction[];
       customCeilings?: { sessionTokens: number; weeklyTokens: number };
       mcp: Record<string, McpServerInfo[]>;
+      observed: ObservedSession[];
+      /** Whether the global hook that feeds `observed` is currently installed. */
+      monitoring: boolean;
     }
   | { type: 'session_upsert'; session: SessionSummary }
   | { type: 'session_removed'; sessionId: string }
@@ -59,6 +63,8 @@ export type ServerEvent =
   | { type: 'saved_sessions'; sessions: SavedSession[] }
   | { type: 'saved_session_detail'; sessionId: string; checkpoints: FileCheckpoint[] }
   | { type: 'usage'; usage: UsageSnapshot }
+  /** Terminal sessions Claudia did not launch, seen through global hooks. */
+  | { type: 'observed_sessions'; sessions: ObservedSession[]; monitoring: boolean }
   | {
       type: 'settings';
       recentDirectories: string[];
@@ -71,6 +77,9 @@ export type ServerEvent =
     }
   /** Result of a browse_folder request; empty when the user cancelled. */
   | { type: 'folders_picked'; paths: string[] }
+  /** Something worth telling the user that is NOT a failure — what was written
+   * to their settings, and where the backup went. */
+  | { type: 'notice'; message: string }
   | { type: 'server_error'; message: string };
 
 // ---------- client → server ----------
@@ -162,6 +171,9 @@ export type ClientCommand =
   /** Saves (or overwrites, by name) a reusable launch shape. */
   | { type: 'save_template'; template: SessionTemplate }
   /** Fuzzy file search under a session's directory, for @-mention completion. */
+  /** Install or remove the global hook that reveals terminal sessions.
+   * Writes the owner's ~/.claude/settings.json, so it is never implicit. */
+  | { type: 'set_hook_monitor'; enabled: boolean }
   | { type: 'search_files'; sessionId: string; query: string }
   /** Switch the output style; takes effect on the next turn, like the model does. */
   | { type: 'set_output_style'; sessionId: string; style: string }

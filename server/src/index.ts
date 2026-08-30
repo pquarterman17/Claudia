@@ -5,6 +5,9 @@ import { WebSocketServer } from 'ws';
 import { commitAndPush } from './commit-action.js';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
+import { createHookHandler } from './hook-endpoint.js';
+import { isInstalled } from './hook-install.js';
+import { HookMonitor } from './hook-monitor.js';
 import { updateMemories } from './memory-action.js';
 import { isAllowedHost, isAllowedOrigin } from './origin-guard.js';
 import { SessionManager } from './session-manager.js';
@@ -14,10 +17,17 @@ import { TriggerEngine } from './trigger-engine.js';
 import { UsageService } from './usage-service.js';
 
 const platform = hostPlatform();
+const requested = resolvePort(process.env['CLAUDIA_PORT']);
+
+// Terminal sessions Claudia did not launch, fed by the global hook. Declared
+// before the HTTP server because the /hooks route closes over it.
+const monitor = new HookMonitor();
 
 // Serves the built UI when web/dist exists, so production is one process on one
 // port. In development Vite serves the UI on its own port instead.
 const serveStatic = createStaticHandler(join(import.meta.dirname, '..', '..', 'web', 'dist'));
+
+const handleHook = createHookHandler(monitor, () => gateway.broadcastObserved());
 
 const httpServer = createServer((req, res) => {
   // Refuse before doing any work: a request naming a host that is not loopback
@@ -42,6 +52,7 @@ const httpServer = createServer((req, res) => {
     );
     return;
   }
+  if (handleHook(req, res)) return;
   if (serveStatic(req, res)) return;
   res.writeHead(404).end();
 });
@@ -59,7 +70,7 @@ const wss = new WebSocketServer({
     return false;
   },
 });
-const gateway = new Gateway(wss, platform);
+const gateway = new Gateway(wss, platform, requested.port);
 
 const settings = new SettingsStore();
 const saved = settings.get();
@@ -103,7 +114,7 @@ const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: u
 usage.setTier(saved.planTier);
 if (saved.customCeilings) usage.setCustomCeilings(saved.customCeilings);
 
-gateway.attach(manager, trigger, usage, settings);
+gateway.attach(manager, trigger, usage, settings, monitor);
 usage.start();
 
 // One clock drives the countdown; the engine decides whether anything happens.
@@ -112,11 +123,19 @@ const ticker = setInterval(() => trigger.tick(manager.summaries()), 1000);
 // Branch and dirty state, on a slower clock than the trigger: it spawns `git`,
 // and a branch changes on a human timescale. Failures are already swallowed
 // inside, so an unhandled rejection cannot reach the process from here.
+// A terminal killed with Ctrl+C sends no SessionEnd, so observed tiles are
+// aged out rather than trusted to say goodbye. Twelve hours is deliberately
+// generous: a session idle overnight is still a real session.
+const OBSERVED_MAX_IDLE_MS = 12 * 60 * 60_000;
+const pruneTicker = setInterval(() => {
+  if (monitor.prune(OBSERVED_MAX_IDLE_MS)) gateway.broadcastObserved();
+}, 60_000);
+pruneTicker.unref?.();
+
 const gitTicker = setInterval(() => void manager.refreshGit(), 15_000);
 gitTicker.unref?.();
 void manager.refreshGit();
 
-const requested = resolvePort(process.env['CLAUDIA_PORT']);
 // The overwhelmingly likely failure here is that Claudia is ALREADY running:
 // it is a supervisor meant to stay up, and it is normally started by
 // double-clicking a launcher, so an unhandled 'error' event prints a Node
@@ -141,6 +160,10 @@ httpServer.listen(requested.port, '127.0.0.1', () => {
   // requested value is meaningless and a log saying "0" helps nobody.
   const bound = httpServer.address();
   const port = typeof bound === 'object' && bound !== null ? bound.port : requested.port;
+  gateway.setPort(port);
+  // Establish whether the global hook is already installed, so a later
+  // broadcast cannot flip the UI toggle off just because nobody had asked yet.
+  void isInstalled(port).then((on) => gateway.broadcastObserved(on)).catch(() => undefined);
   console.log(`[claudia] listening on http://127.0.0.1:${port} · ${platform}`);
 });
 
@@ -158,6 +181,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     console.log(`[claudia] ${signal} — stopping sessions`);
     clearInterval(ticker);
     clearInterval(gitTicker);
+    clearInterval(pruneTicker);
     usage.stop();
     manager.stopAll();
     httpServer.close(() => process.exit(0));

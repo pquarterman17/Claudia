@@ -282,6 +282,37 @@ export interface OutputStyles {
   available: string[];
 }
 
+/**
+ * A session Claudia did NOT launch, seen only through Claude Code's hooks.
+ *
+ * Read-only by construction: there is no attach path to a live CLI, so nothing
+ * here can be approved, interrupted or prompted. It is a window, not a handle.
+ */
+export type ObservedState = 'working' | 'idle' | 'needs_you' | 'ended';
+
+export interface ObservedSession {
+  /** The CLI's own session id, which is also how an owned session is matched. */
+  id: string;
+  cwd: string;
+  state: ObservedState;
+  startedAt: number;
+  /** When the last hook fired, so a tile can say how stale it is. */
+  lastEventAt: number;
+  /** How the session began: startup, resume, clear, compact. */
+  source?: string;
+  /** Most recent prompt the user typed, truncated. */
+  lastPrompt?: string;
+  /** The tool running now, or the last one that ran. */
+  lastTool?: string;
+  /** Last thing Claude said, truncated. */
+  lastMessage?: string;
+  /** The notification type that is waiting on a human. */
+  needs?: string;
+  permissionMode?: string;
+  /** Why the session ended, when it did. */
+  endReason?: string;
+}
+
 /** The branch a session's directory is on, and whether it has uncommitted work. */
 export interface GitInfo {
   branch: string;

@@ -1,6 +1,7 @@
 import {
   canTransitionRun,
   canTransitionWorktree,
+  isAgentKind,
   RUN_TRANSITIONS,
   type AgentKind,
   type ChildRun,
@@ -41,6 +42,25 @@ const RUN_COLUMNS =
 const WORKTREE_COLUMNS =
   'id, repo, path, branch, base_sha, owner_mission_id, owner_task_id, state, dirty, last_seen_at, created_at';
 
+/**
+ * Checks an agent rather than asserting one, on the way in AND on the way out.
+ *
+ * Found in review: `create()` took `input.agent` straight from its caller and
+ * `toRun` cast the column with `as AgentKind`, so `'gemini'` was accepted by
+ * the repository itself and read back as a `ChildRun` the dispatcher would try
+ * to launch a nonexistent harness for. A cast is a claim about a value, and
+ * neither end of this had anything checking the claim.
+ *
+ * Version 3 of the schema now refuses it too, which is what makes the read side
+ * safe to keep strict: a value that cannot be stored cannot be read, so
+ * refusing here can only fire on a file written by an older build, where a
+ * named failure beats a typed lie.
+ */
+function agentKind(value: string): AgentKind {
+  if (!isAgentKind(value)) refuse(`${JSON.stringify(value)} is not an agent Claudia can run.`);
+  return value;
+}
+
 export class ChildRunRepo {
   constructor(private readonly db: DatabaseSync) {}
 
@@ -52,7 +72,7 @@ export class ChildRunRepo {
         taskId: input.taskId,
         sessionId: input.sessionId,
         worktreeId: input.worktreeId,
-        agent: input.agent,
+        agent: agentKind(input.agent),
         attempt: input.attempt ?? this.nextAttempt(input.taskId),
         state: input.state ?? 'dispatched',
         startedAt: input.startedAt ?? Date.now(),
@@ -244,7 +264,7 @@ function toRun(row: Row): ChildRun {
     taskId: text(row, 'task_id'),
     sessionId: optText(row, 'session_id'),
     worktreeId: optText(row, 'worktree_id'),
-    agent: text(row, 'agent') as AgentKind,
+    agent: agentKind(text(row, 'agent')),
     attempt: int(row, 'attempt'),
     state: text(row, 'state') as ChildRunState,
     startedAt: int(row, 'started_at'),

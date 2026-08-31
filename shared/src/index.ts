@@ -137,7 +137,23 @@ export interface ModelUsage {
  * exactly like a Claude `canUseTool` call, which is what lets one board hold
  * both kinds of tile.
  */
-export type AgentKind = 'claude' | 'codex';
+export const AGENT_KINDS = ['claude', 'codex'] as const;
+
+export type AgentKind = (typeof AGENT_KINDS)[number];
+
+/**
+ * The roster as a runtime check, not only a compile-time one.
+ *
+ * The union alone stops nothing at the edges the fleet actually has: a row read
+ * back from SQLite, a field off a websocket frame, a value a future migration
+ * copies forward. Each of those reaches the type through a cast, and a cast is
+ * a claim. Found in review: `child_runs.agent` accepted `'gemini'` from both a
+ * hand-written UPDATE and the repository's own `create()`, and it read back as
+ * a `ChildRun` whose `agent` was a lie the dispatcher would then act on.
+ */
+export function isAgentKind(value: unknown): value is AgentKind {
+  return typeof value === 'string' && (AGENT_KINDS as readonly string[]).includes(value);
+}
 
 export interface SessionSummary {
   id: string;

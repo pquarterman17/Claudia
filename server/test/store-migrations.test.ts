@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
+import { AGENT_KINDS, MAX_CHILDREN_CEILING, PULSE_MAX_SEC, PULSE_MIN_SEC } from '@claudia/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import { closeFleetDb, openFleetDb } from '../src/store/db.js';
 import { isSqliteExperimentalWarning } from '../src/store/experimental-warning.js';
@@ -170,11 +171,12 @@ describe('the SQLite experimental warning', () => {
   });
 });
 
-describe('the escalation-idempotency migration', () => {
-  it('upgrades a real version-1 database rather than only a synthetic one', () => {
-    // The first genuine second migration, so this is the first time the
-    // "migrates from a previous schema" gate is exercised against the real
-    // list rather than a test-only migration appended to it.
+describe('upgrading a database that already holds data', () => {
+  it('carries a real version-1 file all the way forward, rows and all', () => {
+    // The gate that matters for every migration after the first: a file with
+    // data in it reaches the newest schema without losing any of it. Versions
+    // 3 and 4 rebuild three tables between them, so "the row is still there"
+    // is no longer the given it was when every migration only added a column.
     const path = join(dir, 'v1-upgrade', 'fleet.db');
     const only = MIGRATIONS.filter((m) => m.version === 1);
 
@@ -188,17 +190,84 @@ describe('the escalation-idempotency migration', () => {
        VALUES ('m1', 'Old', 'body', 'active', 'paused', 60, 4, '/repo', 1, 1)`,
     ).run();
     db.prepare(
+      `INSERT INTO tasks (id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, created_at, updated_at)
+       VALUES ('t1', 'm1', 'T', '', '/repo', 'running', 0, '[]', '', 1, 1)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO child_runs (id, mission_id, task_id, agent, attempt, state, started_at)
+       VALUES ('r1', 'm1', 't1', 'codex', 1, 'running', 1)`,
+    ).run();
+    db.prepare(
       `INSERT INTO escalations (id, mission_id, source, request, reason, severity, resolution, created_at)
        VALUES ('e1', 'm1', 'human', 'push', 'because', 'warning', 'pending', 1)`,
     ).run();
 
-    expect(applyMigrations(db)).toBe(1);
+    // Derived, not hardcoded: a count written by hand here is a line every
+    // future migration has to remember to bump, and forgetting reads as a bug
+    // in the runner rather than a stale test.
+    const pending = MIGRATIONS.filter((m) => m.version > 1).length;
+    expect(applyMigrations(db)).toBe(pending);
     expect(schemaVersion(db)).toBe(latestVersion(MIGRATIONS));
-    // The pre-existing row survives, with the new column null rather than absent.
-    const row = db.prepare('SELECT id, idempotency_key FROM escalations WHERE id = ?').get('e1');
-    expect(row?.['id']).toBe('e1');
-    expect(row?.['idempotency_key']).toBeNull();
+
+    // The version-2 column, on the row that predates it.
+    const escalation = db.prepare('SELECT id, mission_id, idempotency_key FROM escalations WHERE id = ?').get('e1');
+    expect(escalation?.['id']).toBe('e1');
+    expect(escalation?.['idempotency_key']).toBeNull();
+    expect(escalation?.['mission_id']).toBe('m1');
+
+    // And everything the rebuilds in 3 and 4 dropped and recreated.
+    expect(db.prepare('SELECT name FROM missions WHERE id = ?').get('m1')?.['name']).toBe('Old');
+    expect(db.prepare('SELECT title FROM tasks WHERE id = ?').get('t1')?.['title']).toBe('T');
+    const run = db.prepare('SELECT agent, attempt, state FROM child_runs WHERE id = ?').get('r1');
+    expect(run).toMatchObject({ agent: 'codex', attempt: 1, state: 'running' });
     closeFleetDb(db);
+  });
+
+  it('restores foreign key enforcement after a rebuild, and after one that fails', () => {
+    // The leak that would matter most: `PRAGMA foreign_keys = OFF` left on a
+    // live connection disables enforcement for every write the process makes
+    // afterwards, which is a much larger hole than the rebuild was opened to
+    // close.
+    const db = fresh();
+    expect(db.prepare('PRAGMA foreign_keys').get()?.['foreign_keys']).toBe(1);
+
+    const doomed: Migration[] = [
+      ...MIGRATIONS,
+      {
+        version: latestVersion(MIGRATIONS) + 1,
+        name: 'doomed-rebuild',
+        rebuildsTables: true,
+        up: (target) => target.exec('CREATE TABLE nope (id TEXT); DROP TABLE definitely_not_there;'),
+      },
+    ];
+    expect(() => applyMigrations(db, doomed)).toThrow(/doomed-rebuild/);
+    expect(db.prepare('PRAGMA foreign_keys').get()?.['foreign_keys']).toBe(1);
+  });
+
+  it('refuses to commit a rebuild that leaves a reference pointing at nothing', () => {
+    const db = fresh();
+    const broken: Migration[] = [
+      ...MIGRATIONS,
+      {
+        version: latestVersion(MIGRATIONS) + 1,
+        name: 'orphan-maker',
+        rebuildsTables: true,
+        // With enforcement off, this insert is accepted; the check inside the
+        // transaction is the only thing standing between it and a committed
+        // file whose foreign keys no longer hold.
+        up: (target) =>
+          target.exec(
+            `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+               VALUES ('mx', 'M', '', 'active', 'paused', 60, 4, '/repo', 1, 1);
+             INSERT INTO tasks (id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, created_at, updated_at)
+               VALUES ('tx', 'no-such-mission', 'T', '', '/repo', 'proposed', 0, '[]', '', 1, 1);`,
+          ),
+      },
+    ];
+    expect(() => applyMigrations(db, broken)).toThrow(/referencing a row that is not there.*tasks/s);
+    // Rolled back whole: neither row landed, and the version did not move.
+    expect(db.prepare('SELECT COUNT(*) AS n FROM missions').get()?.['n']).toBe(0);
+    expect(schemaVersion(db)).toBe(latestVersion(MIGRATIONS));
   });
 
   it('lets many escalations share a null key while unique keys collide', () => {
@@ -221,5 +290,182 @@ describe('the escalation-idempotency migration', () => {
     insert('c', 'k');
     expect(() => insert('d', 'k')).toThrow();
     closeFleetDb(db);
+  });
+});
+
+describe('the schema refuses what the fleet has no meaning for', () => {
+  /**
+   * Every case here was reproduced against the shipped schema before the
+   * migration was written: each one was ACCEPTED and read back as a typed
+   * value the fleet would then act on.
+   */
+  it('refuses a pulse of zero and a child limit of nine thousand', () => {
+    const db = fresh();
+    db.prepare(
+      `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+       VALUES ('m1', 'M', '', 'active', 'paused', 60, 4, '/repo', 1, 1)`,
+    ).run();
+    // A pulse of zero is a reconciler in a tight loop, and every iteration of
+    // that loop spends money.
+    expect(() => db.prepare('UPDATE missions SET pulse_sec = 0 WHERE id = ?').run('m1')).toThrow(/CHECK/);
+    expect(() => db.prepare('UPDATE missions SET max_children = 9999 WHERE id = ?').run('m1')).toThrow(/CHECK/);
+    // And the bounds are bounds, not a zero check.
+    expect(() => db.prepare('UPDATE missions SET pulse_sec = 29 WHERE id = ?').run('m1')).toThrow(/CHECK/);
+    expect(() => db.prepare('UPDATE missions SET max_children = 13 WHERE id = ?').run('m1')).toThrow(/CHECK/);
+    db.prepare('UPDATE missions SET pulse_sec = 30, max_children = 12 WHERE id = ?').run('m1');
+    expect(db.prepare('SELECT pulse_sec, max_children FROM missions WHERE id = ?').get('m1')).toMatchObject({
+      pulse_sec: 30,
+      max_children: 12,
+    });
+  });
+
+  it('refuses an agent that is not a harness Claudia can run', () => {
+    const db = fresh();
+    db.prepare(
+      `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+       VALUES ('m1', 'M', '', 'active', 'paused', 60, 4, '/repo', 1, 1)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO tasks (id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, created_at, updated_at)
+       VALUES ('t1', 'm1', 'T', '', '/repo', 'proposed', 0, '[]', '', 1, 1)`,
+    ).run();
+    let attempt = 0;
+    const insert = (agent: string) =>
+      db
+        .prepare(
+          `INSERT INTO child_runs (id, mission_id, task_id, agent, attempt, state, started_at)
+           VALUES (?, 'm1', 't1', ?, ?, 'running', 1)`,
+        )
+        // A distinct attempt each time, so the unique (task_id, attempt) index
+        // cannot be what refuses a row and be mistaken for the CHECK.
+        .run(`r-${agent}`, agent, ++attempt);
+    expect(() => insert('gemini')).toThrow(/CHECK/);
+    // Both members of the roster still go in, so this is a roster and not a ban.
+    for (const agent of AGENT_KINDS) expect(() => insert(agent)).not.toThrow();
+    expect(db.prepare('SELECT COUNT(*) AS n FROM child_runs').get()?.['n']).toBe(AGENT_KINDS.length);
+  });
+
+  it('keeps the frozen bounds in step with the contract they came from', () => {
+    // A shipped migration cannot be edited, so the literals in it are frozen
+    // while the constants they mirror are not. Without this, raising
+    // MAX_CHILDREN_CEILING would leave the schema silently one release behind
+    // and the failure would surface as a rejected write nobody could explain.
+    // Read off the real migrated schema rather than the migration source, so a
+    // migration that fails to apply cannot pass this.
+    const db = fresh();
+    const missions = String(db.prepare("SELECT sql FROM sqlite_master WHERE name = 'missions'").get()?.['sql']);
+    expect(missions, 'add a migration when the pulse bounds change').toContain(
+      `pulse_sec BETWEEN ${PULSE_MIN_SEC} AND ${PULSE_MAX_SEC}`,
+    );
+    expect(missions, 'add a migration when the child ceiling changes').toContain(
+      `max_children BETWEEN 1 AND ${MAX_CHILDREN_CEILING}`,
+    );
+    const runs = String(db.prepare("SELECT sql FROM sqlite_master WHERE name = 'child_runs'").get()?.['sql']);
+    const roster = AGENT_KINDS.map((kind) => `'${kind}'`).join(',');
+    expect(runs, 'add a migration when the agent roster changes').toContain(`agent IN (${roster})`);
+  });
+
+  it('clamps a nonsense pulse forward rather than making the file unopenable', () => {
+    // The upgrade hazard: a value written before the constraint existed cannot
+    // satisfy it. Refusing would leave that database permanently unopenable
+    // with no repair path, which is worse than moving a value the fleet
+    // already refuses to create into the range it already enforces.
+    const path = join(dir, 'clamp', 'fleet.db');
+    const before = openFleetDb(path, MIGRATIONS.filter((m) => m.version <= 2));
+    if (!before.ok) throw new Error(before.message);
+    opened.push(before.value);
+    before.value
+      .prepare(
+        `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+         VALUES ('m1', 'M', '', 'active', 'paused', 0, 9999, '/repo', 1, 1),
+                ('m2', 'M', '', 'active', 'paused', 60, 4, '/repo', 1, 1)`,
+      )
+      .run();
+    expect(applyMigrations(before.value)).toBe(MIGRATIONS.filter((m) => m.version > 2).length);
+    expect(before.value.prepare('SELECT pulse_sec, max_children FROM missions WHERE id = ?').get('m1')).toMatchObject({
+      pulse_sec: PULSE_MIN_SEC,
+      max_children: MAX_CHILDREN_CEILING,
+    });
+    // A mission the repository could legitimately have written is untouched.
+    expect(before.value.prepare('SELECT pulse_sec, max_children FROM missions WHERE id = ?').get('m2')).toMatchObject({
+      pulse_sec: 60,
+      max_children: 4,
+    });
+  });
+
+  it('names the rows when an agent cannot be carried forward', () => {
+    // Nothing to clamp an unknown harness to, and inventing one would misreport
+    // which agent did the work. So this failure is deliberate — and it has to
+    // say enough to be answerable, which "CHECK constraint failed" does not.
+    const path = join(dir, 'bad-agent', 'fleet.db');
+    const before = openFleetDb(path, MIGRATIONS.filter((m) => m.version <= 2));
+    if (!before.ok) throw new Error(before.message);
+    opened.push(before.value);
+    before.value
+      .prepare(
+        `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+         VALUES ('m1', 'M', '', 'active', 'paused', 60, 4, '/repo', 1, 1)`,
+      )
+      .run();
+    before.value
+      .prepare(
+        `INSERT INTO tasks (id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, created_at, updated_at)
+         VALUES ('t1', 'm1', 'T', '', '/repo', 'proposed', 0, '[]', '', 1, 1)`,
+      )
+      .run();
+    before.value
+      .prepare(
+        `INSERT INTO child_runs (id, mission_id, task_id, agent, attempt, state, started_at)
+         VALUES ('r-odd', 'm1', 't1', 'gemini', 1, 'running', 1)`,
+      )
+      .run();
+
+    expect(() => applyMigrations(before.value)).toThrow(/r-odd \(agent "gemini"\)/);
+    // Refused whole: the file stays where it was, and the data is still there.
+    expect(schemaVersion(before.value)).toBe(2);
+    expect(before.value.prepare('SELECT COUNT(*) AS n FROM child_runs').get()?.['n']).toBe(1);
+  });
+});
+
+describe('an escalation outlives what it was about', () => {
+  it('keeps a resolved approval after its mission is deleted', () => {
+    // Measured against the shipped schema before this migration: an escalation
+    // resolved "approved", with the note a person wrote, came back undefined
+    // after one DELETE FROM missions. A record of who agreed to what is the one
+    // thing a cascade must not be able to reach.
+    const db = fresh();
+    db.prepare(
+      `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+       VALUES ('m1', 'M', '', 'active', 'paused', 60, 4, '/repo', 1, 1)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO tasks (id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, created_at, updated_at)
+       VALUES ('t1', 'm1', 'T', '', '/repo', 'proposed', 0, '[]', '', 1, 1)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO child_runs (id, mission_id, task_id, agent, attempt, state, started_at)
+       VALUES ('r1', 'm1', 't1', 'claude', 1, 'running', 1)`,
+    ).run();
+    db.prepare(
+      `INSERT INTO escalations (id, mission_id, task_id, run_id, source, request, reason, severity, resolution, created_at, resolved_at, resolution_note)
+       VALUES ('e1', 'm1', 't1', 'r1', 'child', 'git.push', 'wants to push', 'blocking', 'approved', 1, 2, 'approved at the console')`,
+    ).run();
+
+    db.prepare('DELETE FROM missions WHERE id = ?').run('m1');
+
+    const kept = db.prepare('SELECT * FROM escalations WHERE id = ?').get('e1');
+    expect(kept).toMatchObject({
+      resolution: 'approved',
+      resolution_note: 'approved at the console',
+      // And which run it was for. ON DELETE SET NULL was the same loss more
+      // quietly: an approval left standing with nothing saying what it was for.
+      run_id: 'r1',
+      task_id: 't1',
+      mission_id: 'm1',
+    });
+    // The operational rows are gone, which is the line: state belongs to the
+    // thing that owns it, the record of what happened does not.
+    expect(db.prepare('SELECT COUNT(*) AS n FROM child_runs').get()?.['n']).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM tasks').get()?.['n']).toBe(0);
   });
 });

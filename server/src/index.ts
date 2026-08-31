@@ -2,6 +2,7 @@ import { resolvePort } from './resolve-port.js';
 import { createServer, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
+import { MAX_FRAME_BYTES } from './command-fields.js';
 import { commitAndPush } from './commit-action.js';
 import { Orchestrators } from './orchestrators.js';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
@@ -66,6 +67,11 @@ const httpServer = createServer((req, res) => {
 const wss = new WebSocketServer({
   server: httpServer,
   path: '/ws',
+  // The outermost of the three size limits, and the only one that acts before
+  // the bytes become a message at all: ws refuses an oversized frame during
+  // reassembly, so a client cannot make the server allocate and parse
+  // megabytes just to have the command rejected afterwards.
+  maxPayload: MAX_FRAME_BYTES,
   verifyClient: ({ origin, req }: { origin?: string; req: IncomingMessage }) => {
     if (isAllowedOrigin(origin) && isAllowedHost(req.headers.host)) return true;
     console.warn(`[claudia] refused a socket from origin=${origin ?? '(none)'} host=${req.headers.host ?? '(none)'}`);

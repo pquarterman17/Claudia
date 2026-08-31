@@ -1,6 +1,7 @@
 import type { ClientCommand, HostPlatform, ServerEvent } from '@claudia/shared';
 import { WebSocket, WebSocketServer } from 'ws';
 import { runBulkOp } from './bulk-ops.js';
+import { parseCommand } from './command-schema.js';
 import { buildHello, ownedSessionIds } from './hello-event.js';
 import type { Orchestrators } from './orchestrators.js';
 import { setHookMonitor } from './hook-commands.js';
@@ -89,7 +90,11 @@ export class Gateway {
         this.lastSeen.set(socket, Date.now());
         let cmd: ClientCommand;
         try {
-          cmd = JSON.parse(String(raw)) as ClientCommand;
+          // parseCommand is pure and never throws — this catch is solely for
+          // JSON.parse's SyntaxError on genuinely malformed text.
+          const parsed = parseCommand(JSON.parse(String(raw)));
+          if (!parsed.ok) return this.sendTo(socket, { type: 'server_error', message: parsed.reason });
+          cmd = parsed.cmd;
         } catch {
           this.sendTo(socket, { type: 'server_error', message: 'Malformed command JSON' });
           return;

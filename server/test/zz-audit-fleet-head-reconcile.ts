@@ -155,18 +155,6 @@ export function reconcile(input: ReconcileInput): Decision[] {
   // other.
   const ceiling = Math.min(mission.maxChildren, policy.maxChildren);
   const capacity = ceiling - activeRuns.length;
-  // A ceiling nobody can read is not a licence to dispatch, and it is not a
-  // licence to go quiet either. Found reviewing the commit that introduced this
-  // line: `Math.min(NaN, 2)` is NaN, `NaN <= 0` is false, and
-  // `candidates.slice(0, NaN)` is empty — so a mission whose maxChildren was
-  // NaN or absent produced NO decisions at all. Not a dispatch, not even a
-  // hold: the fleet did nothing and said nothing about why, which this file's
-  // own design calls out as indistinguishable from being broken. The same
-  // commit guarded a non-finite budget and left the identical hazard here.
-  if (!Number.isFinite(capacity)) {
-    decisions.push({ kind: 'hold', reason: 'cannot read how many children this mission may run' });
-    return decisions;
-  }
   if (candidates.length === 0) {
     // Only worth a hold when there was nothing to say at all; a list of blocks
     // already explains itself.

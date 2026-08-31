@@ -502,3 +502,41 @@ describe('found by adversarial audit', () => {
     expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(1);
   });
 });
+
+describe('found reviewing my own fix', () => {
+  it.each([
+    ['NaN', Number.NaN],
+    ['absent', undefined as unknown as number],
+  ])('holds, with a reason, when the mission ceiling is %s', (_label, maxChildren) => {
+    // The commit that started reading mission.maxChildren introduced this:
+    // Math.min(NaN, 2) is NaN, NaN <= 0 is false, and slice(0, NaN) is empty,
+    // so the reconciler returned NO decisions at all. Not a dispatch, not even
+    // a hold — the fleet did nothing and said nothing about why, which this
+    // file's own design calls out as indistinguishable from being broken. The
+    // same commit guarded a non-finite budget and left this untouched.
+    const decisions = reconcile({
+      mission: mission({ maxChildren }),
+      tasks: [task(), task()],
+      runs: [],
+      policy: POLICY,
+    });
+    expect(decisions).not.toEqual([]);
+    expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(0);
+    expect(decisions[0]?.kind === 'hold' && decisions[0].reason).toMatch(/cannot read how many children/);
+  });
+
+  it('still dispatches on a readable ceiling either side of the minimum', () => {
+    for (const [missionCeiling, policyCeiling, expected] of [
+      [1, 8, 1],
+      [8, 2, 2],
+    ] as const) {
+      const decisions = reconcile({
+        mission: mission({ maxChildren: missionCeiling }),
+        tasks: [task(), task(), task()],
+        runs: [],
+        policy: { maxChildren: policyCeiling, maxAttempts: 3 },
+      });
+      expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(expected);
+    }
+  });
+});

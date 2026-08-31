@@ -37,6 +37,22 @@ function observe(over: Partial<RunObservation> = {}): RunObservation {
   return { run: run(), sessionAlive: true, lastActivityAt: NOW - 1000, now: NOW, ...over };
 }
 
+/**
+ * An observation whose retry is genuinely DUE.
+ *
+ * `observe()` puts the last activity one second ago, which is a run that has
+ * not been quiet long enough for anything to be wrong with it. Handing that to
+ * `nextAction` alongside a synthetic `silent` health used to be harmless
+ * because nothing looked at the clock; now that a retry is withheld until its
+ * backoff expires, a fixture like that is asking "what would you do about a
+ * fault that has not happened yet" and correctly gets `backoff`. Every test
+ * that means "the retry is due" says so here.
+ */
+function due(over: Partial<RunObservation> = {}): RunObservation {
+  const quiet = DEFAULT_WATCHDOG.silentAfterMs + DEFAULT_WATCHDOG.retryMaxMs + 60_000;
+  return observe({ run: run({ startedAt: NOW - quiet }), lastActivityAt: NOW - quiet, ...over });
+}
+
 describe('assess', () => {
   it('leaves a working run alone', () => {
     expect(assess(observe())).toEqual({ kind: 'healthy' });
@@ -107,12 +123,12 @@ describe('nextAction', () => {
   });
 
   it('retries a silent run', () => {
-    const action = nextAction({ kind: 'silent', reason: 'nothing for 20m' }, observe({ run: run({ attempt: 1 }) }));
+    const action = nextAction({ kind: 'silent', reason: 'nothing for 20m' }, due({ run: run({ attempt: 1 }) }));
     expect(action).toMatchObject({ kind: 'retry', attempt: 2, reason: 'nothing for 20m' });
   });
 
   it('retries an orphaned run', () => {
-    expect(nextAction({ kind: 'orphaned', reason: 'gone' }, observe({ run: run() })).kind).toBe('retry');
+    expect(nextAction({ kind: 'orphaned', reason: 'gone' }, due()).kind).toBe('retry');
   });
 
   it('gives up once the attempts are spent', () => {
@@ -159,9 +175,9 @@ describe('a tick is not a launch', () => {
     // Found in review. Every tick over the same silent run returned the same
     // retry, so a pulse each minute would have started a session each minute.
     // A derived key makes repeated ticks collide on one reservation.
-    const r = run({ attempt: 1 });
-    const first = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: r }));
-    const second = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: r }));
+    const r = run({ attempt: 1, startedAt: NOW - 10_000_000 });
+    const first = nextAction({ kind: 'silent', reason: 'x' }, due({ run: r }));
+    const second = nextAction({ kind: 'silent', reason: 'x' }, due({ run: r }));
     expect(first).toEqual(second);
     // The reconciler's namespace, not a private one: a watchdog retry and a
     // reconciler dispatch of the same task attempt must collide on one
@@ -223,8 +239,8 @@ describe('a tick is not a launch', () => {
   });
 
   it('gives each attempt its own key', () => {
-    const a = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: run({ attempt: 1 }) }));
-    const b = nextAction({ kind: 'silent', reason: 'x' }, observe({ run: run({ attempt: 2 }) }));
+    const a = nextAction({ kind: 'silent', reason: 'x' }, due({ run: run({ attempt: 1 }) }));
+    const b = nextAction({ kind: 'silent', reason: 'x' }, due({ run: run({ attempt: 2 }) }));
     expect(a.kind === 'retry' && a.key).not.toBe(b.kind === 'retry' && b.key);
   });
 
@@ -282,7 +298,7 @@ describe('found by adversarial review', () => {
   });
 
   it('terminalizes the old run when it retries', () => {
-    const observation = observe({ run: run({ id: 'r1', attempt: 1 }), sessionAlive: false });
+    const observation = due({ run: run({ id: 'r1', attempt: 1 }), sessionAlive: false });
     expect(nextAction(assess(observation), observation)).toMatchObject({ kind: 'retry', terminal: 'failed' });
   });
 });
@@ -304,7 +320,7 @@ describe('found by adversarial audit', () => {
   it('puts a retried task back where the reconciler will find it', () => {
     // The retry reserves in the reconciler's key namespace, so the reconciler
     // is what dispatches it — and it only ever dispatches ready and blocked.
-    const action = nextAction({ kind: 'silent', reason: 'nothing for 20m' }, observe());
+    const action = nextAction({ kind: 'silent', reason: 'nothing for 20m' }, due());
     expect(action).toMatchObject({ kind: 'retry', task: { to: 'ready', path: ['failed', 'ready'] } });
   });
 
@@ -312,8 +328,8 @@ describe('found by adversarial audit', () => {
     // Not decoration: `running -> ready` is not an edge, so a decision naming
     // it is one the store refuses.
     for (const outcome of [
-      nextAction({ kind: 'silent', reason: 'x' }, observe()),
-      nextAction({ kind: 'silent', reason: 'x' }, observe({ run: run({ attempt: 9 }), attemptsSpent: 9 })),
+      nextAction({ kind: 'silent', reason: 'x' }, due()),
+      nextAction({ kind: 'silent', reason: 'x' }, due({ run: run({ attempt: 9 }), attemptsSpent: 9 })),
     ]) {
       const task = 'task' in outcome ? outcome.task : undefined;
       expect(task).toBeDefined();
@@ -331,5 +347,53 @@ describe('found by adversarial audit', () => {
     // A run with no recorded activity falls back to startedAt, which must also
     // be readable.
     expect(assess(observe({ run: run({ startedAt: Number.NaN }), lastActivityAt: undefined })).kind).toBe('silent');
+  });
+});
+
+describe('found reviewing my own fix', () => {
+  it('withholds a retry that is not due yet, and says so rather than looking healthy', () => {
+    // The backoff lives here; the dispatch lives in the reconciler; the only
+    // thing joining them is a task status, which carries no timing. So emitting
+    // `retry` early with a `task` route to apply meant the reconciler
+    // dispatched on its next pulse whatever notBefore said — measured at 30s
+    // early. Nothing downstream can honour a deadline it is never told about.
+    const quiet = DEFAULT_WATCHDOG.silentAfterMs + 1;
+    const observation = observe({ run: run({ startedAt: NOW - quiet }), lastActivityAt: NOW - quiet });
+    const action = nextAction(assess(observation), observation);
+    expect(action.kind).toBe('backoff');
+    if (action.kind !== 'backoff') return;
+    expect(action.until).toBeGreaterThan(NOW);
+    expect(action.attempt).toBe(2);
+    // Carries nothing to apply: no task route, no terminal state.
+    expect(action).not.toHaveProperty('task');
+    expect(action).not.toHaveProperty('terminal');
+  });
+
+  it('is not the same answer as a healthy run', () => {
+    // Collapsing the two would hide a failing run behind a healthy-looking
+    // tile for the length of the backoff.
+    expect(nextAction({ kind: 'healthy' }, observe()).kind).toBe('wait');
+  });
+
+  it('emits the retry once the backoff has actually expired', () => {
+    const quiet = DEFAULT_WATCHDOG.silentAfterMs + 1;
+    const at = (now: number) => {
+      const observation = observe({ run: run({ startedAt: NOW - quiet }), lastActivityAt: NOW - quiet, now });
+      return nextAction(assess(observation), observation);
+    };
+    const held = at(NOW);
+    expect(held.kind).toBe('backoff');
+    if (held.kind !== 'backoff') return;
+    expect(at(held.until - 1).kind).toBe('backoff');
+    expect(at(held.until).kind).toBe('retry');
+  });
+
+  it('still gives up immediately, because giving up is not a thing to wait for', () => {
+    const quiet = DEFAULT_WATCHDOG.silentAfterMs + 1;
+    const observation = observe({
+      run: run({ attempt: DEFAULT_WATCHDOG.maxAttempts, startedAt: NOW - quiet }),
+      lastActivityAt: NOW - quiet,
+    });
+    expect(nextAction(assess(observation), observation).kind).toBe('give_up');
   });
 });

@@ -179,6 +179,14 @@ export type WatchdogAction =
        * reconciler only dispatches `ready` and `blocked`. */
       task: TaskOutcome;
     }
+  /**
+   * Faulted, and the retry is not due yet. Distinct from `wait`, which means
+   * nothing is wrong: a board showing "retrying in 4m" needs to tell those
+   * apart, and collapsing them would hide a failing run behind a healthy-
+   * looking tile. Deliberately carries no `task` and no `terminal` — there is
+   * nothing to apply yet, which is the whole point.
+   */
+  | { kind: 'backoff'; until: number; attempt: number; reason: string }
   | { kind: 'escalate'; request: string; reason: string; severity: EscalationSeverity; key: string }
   /** Terminal for the same reason as retry: giving up on a run must not leave
    * it holding a concurrency slot for the life of the mission — nor its task
@@ -254,6 +262,24 @@ export function nextAction(
     };
   }
   const afterMs = backoffMs(run.attempt, policy);
+  const notBefore = faultAt(health, observation, policy) + afterMs;
+  // Withheld until it is actually due, rather than emitted early with a
+  // "do not act on this yet" attached.
+  //
+  // Found reviewing the commit that gave this action its `task` route. The
+  // backoff lives here; the dispatch lives in the reconciler; and the only
+  // thing joining them is a task status, which carries no timing. So the
+  // moment a caller applies `task` -- which is the whole point of it, the
+  // hand-off that lets the retry be picked up -- the reconciler dispatches on
+  // its next pulse whatever `notBefore` said. Measured: notBefore 30s away,
+  // task moved to `ready`, dispatched on the very next pulse.
+  //
+  // Nothing downstream can honour a deadline it is never told about, so the
+  // module that owns the deadline waits instead. `notBefore` stays on the
+  // action as the record of when it came due, not as an instruction.
+  if (observation.now < notBefore) {
+    return { kind: 'backoff', until: notBefore, attempt: next, reason: health.reason };
+  }
   return {
     kind: 'retry',
     attempt: next,
@@ -268,7 +294,7 @@ export function nextAction(
     // backoff caps at `retryMaxMs` (10m), so anchoring on last activity made
     // every silent-path deadline already expired — the backoff was structurally
     // dead on the commonest failure, and only `maxAttempts` bounded anything.
-    notBefore: faultAt(health, observation, policy) + afterMs,
+    notBefore,
     reason: health.reason,
     // The SAME namespace the reconciler reserves in. Two key spaces meant a
     // watchdog retry and a reconciler dispatch of one task's one attempt could

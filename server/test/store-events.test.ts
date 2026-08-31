@@ -361,16 +361,44 @@ describe('a transaction this module did not open', () => {
     expect(value(fleet.events.since(0))).toEqual([]);
   });
 
-  it('does not publish from inside one either', () => {
+  it('does not publish from inside one either, and never publishes it LATER', () => {
+    // The bug this replaces was in the first version of the fix, and its own
+    // test missed it by checking the moment rather than the consequence: the
+    // callback was QUEUED inside the foreign transaction, survived the
+    // rollback, and fired on the next unrelated commit. A subscriber was told
+    // seq 1 was a rolled-back event, then told seq 1 was the real event that
+    // took the number — two different events at one sequence, which is exactly
+    // what deferring was written to prevent.
     const fleet = store();
-    const seen: number[] = [];
-    fleet.events.onAppended((event) => seen.push(event.seq));
+    const seen: string[] = [];
+    fleet.events.onAppended((event) => seen.push(`${event.seq}:${event.kind}`));
+
     fleet.db.exec('BEGIN IMMEDIATE');
-    value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'a', payload: {} }));
+    value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'rolled-back', payload: {} }));
     expect(seen, 'the raw transaction has not committed').toEqual([]);
     fleet.db.exec('ROLLBACK');
-    // Late or never is safe; the next resync repairs a missed broadcast. Early
-    // hands a client a number the log will reuse.
     expect(seen).toEqual([]);
+
+    // The step that caught it: any later commit at all.
+    value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'real', payload: {} }));
+    expect(seen).toEqual(['1:real']);
+    expect(value(fleet.events.since(0)).map((e) => e.kind)).toEqual(['real']);
+  });
+
+  it('drops the notification even when the foreign transaction commits', () => {
+    // The honest cost of the fix, stated: this module cannot see a BEGIN it did
+    // not issue reach COMMIT, so it says nothing rather than guessing. A
+    // dropped broadcast is a resync away; a false one is a client holding a
+    // number the log will hand to a different event.
+    const fleet = store();
+    const seen: string[] = [];
+    fleet.events.onAppended((event) => seen.push(`${event.seq}:${event.kind}`));
+    fleet.db.exec('BEGIN IMMEDIATE');
+    value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'committed-quietly', payload: {} }));
+    fleet.db.exec('COMMIT');
+    expect(seen).toEqual([]);
+    // And the queue is not carrying it into the next commit either.
+    value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'next', payload: {} }));
+    expect(seen).toEqual(['2:next']);
   });
 });

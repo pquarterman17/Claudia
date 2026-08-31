@@ -89,6 +89,16 @@ const depth = new WeakMap<DatabaseSync, number>();
  */
 const afterCommit = new WeakMap<DatabaseSync, (() => void)[]>();
 
+/**
+ * Whether the transaction currently open is one THIS module opened.
+ *
+ * The distinction is not bookkeeping. A transaction opened through `transact`
+ * has an outcome this module observes, so work can be deferred to its commit.
+ * A transaction opened through the exposed connection does not: `BEGIN` and
+ * `ROLLBACK` happen where nothing here can see them.
+ */
+const ownsTransaction = new WeakMap<DatabaseSync, true>();
+
 /** Whether anything is open on this connection — including a BEGIN this module
  * did not issue, which `depth` alone cannot see. */
 function inTransaction(db: DatabaseSync): boolean {
@@ -113,17 +123,29 @@ function inTransaction(db: DatabaseSync): boolean {
  * their own bookkeeping; what they must not do is publish it, and this is the
  * thing that publishes.
  *
- * Fails safe in both directions: with nothing open the callback runs now,
- * because the work is already durable; inside a transaction this module did
- * not open, it waits for a drain that may come late or not at all. Late is a
- * missed broadcast the next resync repairs. Early is a client with a number
- * the log will reuse.
+ * Fails safe in every direction. With nothing open the callback runs now,
+ * because the work is already durable. Inside a transaction this module owns,
+ * it waits for that commit. Inside one it does not own, it is dropped, because
+ * the outcome is unobservable — see below. A dropped broadcast is a resync
+ * away; a false one hands a client a number the log will reuse.
  */
 export function onCommit(db: DatabaseSync, fn: () => void): void {
   if (!inTransaction(db)) {
     run(fn);
     return;
   }
+  // Inside a transaction this module did not open, the callback is DROPPED.
+  //
+  // Found reviewing this module's own fix: queueing it instead was worse than
+  // doing nothing. A raw BEGIN, an append, a raw ROLLBACK, and then any later
+  // commit drained the queue -- so a subscriber was told about seq 1 for an
+  // event that had been rolled back, and then about seq 1 again for the real
+  // event that took the number. Two different events at one sequence, which is
+  // the exact thing the deferral was written to prevent, reintroduced through
+  // the one path that cannot see its own outcome.
+  //
+  // A dropped notification is a resync away. A false one is not.
+  if (ownsTransaction.get(db) !== true) return;
   const queue = afterCommit.get(db) ?? [];
   afterCommit.set(db, queue);
   queue.push(fn);
@@ -165,13 +187,17 @@ export function transact<T>(db: DatabaseSync, what: string, fn: () => T): StoreR
     const savepoint = `claudia_sp_${level}`;
     db.exec(nested ? `SAVEPOINT ${savepoint}` : 'BEGIN IMMEDIATE');
     depth.set(db, level + 1);
+    if (!nested) ownsTransaction.set(db, true);
     // Where this savepoint found the queue, so its rollback discards exactly
     // what was registered inside it and leaves the outer transaction's alone.
     const mark = afterCommit.get(db)?.length ?? 0;
     try {
       const value = fn();
       db.exec(nested ? `RELEASE ${savepoint}` : 'COMMIT');
-      if (!nested) drainAfterCommit(db);
+      if (!nested) {
+        ownsTransaction.delete(db);
+        drainAfterCommit(db);
+      }
       return value;
     } catch (err) {
       // A rollback that itself fails means the connection is gone; the original
@@ -182,7 +208,10 @@ export function transact<T>(db: DatabaseSync, what: string, fn: () => T): StoreR
         /* connection already closed — nothing left to undo */
       }
       afterCommit.get(db)?.splice(mark);
-      if (!nested) afterCommit.delete(db);
+      if (!nested) {
+        ownsTransaction.delete(db);
+        afterCommit.delete(db);
+      }
       throw err;
     } finally {
       depth.set(db, level);

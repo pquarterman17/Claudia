@@ -261,7 +261,14 @@ export function nextAction(
       task: TASK_GIVEN_UP,
     };
   }
-  const afterMs = backoffMs(run.attempt, policy);
+  // Counted over the TASK, like `spent` above, not over this one run. Found
+  // reviewing this file: `next` came from max(run.attempt, attemptsSpent) but
+  // the delay came from run.attempt alone, so a task whose OTHER runs had
+  // burned the attempts got the shortest backoff on its most expensive retry —
+  // an action announcing "attempt 5" with the 30-second delay for attempt 1.
+  // The comment on `spent` gives the reason and it applies just as much here:
+  // one run's number is not the task's.
+  const afterMs = backoffMs(spent, policy);
   const notBefore = faultAt(health, observation, policy) + afterMs;
   // Withheld until it is actually due, rather than emitted early with a
   // "do not act on this yet" attached.

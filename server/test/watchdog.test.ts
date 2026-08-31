@@ -397,3 +397,34 @@ describe('found reviewing my own fix', () => {
     expect(nextAction(assess(observation), observation).kind).toBe('give_up');
   });
 });
+
+describe('the backoff belongs to the task, not to one run', () => {
+  it('delays by the attempts the TASK has spent, not the attempt this row happens to hold', () => {
+    // A retry announcing "attempt 5" used to carry backoffMs(1) — 30 seconds —
+    // because `next` counted over the task and the delay counted over the run.
+    // The exponential backoff was shortest for exactly the runs that had failed
+    // most, in the one place the module says every iteration costs money.
+    const quiet = DEFAULT_WATCHDOG.silentAfterMs + DEFAULT_WATCHDOG.retryMaxMs + 60_000;
+    const observation = observe({
+      run: run({ attempt: 1, startedAt: NOW - quiet }),
+      lastActivityAt: NOW - quiet,
+      attemptsSpent: 4,
+    });
+    const action = nextAction({ kind: 'silent', reason: 'x' }, observation, {
+      ...DEFAULT_WATCHDOG,
+      maxAttempts: 9,
+    });
+    expect(action.kind).toBe('retry');
+    if (action.kind !== 'retry') return;
+    expect(action.attempt).toBe(5);
+    expect(action.afterMs).toBe(backoffMs(4));
+    expect(action.afterMs).not.toBe(backoffMs(1));
+  });
+
+  it('is unchanged when the run is the only attempt the task has had', () => {
+    const quiet = DEFAULT_WATCHDOG.silentAfterMs + DEFAULT_WATCHDOG.retryMaxMs + 60_000;
+    const observation = observe({ run: run({ attempt: 1, startedAt: NOW - quiet }), lastActivityAt: NOW - quiet });
+    const action = nextAction({ kind: 'silent', reason: 'x' }, observation);
+    expect(action.kind === 'retry' && action.afterMs).toBe(backoffMs(1));
+  });
+});

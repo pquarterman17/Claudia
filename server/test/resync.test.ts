@@ -277,3 +277,26 @@ describe('the window and the read cannot disagree', () => {
     expect(replayIsUsable(batch.map((e) => e.seq), 1, 10)).toBe(false);
   });
 });
+
+describe('the plan and the reader agree on how big a window can be', () => {
+  it('serves a window planned at exactly the reader ceiling', () => {
+    const fleet = store();
+    const plan = planResync({ lastSeq: 0 }, { oldestSeq: 1, newestSeq: 100_000, maxBatch: MAX_PAGE });
+    expect(plan).toMatchObject({ kind: 'replay', fromSeq: 1, toSeq: MAX_PAGE, more: true });
+    if (plan.kind !== 'replay') return;
+    expect(fleet.events.replay({ fromSeq: plan.fromSeq, toSeq: plan.toSeq }).ok).toBe(true);
+  });
+
+  it('fails loudly, not silently, when a caller plans a bigger one', () => {
+    // These are two numbers a caller has to keep in step, and the failure mode
+    // if they drift must be a named refusal rather than a short batch — a short
+    // batch is the silent hole this whole module exists to prevent.
+    const fleet = store();
+    const plan = planResync({ lastSeq: 0 }, { oldestSeq: 1, newestSeq: 100_000, maxBatch: MAX_PAGE + 1 });
+    expect(plan).toMatchObject({ kind: 'replay', toSeq: MAX_PAGE + 1 });
+    if (plan.kind !== 'replay') return;
+    const read = fleet.events.replay({ fromSeq: plan.fromSeq, toSeq: plan.toSeq });
+    expect(read.ok).toBe(false);
+    if (!read.ok) expect(read.message).toContain(String(MAX_PAGE));
+  });
+});

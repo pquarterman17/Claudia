@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { countInstalled, hookBlock, hookUrl, installHooks, isInstalled, uninstallHooks, HOOK_EVENTS } from '../src/hook-install.js';
 
 /**
@@ -176,5 +176,59 @@ describe('hookBlock', () => {
 
   it('posts only to loopback', () => {
     expect(hookUrl(4317)).toMatch(/^http:\/\/127\.0\.0\.1:/);
+  });
+});
+
+describe('two writes in the same millisecond', () => {
+  afterEach(() => vi.useRealTimers());
+
+  /**
+   * Seen first as an intermittent failure of the uninstall test above — once in
+   * eight full-suite runs, never reproducible in isolation — then pinned here
+   * with a frozen clock. The backup name is a millisecond timestamp and the
+   * copy is EXCL, which is right: a second run must not clobber the backup the
+   * first one took. But EEXIST was a hard failure, so the second write aborted
+   * having changed nothing. Install-then-uninstall is exactly that pair.
+   */
+  it('does not abort the second write when the backup name collides', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-31T01:00:00.000Z'));
+    const theirs = { matcher: '', hooks: [{ type: 'command', command: 'mine.sh' }] };
+    const file = settingsFile({ hooks: { Stop: [theirs], SessionStart: [theirs] } });
+
+    expect(await installHooks(PORT, file)).toMatchObject({ ok: true });
+    const removal = await uninstallHooks(PORT, file);
+    // The failure this replaces: ok:false, and the user keeps hooks they asked
+    // to remove — a settings.json posting to a dead port for every event in
+    // every terminal they open.
+    expect(removal.ok, removal.ok ? '' : removal.error).toBe(true);
+    expect(read(file)).toEqual({ hooks: { Stop: [theirs], SessionStart: [theirs] } });
+  });
+
+  it('keeps both backups, so the earlier one is never overwritten', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-31T01:00:00.000Z'));
+    const original = { hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'mine.sh' }] }] } };
+    const file = settingsFile(original);
+
+    await installHooks(PORT, file);
+    await uninstallHooks(PORT, file);
+
+    const taken = backups(file);
+    expect(taken).toHaveLength(2);
+    expect(new Set(taken).size).toBe(2);
+    // The first backup still holds the file as it was before Claudia touched
+    // anything, which is the whole promise the backup exists to keep.
+    const first = taken.sort()[0];
+    expect(JSON.parse(readFileSync(join(file, '..', String(first)), 'utf8'))).toEqual(original);
+  });
+
+  it('still refuses when the backup fails for a reason that is not a name clash', async () => {
+    // A directory that cannot be written to is a real failure, and the owner
+    // agreed to the edit on the condition the original was kept.
+    const file = join(mkdtempSync(join(tmpdir(), 'claudia-hooks-')), 'nested', 'settings.json');
+    writeFileSync(join(file, '..', '..', 'blocker'), 'x');
+    const result = await installHooks(PORT, join(file, '..', '..', 'blocker', 'settings.json'));
+    expect(result.ok).toBe(false);
   });
 });

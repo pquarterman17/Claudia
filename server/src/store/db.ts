@@ -82,6 +82,63 @@ export function attempt<T>(what: string, fn: () => T): StoreResult<T> {
 const depth = new WeakMap<DatabaseSync, number>();
 
 /**
+ * Work that must not happen until the outermost transaction has committed.
+ *
+ * Keyed weakly for the same reason as `depth`: a closed database should not be
+ * held alive by a queue nobody will drain.
+ */
+const afterCommit = new WeakMap<DatabaseSync, (() => void)[]>();
+
+/** Whether anything is open on this connection — including a BEGIN this module
+ * did not issue, which `depth` alone cannot see. */
+function inTransaction(db: DatabaseSync): boolean {
+  return (depth.get(db) ?? 0) > 0 || db.isTransaction;
+}
+
+/**
+ * Defers `fn` until the work around it is durable.
+ *
+ * The reason this exists is narrow and worth stating. `fleet_events.seq` is
+ * AUTOINCREMENT so that a browser holding "I have seen up to N" can never
+ * later be shown a different event at N or below. But sqlite_sequence is an
+ * ordinary table and its bump rolls back with everything else, so a seq handed
+ * out inside a transaction that then fails is RELEASED and given to the next
+ * event. Measured, not reasoned about: appending inside a `transact` that
+ * threw handed out seq 1 for a `dispatch`, and the next append — a
+ * `task_failed` — was also given seq 1. Same number, different event, which is
+ * exactly the invariant the AUTOINCREMENT was chosen to protect.
+ *
+ * A seq is only dangerous once somebody has been TOLD about it, so this is
+ * where telling them waits. Callers still get the value back immediately for
+ * their own bookkeeping; what they must not do is publish it, and this is the
+ * thing that publishes.
+ *
+ * Fails safe in both directions: with nothing open the callback runs now,
+ * because the work is already durable; inside a transaction this module did
+ * not open, it waits for a drain that may come late or not at all. Late is a
+ * missed broadcast the next resync repairs. Early is a client with a number
+ * the log will reuse.
+ */
+export function onCommit(db: DatabaseSync, fn: () => void): void {
+  if (!inTransaction(db)) {
+    run(fn);
+    return;
+  }
+  const queue = afterCommit.get(db) ?? [];
+  afterCommit.set(db, queue);
+  queue.push(fn);
+}
+
+/** A listener that throws must not take down the write it was listening to. */
+function run(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    /* a subscriber's problem, not the store's */
+  }
+}
+
+/**
  * One SQLite transaction around `fn`, rolled back on any throw.
  *
  * IMMEDIATE rather than deferred: it takes the write lock up front, so a
@@ -98,26 +155,53 @@ const depth = new WeakMap<DatabaseSync, number>();
 export function transact<T>(db: DatabaseSync, what: string, fn: () => T): StoreResult<T> {
   return attempt(what, () => {
     const level = depth.get(db) ?? 0;
+    // `depth` counts this module's own nesting; `isTransaction` also catches a
+    // BEGIN issued through the exposed connection. Without that second check a
+    // repository method called after a raw BEGIN issued a second BEGIN and
+    // failed with "cannot start a transaction within a transaction" — the
+    // documented escape hatch and the documented reentrancy could not be used
+    // together.
+    const nested = level > 0 || db.isTransaction;
     const savepoint = `claudia_sp_${level}`;
-    db.exec(level === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${savepoint}`);
+    db.exec(nested ? `SAVEPOINT ${savepoint}` : 'BEGIN IMMEDIATE');
     depth.set(db, level + 1);
+    // Where this savepoint found the queue, so its rollback discards exactly
+    // what was registered inside it and leaves the outer transaction's alone.
+    const mark = afterCommit.get(db)?.length ?? 0;
     try {
       const value = fn();
-      db.exec(level === 0 ? 'COMMIT' : `RELEASE ${savepoint}`);
+      db.exec(nested ? `RELEASE ${savepoint}` : 'COMMIT');
+      if (!nested) drainAfterCommit(db);
       return value;
     } catch (err) {
       // A rollback that itself fails means the connection is gone; the original
       // failure is the one worth reporting, so swallow this one.
       try {
-        db.exec(level === 0 ? 'ROLLBACK' : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
+        db.exec(nested ? `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}` : 'ROLLBACK');
       } catch {
         /* connection already closed — nothing left to undo */
       }
+      afterCommit.get(db)?.splice(mark);
+      if (!nested) afterCommit.delete(db);
       throw err;
     } finally {
       depth.set(db, level);
     }
   });
+}
+
+/**
+ * Runs what was waiting, once, after the commit that made it true.
+ *
+ * Taken and cleared before anything runs, so a listener that appends another
+ * event queues for the NEXT commit rather than joining the batch being drained
+ * and never terminating.
+ */
+function drainAfterCommit(db: DatabaseSync): void {
+  const queue = afterCommit.get(db);
+  if (queue === undefined) return;
+  afterCommit.delete(db);
+  for (const fn of queue) run(fn);
 }
 
 /** Honours CLAUDIA_DATA_DIR the same way settingsPath() does, for the same reason. */

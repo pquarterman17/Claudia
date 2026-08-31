@@ -1,6 +1,6 @@
 import type { FleetActor, FleetEvent } from '@claudia/shared';
 import type { DatabaseSync } from 'node:sqlite';
-import { attempt, refuse, transact, type StoreResult } from './db.js';
+import { attempt, onCommit, refuse, transact, type StoreResult } from './db.js';
 import { int, optText, text, type Row } from './rows.js';
 
 /**
@@ -46,6 +46,31 @@ const COLUMNS = 'seq, mission_id, task_id, run_id, actor, kind, payload, at, ide
 export class FleetEventLog {
   constructor(private readonly db: DatabaseSync) {}
 
+  private readonly listeners = new Set<(event: FleetEvent) => void>();
+
+  /**
+   * Subscribes to events that have actually landed. Returns an unsubscribe.
+   *
+   * This is the ONLY safe way to forward an event to a client, and the reason
+   * is `seq`. `append` returns the number immediately because a caller needs it
+   * for its own bookkeeping, but inside a transaction that number is not yet
+   * real: sqlite_sequence rolls back with everything else, so a failed step
+   * releases the seq and the next event is given the same one. Reproduced
+   * before this was written -- seq 1 went out for a `dispatch`, the step threw,
+   * and seq 1 came back for a `task_failed`. A browser told the first number
+   * would never be shown the second event, which is the exact hole
+   * AUTOINCREMENT was chosen to close.
+   *
+   * Listeners here fire from the after-commit queue, so they cannot observe a
+   * sequence the log might still reuse.
+   */
+  onAppended(listener: (event: FleetEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
   /**
    * Appends one event, or returns the existing one with the same key.
    *
@@ -78,7 +103,22 @@ export class FleetEventLog {
           key ?? null,
         ) as Row | undefined;
       if (!row) refuse('The fleet event was not written.');
-      return { event: toEvent(row), created: true };
+      const event = toEvent(row);
+      // Deferred, not called: see onAppended. Nothing fires for the idempotent
+      // path above, because nothing was appended.
+      onCommit(this.db, () => {
+        // Guarded per listener, not around the loop. Found by the test below:
+        // one wrapper around the whole fan-out meant the first subscriber to
+        // throw swallowed the event for every subscriber after it.
+        for (const listener of this.listeners) {
+          try {
+            listener(event);
+          } catch {
+            /* a subscriber's problem, not the log's */
+          }
+        }
+      });
+      return { event, created: true };
     });
   }
 

@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { transact } from '../src/store/db.js';
 import { FleetEventLog } from '../src/store/events.js';
 import { openFleetStore, type FleetStore } from '../src/store/index.js';
 
@@ -212,5 +213,164 @@ describe('the fleet event log', () => {
     expect(log.append({ missionId: 'm1', actor: 'system', kind: 'after-close', payload: null }).ok).toBe(false);
     expect(log.since(0).ok).toBe(false);
     expect(log.latestSeq().ok).toBe(false);
+  });
+});
+
+describe('a sequence number nobody can act on too early', () => {
+  /**
+   * `seq` is AUTOINCREMENT so a client holding "I have seen up to N" can never
+   * be shown a different event at N or below. sqlite_sequence is an ordinary
+   * table, though, so its bump rolls back with everything else — which means
+   * the number is only true once the transaction that produced it commits.
+   */
+  it('reuses a sequence released by a rolled-back step, which is why publishing waits', () => {
+    // The defect itself, pinned as the reason the queue exists. If SQLite ever
+    // stops reusing the number this test fails and onAppended can be simplified
+    // away; until then it cannot.
+    const fleet = store();
+    let handedOut = 0;
+    const step = transact(fleet.db, 'one larger atomic step', () => {
+      const appended = value(
+        fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'dispatch', payload: {} }),
+      );
+      handedOut = appended.event.seq;
+      throw new Error('the step failed after the event was appended');
+    });
+    expect(step.ok).toBe(false);
+
+    const next = value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'task_failed', payload: {} }));
+    expect(next.event.seq).toBe(handedOut);
+    expect(next.event.kind).not.toBe('dispatch');
+  });
+
+  it('tells a subscriber nothing about an event that never landed', () => {
+    const fleet = store();
+    const seen: string[] = [];
+    fleet.events.onAppended((event) => seen.push(`${event.seq}:${event.kind}`));
+
+    transact(fleet.db, 'a step that fails', () => {
+      value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'dispatch', payload: {} }));
+      throw new Error('failed after appending');
+    });
+    expect(seen).toEqual([]);
+
+    value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'task_failed', payload: {} }));
+    // The number the rolled-back append was given, now carrying the event that
+    // really has it. A subscriber told the first one would have been wrong.
+    expect(seen).toEqual(['1:task_failed']);
+  });
+
+  it('holds a subscriber until the OUTERMOST step commits, not the inner one', () => {
+    const fleet = store();
+    const seen: number[] = [];
+    fleet.events.onAppended((event) => seen.push(event.seq));
+
+    const outcome = transact(fleet.db, 'outer', () => {
+      value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'a', payload: {} }));
+      expect(seen, 'the inner append committed a savepoint, not the transaction').toEqual([]);
+      value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'b', payload: {} }));
+      expect(seen).toEqual([]);
+      return 'done';
+    });
+    expect(outcome).toEqual({ ok: true, value: 'done' });
+    expect(seen).toEqual([1, 2]);
+  });
+
+  it('drops only what the failed inner step registered', () => {
+    // A savepoint rollback undoes its own work and leaves the outer transaction
+    // open and intact, which is what a caller that means to carry on after a
+    // refused step needs. The queue has to behave the same way.
+    const fleet = store();
+    const seen: string[] = [];
+    fleet.events.onAppended((event) => seen.push(event.kind));
+
+    transact(fleet.db, 'outer', () => {
+      value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'kept', payload: {} }));
+      const inner = transact(fleet.db, 'inner', () => {
+        value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'dropped', payload: {} }));
+        throw new Error('inner step refused');
+      });
+      expect(inner.ok).toBe(false);
+      value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'also-kept', payload: {} }));
+      return true;
+    });
+    expect(seen).toEqual(['kept', 'also-kept']);
+    expect(value(fleet.events.since(0)).map((e) => e.kind)).toEqual(['kept', 'also-kept']);
+  });
+
+  it('fires immediately when there is no transaction to wait for', () => {
+    const fleet = store();
+    const seen: number[] = [];
+    fleet.events.onAppended((event) => seen.push(event.seq));
+    // append() opens its own transaction and commits it, so by the time it
+    // returns the work is durable and the subscriber has already been told.
+    const appended = value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'a', payload: {} }));
+    expect(seen).toEqual([appended.event.seq]);
+  });
+
+  it('says nothing when an append was deduplicated, because nothing was appended', () => {
+    const fleet = store();
+    const seen: number[] = [];
+    fleet.events.onAppended((event) => seen.push(event.seq));
+    const first = value(
+      fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'a', payload: {}, idempotencyKey: 'k' }),
+    );
+    const again = value(
+      fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'a', payload: {}, idempotencyKey: 'k' }),
+    );
+    expect(again.created).toBe(false);
+    expect(seen).toEqual([first.event.seq]);
+  });
+
+  it('survives a subscriber that throws, and still tells the others', () => {
+    // These run on the write path. A broken listener must not be able to fail
+    // the append that already committed.
+    const fleet = store();
+    const seen: number[] = [];
+    fleet.events.onAppended(() => {
+      throw new Error('a subscriber blew up');
+    });
+    fleet.events.onAppended((event) => seen.push(event.seq));
+    const appended = fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'a', payload: {} });
+    expect(appended.ok).toBe(true);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('stops telling a subscriber that unsubscribed', () => {
+    const fleet = store();
+    const seen: number[] = [];
+    const off = fleet.events.onAppended((event) => seen.push(event.seq));
+    value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'a', payload: {} }));
+    off();
+    value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'b', payload: {} }));
+    expect(seen).toHaveLength(1);
+  });
+});
+
+describe('a transaction this module did not open', () => {
+  it('nests under a raw BEGIN instead of failing on a second one', () => {
+    // `db` is exposed for exactly this, and before isTransaction was consulted
+    // the documented escape hatch and the documented reentrancy could not be
+    // used together: the repository method issued a second BEGIN and failed
+    // with "cannot start a transaction within a transaction".
+    const fleet = store();
+    fleet.db.exec('BEGIN IMMEDIATE');
+    const appended = fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'a', payload: {} });
+    expect(appended.ok, appended.ok ? '' : appended.message).toBe(true);
+    fleet.db.exec('ROLLBACK');
+    expect(value(fleet.events.since(0))).toEqual([]);
+  });
+
+  it('does not publish from inside one either', () => {
+    const fleet = store();
+    const seen: number[] = [];
+    fleet.events.onAppended((event) => seen.push(event.seq));
+    fleet.db.exec('BEGIN IMMEDIATE');
+    value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'a', payload: {} }));
+    expect(seen, 'the raw transaction has not committed').toEqual([]);
+    fleet.db.exec('ROLLBACK');
+    // Late or never is safe; the next resync repairs a missed broadcast. Early
+    // hands a client a number the log will reuse.
+    expect(seen).toEqual([]);
   });
 });

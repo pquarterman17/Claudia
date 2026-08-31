@@ -47,6 +47,40 @@ async function git(cwd: string, args: string[]): Promise<string | null> {
 }
 
 /**
+ * The working-tree diff, for handing one agent another's actual work.
+ *
+ * Staged and unstaged together (`HEAD`), so a session that staged something
+ * mid-task is still fully described. Untracked files are NOT included: git
+ * cannot diff what it has never seen, and listing them by name is more useful
+ * than pasting whole new files into a prompt.
+ *
+ * Bounded, and says so when it truncates. A diff is going into a prompt whose
+ * budget belongs to somebody else's turn, and a silent cut would have the
+ * reviewing agent confidently critique half a change.
+ */
+/** What `readDiff` says when nothing is uncommitted. Exported so callers can
+ * recognise it rather than matching the sentence themselves. */
+export const NO_TRACKED_CHANGES = '(no tracked changes)';
+
+/** True when a diff has something in it worth another agent's turn. An
+ * untracked-file listing counts; the bare marker does not. */
+export function hasReviewableChanges(diff: string | null | undefined): boolean {
+  return diff !== null && diff !== undefined && diff.trim() !== '' && diff.trim() !== NO_TRACKED_CHANGES;
+}
+
+export async function readDiff(cwd: string, maxChars = 60_000): Promise<string | null> {
+  const diff = await git(cwd, ['diff', 'HEAD']);
+  if (diff === null) return null;
+  const untracked = (await git(cwd, ['ls-files', '--others', '--exclude-standard'])) ?? '';
+  const names = untracked.split('\n').filter((n) => n.trim() !== '');
+  const listed = names.length > 0 ? `\n\nUntracked files not shown in the diff:\n${names.map((n) => `- ${n}`).join('\n')}` : '';
+  const body = diff.trim() === '' ? NO_TRACKED_CHANGES : diff;
+  const full = `${body}${listed}`;
+  if (full.length <= maxChars) return full;
+  return `${full.slice(0, maxChars)}\n\n[diff truncated at ${maxChars} characters — ${full.length} in total]`;
+}
+
+/**
  * Git state cached per DIRECTORY, not per session.
  *
  * Several tiles routinely share one repository — that is the whole point of

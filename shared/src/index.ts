@@ -350,6 +350,7 @@ export interface TokenCounts {
 // Re-exported so `@claudia/shared` keeps one entry point; also imported as
 // types because the protocol definitions below reference them directly.
 export * from './usage.js';
+export * from './orchestration.js';
 export * from './protocol.js';
 import type { PlanTier, UsageSnapshot } from './usage.js';
 

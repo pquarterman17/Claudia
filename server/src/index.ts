@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { commitAndPush } from './commit-action.js';
+import { Orchestrators } from './orchestrators.js';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
 import { createHookHandler } from './hook-endpoint.js';
@@ -95,7 +96,13 @@ const trigger = new TriggerEngine({
 trigger.setChain(saved.finishChain);
 
 const manager = new SessionManager({
-  onUpdate: (session) => gateway.broadcast({ type: 'session_upsert', session }),
+  onUpdate: (session) => {
+    // Before the broadcast: a session owned by an unattended run and parked on
+    // an approval has no other signal, and a run that waits for a human it does
+    // not have is deadlocked rather than slow.
+    orchestrators.onSessionUpdate(session);
+    gateway.broadcast({ type: 'session_upsert', session });
+  },
   onFeed: (sessionId, step) => gateway.broadcast({ type: 'feed_append', sessionId, step }),
   onFeedPatch: (sessionId, stepId, patch) =>
     gateway.broadcast({ type: 'feed_update', sessionId, stepId, patch }),
@@ -111,11 +118,13 @@ const manager = new SessionManager({
   onRemoved: (sessionId) => gateway.broadcast({ type: 'session_removed', sessionId }),
 });
 
+const orchestrators = new Orchestrators(manager, (event) => gateway.broadcast(event));
+
 const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: usage.snapshot() }));
 usage.setTier(saved.planTier);
 if (saved.customCeilings) usage.setCustomCeilings(saved.customCeilings);
 
-gateway.attach(manager, trigger, usage, settings, monitor);
+gateway.attach(manager, trigger, usage, settings, monitor, orchestrators);
 usage.start();
 
 // One clock drives the countdown; the engine decides whether anything happens.

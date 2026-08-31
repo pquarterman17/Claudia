@@ -2,11 +2,13 @@ import type { ClientCommand, HostPlatform, ServerEvent } from '@claudia/shared';
 import { WebSocket, WebSocketServer } from 'ws';
 import { runBulkOp } from './bulk-ops.js';
 import { buildHello, ownedSessionIds } from './hello-event.js';
+import type { Orchestrators } from './orchestrators.js';
 import { setHookMonitor } from './hook-commands.js';
+import { handleSavedSessionCommand } from './saved-session-commands.js';
 import { handleSessionSettingCommand } from './session-setting-commands.js';
 import { handleSettingsCommand } from './settings-commands.js';
 import type { HookMonitor } from './hook-monitor.js';
-import { isClientLive } from './client-liveness.js';
+import { isClientLive, sessionsToStop } from './client-liveness.js';
 import { pickFolders } from './folder-picker.js';
 import { launchSession, resumeSavedSession } from './launch-session.js';
 import { decideRewind, describeRewind } from './rewind-flow.js';
@@ -24,9 +26,10 @@ export class Gateway {
   private trigger!: TriggerEngine;
   private usage!: UsageService;
   private settings!: SettingsStore;
+  /** The hook monitor, and whether its global hook is currently installed. */
   private monitor!: HookMonitor;
-  /** Whether the global hook is installed, as last established. */
   private monitoring = false;
+  private orchestrators!: Orchestrators;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   /** Last time each socket proved a live page was behind it. */
   private lastSeen = new WeakMap<WebSocket, number>();
@@ -47,12 +50,14 @@ export class Gateway {
     usage: UsageService,
     settings: SettingsStore,
     monitor: HookMonitor,
+    orchestrators: Orchestrators,
   ): void {
     this.manager = manager;
     this.trigger = trigger;
     this.usage = usage;
     this.settings = settings;
     this.monitor = monitor;
+    this.orchestrators = orchestrators;
     // Re-evaluate periodically: a socket going stale produces no event of its own.
     this.sweepTimer = setInterval(() => this.onClientCountChanged(), 5_000);
     this.sweepTimer.unref?.();
@@ -68,7 +73,12 @@ export class Gateway {
         platform: this.platform,
         port: this.port,
       })
-        .then((hello) => this.sendTo(socket, hello))
+        .then((hello) => {
+          this.sendTo(socket, hello);
+          // After hello, never before: a run's status references sessions the
+          // board has to already know about.
+          this.orchestrators.replay((event) => this.sendTo(socket, event));
+        })
         .catch(() => undefined);
       this.lastSeen.set(socket, Date.now());
       this.onClientCountChanged();
@@ -131,10 +141,14 @@ export class Gateway {
 
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined;
-      const live = this.manager.summaries().filter((s) => s.state !== 'stopped');
-      if (live.length === 0) return;
-      console.log(`[claudia] no browser for ${graceSec}s — stopping ${live.length} session(s)`);
-      for (const summary of live) this.manager.get(summary.id)?.stop();
+      const busy = this.orchestrators.activeSessionIds();
+      const stopping = sessionsToStop(this.manager.summaries(), busy);
+      if (stopping.length === 0) {
+        if (busy.size > 0) console.log(`[claudia] no browser, but ${busy.size} session(s) are mid-run — kept`);
+        return;
+      }
+      console.log(`[claudia] no browser for ${graceSec}s — stopping ${stopping.length} session(s)`);
+      for (const id of stopping) this.manager.get(id)?.stop();
     }, graceSec * 1000);
   }
 
@@ -189,6 +203,8 @@ export class Gateway {
     // One-session setting changes and preference writes each share one shape,
     // and each lives in its own module.
     if (handleSessionSettingCommand(cmd, this.manager)) return;
+    if (handleSavedSessionCommand(cmd, { manager: this.manager, settings: this.settings, reply: (e) => this.sendTo(socket, e) })) return;
+    if (this.orchestrators.handle(cmd)) return;
     if (
       handleSettingsCommand(cmd, {
         settings: this.settings,
@@ -215,24 +231,6 @@ export class Gateway {
               message: err instanceof Error ? err.message : 'The session could not be launched.',
             });
           });
-        return;
-      case 'list_saved_sessions':
-        void allSavedSessions(cmd.cwd).then((sessions) => this.sendTo(socket, { type: 'saved_sessions', sessions }));
-        return;
-      case 'get_saved_session_detail':
-        void savedSessionDetail(cmd.sessionId, cmd.cwd).then((checkpoints) =>
-          this.sendTo(socket, { type: 'saved_session_detail', sessionId: cmd.sessionId, checkpoints }),
-        );
-        return;
-      case 'resume_saved_session':
-      case 'fork_saved_session':
-        resumeSavedSession(cmd, this.manager, this.settings);
-        return;
-      case 'rename_saved_session':
-        void retitleSavedSession(cmd.sessionId, cmd.title, cmd.cwd).then(() => this.dispatch({ type: 'list_saved_sessions', cwd: cmd.cwd }, socket));
-        return;
-      case 'tag_saved_session':
-        void retagSavedSession(cmd.sessionId, cmd.tag, cmd.cwd).then(() => this.dispatch({ type: 'list_saved_sessions', cwd: cmd.cwd }, socket));
         return;
       case 'rewind_files': {
         const session = this.manager.get(cmd.sessionId);

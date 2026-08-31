@@ -16,7 +16,7 @@ architecture does not. The Claude Design export that started this is deliberatel
   child-run, worktree, and fleet-event management. Planning complete; implementation not started.
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
-genuinely new work or was deliberately deferred for a decision. 805 tests, clean typecheck.
+genuinely new work or was deliberately deferred for a decision. 847 tests, clean typecheck.
 Everything so far was built and verified on Windows only — see #13.
 
 ---
@@ -161,6 +161,85 @@ Recording these so they are not rediscovered as bugs:
   construction; Claudia is not the Claude Code product.
 
 ## Completed
+
+- ~~**Crew — one objective, split by an agent, worked in parallel**~~ (2026-08-30, owner ask) —
+  the second half of the Argus-shaped ask the debate did not cover: not a pair relaying, but a
+  fleet. The owner was cutting a job into pieces by hand and feeding one piece to each window.
+  Now `crew-plan.ts` asks an agent to split the objective (at most 5 pieces, fewer allowed), and
+  each piece gets its own agent and its own **git worktree on its own branch**.
+  **Isolation is the whole reason this is defensible.** Several agents editing one working tree
+  at the same time overwrite each other with NO error and no way to tell afterwards which change
+  lost — the failure is silent and unattributable, which is the worst kind. `worktree.ts` was
+  already there for a different feature; this is the use that makes parallelism safe rather than
+  reckless. The one thing deliberately NOT parallel is opening the checkouts: `git worktree add`
+  takes the repository lock, so five at once means four failing on a lock they cannot see.
+  Pinned in the tests, since it looks like a missed optimisation.
+  Two prompt lessons carried over from the debate, both about what a model does when unsupervised.
+  It over-splits (listing feels like working), so the cap is stated as a maximum and fewer is
+  explicitly permitted. And it splits by ACTIVITY — "write the tests", "write the docs" — which
+  produces pieces that cannot start until another finishes; the split prompt asks for
+  independence in those words, and forbids activity splits by name.
+  The parser is forgiving about decoration and strict about structure: `- **TASK:** x` is a task
+  (a model asked for a plain line bullets and bolds it anyway, and rejecting a good plan over
+  asterisks would be the dumbest available failure), but loose prose is never promoted to a task
+  — the caller can fall back, it cannot un-launch an agent. When nothing parses, ONE agent takes
+  the whole objective: an error after a paid planning turn is strictly worse than what the owner
+  would have had without the feature.
+  `orchestrators.ts` now fronts both kinds of run, because gateway.ts needs exactly four things
+  from each (owned sessions, session updates, replay, one command) and it has hit the size
+  ceiling five times. That replay also fixed a real gap the debate shipped with: **a run outlived
+  the socket that started it, but nothing sent it to a browser that connected later** — a reload
+  mid-run showed an empty panel. `debate-approvals.ts` became `unattended-approvals.ts` for the
+  same reason: two subsystems with the same problem must not answer it differently.
+  **Verified live, end to end.** A two-area scratch repo, objective "validate the API request
+  bodies, and make the upload survive transient failures": split by area (not activity) into two
+  pieces, both worktrees created, both members working at overlapping times, the original
+  checkout untouched, and a report in the requested shape — CONFLICTS correctly "none, the two
+  changes touch disjoint files", NEEDS YOU naming both branches to merge. 2m23s wall clock, no
+  approval ever blocked. Same limit as the debate: Claude-only, since codex is not installed in
+  this container, so the round-robin across agent KINDS is unit-tested but not live.
+- ~~**Cross-agent debate — "let Claude and Codex argue it out"**~~ (2026-08-30, owner ask) —
+  prompted by scape.work, whose pitch is exactly this. The owner was hand-relaying between two
+  agents; the missing primitive turned out to be small and specific: **Claudia's sessions could
+  not talk to each other at all.** Everything else a debate needs — two agents, one directory,
+  shared git state, a board, a feed — was already built, so this is a relay plus a controller
+  rather than a new subsystem.
+  `relay.ts` holds the prompts, pure and tested, because THEY are the feature. Two agents given
+  "what do you think?" produce agreement theatre. What makes a critique load-bearing: the
+  reviewer is told another model wrote the work (told nothing, it assumes the work is its own
+  and defends it), told that agreeing is a permitted answer (otherwise it manufactures
+  objections), and the author is told explicitly NOT to change working code just because it was
+  challenged — an orchestrator that says "address the feedback" produces capitulation, and two
+  agents agreeing on something wrong is the worst available outcome.
+  Bounded three ways because it spends turns on two agents unattended: a 4-round ceiling, a
+  per-turn timeout, and an early stop when the reviewer is satisfied. That satisfaction check is
+  deliberately biased — agreement counts only in the opening sentence and any contrast word
+  vetoes it, because "I agree with the approach, but the retry never backs off" is an objection
+  wearing an agreement as a hat, and matching "i agree" anywhere would have swallowed a real
+  finding.
+  **THREE bugs that only the live run could have found, and each one made the feature dead
+  rather than slow:**
+  1. The idle-stop killed both sessions mid-exchange ("no browser for 30s"), and the debate
+     reported that the author "said nothing". A debate is unattended BY DESIGN, so its sessions
+     are exempt now; the rule is pure in `client-liveness.ts`.
+  2. The author parked on `awaiting_approval` for a **Read**, zero tokens, waiting for a human
+     who by definition is not watching. An orchestrator that cannot clear a read cannot review a
+     repository. `debate-approvals.ts` clears observation-only tools and escalates everything
+     else to `blockedBy` — an allow-list, so a new writing tool arrives escalated rather than
+     pre-approved.
+  3. Then it parked on **Bash**, which the allow-list correctly refused. The fix was not to widen
+     the list (`rm -rf` is Bash too) but the permission MODE: sessions Claudia launches for an
+     exchange now run in `auto`, the mode whose whole job is deciding what genuinely warrants
+     asking. Tiles the user made keep their own mode.
+  **Verified live, end to end, on a planted diff** (a retry loop with three real defects): the
+  reviewer caught all three, the author rewrote the file in response — try/catch around fetch,
+  exponential backoff, fail-fast on 4xx — and the verdict came back in the requested shape,
+  "AGREED / CHANGED / DISPUTED: nothing / NEEDS YOU: nothing". The human relayed nothing.
+  LIMIT worth naming: this was Claude↔Claude, because codex is not installed in this container.
+  Every part except the second driver kind is exercised; the cross-AGENT half is unverified.
+  Still open at the time from the owner's Argus-shaped ask: child agents beyond a pair, and an
+  objective the orchestrator decomposes itself. Both are the Crew entry above.
+
 
 - ~~**The .bat launcher never opened the browser**~~ (2026-08-30, owner report) — reported as
   "requires me to copy/paste the URL", and the cause was two Windows-only faults stacked.

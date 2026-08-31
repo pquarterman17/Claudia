@@ -15,7 +15,8 @@
     "dev:server": "npm run dev -w server",
     "dev:web": "npm run dev -w web",
     "build": "npm run build -w shared && npm run build -w web",
-    "typecheck": "tsc -b shared server web",
+    "typecheck": "tsc -b shared server web && npm run typecheck:tests",
+    "typecheck:tests": "tsc -p server/tsconfig.test.json && tsc -p web/tsconfig.test.json",
     "test": "npm run test -w server && npm run test -w web",
     "start": "node scripts/ensure-build.mjs && npm run start -w server",
     "tauri": "tauri"

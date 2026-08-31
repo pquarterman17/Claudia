@@ -106,6 +106,7 @@ describe('CodexDriver startup', () => {
   it('surfaces a missing install as a session error instead of throwing', async () => {
     const driver = new CodexDriver({
       cwd: '/repo',
+      permissionMode: 'default',
       onApproval: noopApproval,
       spawn: () => {
         throw new CodexNotInstalledError();
@@ -122,7 +123,7 @@ describe('CodexDriver startup', () => {
 
   it('surfaces an async ENOENT from the child process the same way', async () => {
     const fp = fakeProcess();
-    const driver = new CodexDriver({ cwd: '/repo', onApproval: noopApproval, spawn: () => fp.proc });
+    const driver = new CodexDriver({ cwd: '/repo', permissionMode: 'default', onApproval: noopApproval, spawn: () => fp.proc });
     fp.failExit(new CodexNotInstalledError());
     const { value } = await driver[Symbol.asyncIterator]().next();
     expect(value.errorMessage).toMatch(/not installed/i);
@@ -130,7 +131,7 @@ describe('CodexDriver startup', () => {
 
   it('treats a nonzero exit as a session error but a clean exit as just ending', async () => {
     const fp = fakeProcess();
-    const driver = new CodexDriver({ cwd: '/repo', onApproval: noopApproval, spawn: () => fp.proc });
+    const driver = new CodexDriver({ cwd: '/repo', permissionMode: 'default', onApproval: noopApproval, spawn: () => fp.proc });
     fp.settleExit({ code: 1, stderr: 'panic: thread crashed' });
     const { value } = await driver[Symbol.asyncIterator]().next();
     expect(value).toMatchObject({ state: 'error', errorMessage: 'panic: thread crashed' });
@@ -140,7 +141,7 @@ describe('CodexDriver startup', () => {
 describe('CodexDriver message flow', () => {
   it('forwards a server notification as a RoutedMessage, unmodified by the driver', async () => {
     const fp = fakeProcess();
-    const driver = new CodexDriver({ cwd: '/repo', onApproval: noopApproval, spawn: () => fp.proc });
+    const driver = new CodexDriver({ cwd: '/repo', permissionMode: 'default', onApproval: noopApproval, spawn: () => fp.proc });
     const iter = driver[Symbol.asyncIterator]();
     fp.emit({ method: 'thread/started', params: { threadId: 'th_abc' } });
     const { value } = await iter.next();
@@ -149,7 +150,7 @@ describe('CodexDriver message flow', () => {
 
   it('sendPrompt starts a thread, then the turn, once the thread id comes back', async () => {
     const fp = fakeProcess();
-    const driver = new CodexDriver({ cwd: '/repo', onApproval: noopApproval, spawn: () => fp.proc });
+    const driver = new CodexDriver({ cwd: '/repo', permissionMode: 'default', onApproval: noopApproval, spawn: () => fp.proc });
 
     driver.sendPrompt('do the thing');
     await vi.waitFor(() => expect(fp.sent.some((f) => f['method'] === 'thread/start')).toBe(true));
@@ -158,7 +159,12 @@ describe('CodexDriver message flow', () => {
       // `cwd`, not `workingDirectory`: verified against the real app-server,
       // which ignores unknown keys silently rather than complaining.
       cwd: '/repo',
-      approvalPolicy: 'on-request',
+      // 'untrusted', because the driver above is constructed with the
+      // 'default' mode. This asserted 'on-request' until the tests were
+      // type-checked: `permissionMode` is required and was absent, so the
+      // driver fell through codexPermissions' `default:` arm -- the mapping
+      // for 'auto' -- and the test pinned a policy for a mode it never named.
+      approvalPolicy: 'untrusted',
       sandbox: 'workspace-write',
     });
     fp.emit({ id: startReq['id'], result: { threadId: 'th_9' } });
@@ -170,7 +176,7 @@ describe('CodexDriver message flow', () => {
 
   it('a second sendPrompt reuses the thread instead of starting another one', async () => {
     const fp = fakeProcess();
-    const driver = new CodexDriver({ cwd: '/repo', onApproval: noopApproval, spawn: () => fp.proc });
+    const driver = new CodexDriver({ cwd: '/repo', permissionMode: 'default', onApproval: noopApproval, spawn: () => fp.proc });
     driver.sendPrompt('first');
     await vi.waitFor(() => expect(fp.sent.some((f) => f['method'] === 'thread/start')).toBe(true));
     const startReq = fp.sent.find((f) => f['method'] === 'thread/start')!;
@@ -184,7 +190,7 @@ describe('CodexDriver message flow', () => {
 
   it('interrupt is a no-op before any turn has started', async () => {
     const fp = fakeProcess();
-    const driver = new CodexDriver({ cwd: '/repo', onApproval: noopApproval, spawn: () => fp.proc });
+    const driver = new CodexDriver({ cwd: '/repo', permissionMode: 'default', onApproval: noopApproval, spawn: () => fp.proc });
     await expect(driver.interrupt()).resolves.toBeUndefined();
     // The constructor's handshake request is expected; no turn to cancel yet.
     expect(fp.sent.some((f) => f['method'] === 'turn/interrupt')).toBe(false);
@@ -192,7 +198,7 @@ describe('CodexDriver message flow', () => {
 
   it('close tears down the channel and ends the message stream', async () => {
     const fp = fakeProcess();
-    const driver = new CodexDriver({ cwd: '/repo', onApproval: noopApproval, spawn: () => fp.proc });
+    const driver = new CodexDriver({ cwd: '/repo', permissionMode: 'default', onApproval: noopApproval, spawn: () => fp.proc });
     driver.close();
     expect(fp.closed).toBe(true);
     await expect(driver[Symbol.asyncIterator]().next()).resolves.toMatchObject({ done: true });

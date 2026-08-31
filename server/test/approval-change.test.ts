@@ -11,8 +11,11 @@ describe('approvalChange', () => {
   it('bounds large Write content', () => {
     const change = approvalChange('Write', { file_path: '/repo/a.ts', content: 'x'.repeat(1_001) });
     expect(change?.kind).toBe('write');
-    expect(change?.after).toHaveLength(1_002);
-    expect(change?.truncated).toBe(true);
+    // Narrowed rather than reached through: `after` is on the file arm of
+    // ApprovalChange and not on the plan arm.
+    if (change?.kind !== 'write') throw new Error('expected a write preview');
+    expect(change.after).toHaveLength(1_002);
+    expect(change.truncated).toBe(true);
   });
 
   it('does not make a preview from unrecognised tools or malformed fields', () => {

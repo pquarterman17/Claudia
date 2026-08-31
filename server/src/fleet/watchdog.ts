@@ -1,0 +1,257 @@
+import type { ChildRun, EscalationSeverity } from '@claudia/shared';
+import { escalationKey } from './capabilities.js';
+import { dispatchKey } from './reconcile.js';
+
+/**
+ * Noticing that a child has stopped being useful.
+ *
+ * An unattended fleet's characteristic failure is not a crash — a crash is
+ * loud and the run ends. It is a child that is technically alive and getting
+ * nowhere: parked on an approval nobody will answer, looping, or silent
+ * because the process died underneath its record. All three look identical
+ * from the board ("running"), and all three burn a concurrency slot forever.
+ *
+ * Deliberately deterministic: no jitter, no clock reads, no randomness. A
+ * watchdog that behaves differently on two identical inputs cannot be reasoned
+ * about at three in the morning, and the thing it guards is a bounded retry
+ * loop — the one place where being wrong costs money on every iteration.
+ */
+
+export interface WatchdogPolicy {
+  /** No output at all for this long is treated as silence, not thinking. */
+  silentAfterMs: number;
+  /** A pending approval older than this will not be answered by anyone. */
+  approvalStuckAfterMs: number;
+  maxAttempts: number;
+  /** First retry delay; doubles per attempt up to retryMaxMs. */
+  retryBaseMs: number;
+  retryMaxMs: number;
+}
+
+export const DEFAULT_WATCHDOG: WatchdogPolicy = {
+  // Generous: a long build or a big refactor legitimately goes quiet, and a
+  // watchdog that kills real work is worse than one that reacts late.
+  silentAfterMs: 15 * 60_000,
+  // Shorter, because a parked approval is not work in progress — nothing is
+  // happening and nothing will until a human acts.
+  approvalStuckAfterMs: 5 * 60_000,
+  maxAttempts: 3,
+  retryBaseMs: 30_000,
+  retryMaxMs: 10 * 60_000,
+};
+
+export interface RunObservation {
+  run: ChildRun;
+  /** The session still exists in the manager. */
+  sessionAlive: boolean;
+  /** When the session last produced anything at all. */
+  lastActivityAt?: number;
+  /** The highest attempt any run for this task has spent. Absent falls back to
+   * this run's own attempt — but then the watchdog and the reconciler can
+   * disagree about whether a task is exhausted, and propose an attempt number
+   * that is already taken. */
+  attemptsSpent?: number;
+  /** Tool name it is parked on, when it is parked. */
+  pendingApproval?: string;
+  /** When it parked. */
+  pendingSince?: number;
+  now: number;
+}
+
+export type RunHealth =
+  | { kind: 'healthy' }
+  | { kind: 'finished' }
+  | { kind: 'orphaned'; reason: string }
+  /** `tool` is the STABLE identity of what it is stuck on. `reason` contains
+   * an elapsed time and therefore changes every tick, so anything derived
+   * from it drifts — which is how the escalation key defeated its own
+   * deduplication. */
+  | { kind: 'stuck'; reason: string; tool: string }
+  | { kind: 'silent'; reason: string };
+
+/**
+ * What is actually wrong with one run, in the order that matters.
+ *
+ * Order is deliberate: a run whose session is gone is orphaned even if it also
+ * looks silent, because the fix is different. Reporting the shallower symptom
+ * would send the retry logic down the wrong path.
+ */
+export function assess(observation: RunObservation, policy: WatchdogPolicy = DEFAULT_WATCHDOG): RunHealth {
+  const { run, now } = observation;
+  if (run.state === 'stopped' || run.state === 'failed' || run.state === 'reported') {
+    return { kind: 'finished' };
+  }
+  if (!observation.sessionAlive) {
+    return { kind: 'orphaned', reason: 'the record says running but the session is gone' };
+  }
+  if (observation.pendingApproval && observation.pendingSince !== undefined) {
+    const waited = now - observation.pendingSince;
+    if (waited >= policy.approvalStuckAfterMs) {
+      return {
+        kind: 'stuck',
+        reason: `waiting ${minutes(waited)} for approval of ${observation.pendingApproval}`,
+        tool: observation.pendingApproval,
+      };
+    }
+    // Parked but not yet long enough to call it: still healthy, and saying so
+    // keeps a slow human from being treated as a fault.
+    return { kind: 'healthy' };
+  }
+  if (observation.pendingApproval) {
+    // Parked, with no record of when. Treated as stuck rather than falling
+    // through to the silence check, which would RETRY it — spending a fresh
+    // turn that parks on the same approval. Not knowing how long it has waited
+    // is not evidence that it has not waited long.
+    return {
+      kind: 'stuck',
+      reason: `waiting for approval of ${observation.pendingApproval}`,
+      tool: observation.pendingApproval,
+    };
+  }
+  const since = observation.lastActivityAt ?? run.startedAt;
+  const quiet = now - since;
+  if (quiet >= policy.silentAfterMs) {
+    return { kind: 'silent', reason: `nothing for ${minutes(quiet)}` };
+  }
+  return { kind: 'healthy' };
+}
+
+export type WatchdogAction =
+  | { kind: 'wait' }
+  /**
+   * `key` and `notBefore` are what stop a tick becoming a launch.
+   *
+   * Found in review: every tick over the same silent run returned the same
+   * retry, so a pulse each minute would start a new session each minute. The
+   * key is derived, so repeated ticks collide on one reservation; `notBefore`
+   * is when the backoff actually expires, so a caller that has not yet reached
+   * it does nothing at all.
+   */
+  | {
+      kind: 'retry';
+      afterMs: number;
+      notBefore: number;
+      attempt: number;
+      reason: string;
+      key: string;
+      /** The state the OLD run must be written to before the retry starts.
+       * Without it the dead run stays `running` and the reconciler counts its
+       * slot as occupied forever — a wedge that reads as a busy fleet. */
+      terminal: 'failed';
+    }
+  | { kind: 'escalate'; request: string; reason: string; severity: EscalationSeverity; key: string }
+  /** Terminal for the same reason as retry: giving up on a run must not leave
+   * it holding a concurrency slot for the life of the mission. */
+  | { kind: 'give_up'; reason: string; terminal: 'failed' };
+
+/**
+ * When the run stopped being useful — the fixed point a backoff counts from.
+ *
+ * A run that ended has an end time. One that is merely silent has not ended,
+ * so the anchor is when it last did anything; failing that, when it started.
+ * None of these change between ticks, which is the whole requirement.
+ */
+export function retryAnchor(observation: RunObservation): number {
+  return observation.run.endedAt ?? observation.lastActivityAt ?? observation.run.startedAt;
+}
+
+/** When the fault this action answers first became visible. */
+function faultAt(health: RunHealth, observation: RunObservation, policy: WatchdogPolicy): number {
+  const anchor = retryAnchor(observation);
+  return health.kind === 'silent' ? anchor + policy.silentAfterMs : anchor;
+}
+
+/** The reservation key for one retry of one run. Derived, never random. */
+export function retryKey(runId: string, attempt: number): string {
+  return `retry:${runId}:${attempt}`;
+}
+
+/**
+ * What to do about it.
+ *
+ * Split from `assess` because "what is wrong" and "what may be done about it"
+ * answer to different things: the first is observation, the second is policy,
+ * and only the second is allowed to spend another attempt.
+ *
+ * A stuck approval is escalated rather than retried — retrying would park on
+ * the same approval, at full price, and the plan is explicit that a child
+ * cannot grant itself a capability. Only a human clears that.
+ */
+export function nextAction(
+  health: RunHealth,
+  observation: RunObservation,
+  policy: WatchdogPolicy = DEFAULT_WATCHDOG,
+): WatchdogAction {
+  const { run } = observation;
+  if (health.kind === 'healthy' || health.kind === 'finished') return { kind: 'wait' };
+
+  if (health.kind === 'stuck') {
+    return {
+      kind: 'escalate',
+      request: health.reason,
+      reason: 'only a human can clear an approval, and retrying would park on the same one',
+      severity: 'blocking',
+      // Keyed on the TOOL, not the reason. The reason carries an elapsed time,
+      // so keying on it produced a new key every tick — sixty distinct
+      // "duplicates" an hour, which is exactly what the key was added to stop.
+      key: escalationKey(run.id, health.tool),
+    };
+  }
+
+  // Counted over the TASK, not this run. The reconciler bounds retries by the
+  // highest attempt any of the task's runs has spent; counting from one run
+  // let the watchdog propose an attempt another run already holds, and call a
+  // task retryable that the reconciler had already blocked.
+  const spent = Math.max(run.attempt, observation.attemptsSpent ?? run.attempt);
+  const next = spent + 1;
+  if (next > policy.maxAttempts) {
+    return {
+      kind: 'give_up',
+      reason: `${spent} attempt${spent === 1 ? '' : 's'} spent on this task; not starting another`,
+      terminal: 'failed',
+    };
+  }
+  const afterMs = backoffMs(run.attempt, policy);
+  return {
+    kind: 'retry',
+    attempt: next,
+    afterMs,
+    // Anchored on something that does not move. Found in review: anchoring on
+    // `now` meant the deadline advanced with every tick and was never reached,
+    // and defaulting `now` to 0 failed the other way — instantly eligible,
+    // forever. All three fallbacks here are fixed points in the run's past, so
+    // ticking more often cannot change when the retry becomes due.
+    // Counted from when the fault became DETECTABLE, not from when activity
+    // stopped. Silence is only declared after `silentAfterMs` (15m), and the
+    // backoff caps at `retryMaxMs` (10m), so anchoring on last activity made
+    // every silent-path deadline already expired — the backoff was structurally
+    // dead on the commonest failure, and only `maxAttempts` bounded anything.
+    notBefore: faultAt(health, observation, policy) + afterMs,
+    reason: health.reason,
+    // The SAME namespace the reconciler reserves in. Two key spaces meant a
+    // watchdog retry and a reconciler dispatch of one task's one attempt could
+    // both be reserved, which is the thing keys exist to prevent.
+    key: dispatchKey(run.missionId, run.taskId, next),
+    terminal: 'failed',
+  };
+}
+
+/**
+ * Exponential, capped, and with no jitter.
+ *
+ * Jitter exists to stop many clients retrying in lockstep. There is one fleet
+ * on one machine, so there is nothing to spread out — and the determinism is
+ * worth more than the property jitter would buy.
+ */
+export function backoffMs(attemptsSoFar: number, policy: WatchdogPolicy = DEFAULT_WATCHDOG): number {
+  const steps = Math.max(0, attemptsSoFar - 1);
+  // Bounded before the shift so a large attempt count cannot overflow into a
+  // negative delay, which would retry instantly and forever.
+  const uncapped = policy.retryBaseMs * 2 ** Math.min(steps, 20);
+  return Math.min(policy.retryMaxMs, uncapped);
+}
+
+function minutes(ms: number): string {
+  const m = Math.floor(ms / 60_000);
+  return m >= 1 ? `${m}m` : `${Math.floor(ms / 1000)}s`;
+}

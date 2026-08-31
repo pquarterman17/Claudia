@@ -6,13 +6,28 @@ import { transact, type StoreResult } from '../src/store/db.js';
 import { openFleetStore, type FleetStore } from '../src/store/index.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'claudia-store-missions-'));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+/**
+ * Every store this file opens, closed before the directory is removed.
+ *
+ * Not defensive tidiness: on Windows an open handle makes `unlink` fail with
+ * EBUSY, so one test forgetting to close fails the whole FILE during teardown
+ * — with every test reported as passing, which is a confusing way to find out.
+ * Linux unlinks open files happily, so this is invisible until CI runs.
+ * Owning cleanup here means a new test cannot reintroduce it by omission.
+ */
+const opened: FleetStore[] = [];
+afterAll(() => {
+  for (const fleet of opened) fleet.close();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 let counter = 0;
 function store(name = `db-${counter++}`): FleetStore {
-  const opened = openFleetStore(join(dir, name, 'fleet.db'));
-  if (!opened.ok) throw new Error(opened.message);
-  return opened.value;
+  const result = openFleetStore(join(dir, name, 'fleet.db'));
+  if (!result.ok) throw new Error(result.message);
+  opened.push(result.value);
+  return result.value;
 }
 
 /** Unwraps a result in a test, where a failure is simply the test failing. */
@@ -452,5 +467,66 @@ describe('durability', () => {
     expect(fleet.missions.list().ok).toBe(false);
     expect(fleet.tasks.create({ missionId: mission.id, title: 'A', description: '', cwd: '/r' }).ok).toBe(false);
     expect(fleet.worktrees.setState('anything', 'idle').ok).toBe(false);
+  });
+});
+
+describe('escalation idempotency', () => {
+  it('returns the existing row rather than filing a second one', () => {
+    // Found in review: the key was returned by a pure helper and the repo
+    // generated a fresh UUID per call, so a pulse each minute filed a new
+    // inbox row each minute. Uniqueness has to live at the write.
+    const fleet = store();
+    const mission = fleet.missions.create({ name: 'm', body: '', cwd: '/repo' });
+    expect(mission.ok).toBe(true);
+    if (!mission.ok) return;
+
+    const raise = () =>
+      fleet.escalations.create({
+        missionId: mission.value.id,
+        source: 'manager',
+        request: 'approve Bash',
+        reason: 'stuck',
+        idempotencyKey: 'escalation:r1:approve Bash',
+      });
+
+    const first = raise();
+    const second = raise();
+    expect(first.ok && second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+    expect(second.value.id).toBe(first.value.id);
+    expect(second.value.createdAt).toBe(first.value.createdAt);
+
+    const all = fleet.escalations.listByMission(mission.value.id);
+    expect(all.ok && all.value).toHaveLength(1);
+  });
+
+  it('still files separate escalations for different conditions', () => {
+    const fleet = store();
+    const mission = fleet.missions.create({ name: 'm', body: '', cwd: '/repo' });
+    if (!mission.ok) return;
+    const raise = (key: string) =>
+      fleet.escalations.create({
+        missionId: mission.value.id,
+        source: 'manager',
+        request: key,
+        reason: 'stuck',
+        idempotencyKey: key,
+      });
+    raise('a');
+    raise('b');
+    const all = fleet.escalations.listByMission(mission.value.id);
+    expect(all.ok && all.value).toHaveLength(2);
+  });
+
+  it('does not deduplicate escalations raised without a key', () => {
+    // A human raising the same concern twice is two concerns.
+    const fleet = store();
+    const mission = fleet.missions.create({ name: 'm', body: '', cwd: '/repo' });
+    if (!mission.ok) return;
+    for (let i = 0; i < 2; i++) {
+      fleet.escalations.create({ missionId: mission.value.id, source: 'human', request: 'r', reason: 'x' });
+    }
+    const all = fleet.escalations.listByMission(mission.value.id);
+    expect(all.ok && all.value).toHaveLength(2);
   });
 });

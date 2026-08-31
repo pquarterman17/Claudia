@@ -313,3 +313,22 @@ describe('found by adversarial review', () => {
     expect(escalationKey('r1', 'a:b')).not.toBe(escalationKey('r1:a', 'b'));
   });
 });
+
+describe('found by adversarial audit', () => {
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])('refuses an unusable byte budget %s', (maxBytes) => {
+    // The trimming loop walks back one code unit at a time while the string is
+    // over budget. With a non-positive budget `''.slice(0, -1)` is `''` and the
+    // condition never goes false: a synchronous infinite loop on the event
+    // loop, from a config value. Confirmed by a subprocess that had to be
+    // killed on a timeout before this guard existed.
+    expect(sanitizeReport('hello world', { maxBytes, maxLines: 400 })).toMatchObject({ ok: false });
+  });
+
+  it.each([0, -1, Number.NaN])('refuses an unusable line budget %s', (maxLines) => {
+    expect(sanitizeReport('a\nb', { maxBytes: 32_768, maxLines })).toMatchObject({ ok: false });
+  });
+
+  it('still accepts the smallest budget that means anything', () => {
+    expect(sanitizeReport('abc', { maxBytes: 1, maxLines: 1 })).toMatchObject({ ok: true, text: 'a', truncated: true });
+  });
+});

@@ -1,4 +1,4 @@
-import type { ChildRun, EscalationSeverity } from '@claudia/shared';
+import type { ChildRun, EscalationSeverity, TaskStatus } from '@claudia/shared';
 import { escalationKey } from './capabilities.js';
 import { dispatchKey } from './reconcile.js';
 
@@ -110,11 +110,47 @@ export function assess(observation: RunObservation, policy: WatchdogPolicy = DEF
   }
   const since = observation.lastActivityAt ?? run.startedAt;
   const quiet = now - since;
+  // An unreadable clock is not evidence of life. Found by audit: `NaN >= x` is
+  // false, so a single bad timestamp made every run healthy forever — the one
+  // fault this module exists to catch, silenced by the arithmetic that catches
+  // it. Treated as silence, because "I cannot tell whether it has been working"
+  // is exactly what silence means here.
+  if (!Number.isFinite(quiet)) {
+    return { kind: 'silent', reason: 'cannot tell when it was last doing anything' };
+  }
   if (quiet >= policy.silentAfterMs) {
     return { kind: 'silent', reason: `nothing for ${minutes(quiet)}` };
   }
   return { kind: 'healthy' };
 }
+
+/**
+ * What the TASK must be written to, and by what route.
+ *
+ * Found by audit: both `retry` and `give_up` said what becomes of the run and
+ * nothing about the task, so applying either left the task `running`. Nothing
+ * in the fleet can move it from there: `reconcile` only ever looks at `ready`
+ * and `blocked`, and the watchdog only ever looks at live runs. It is the
+ * exact wedge `terminal` was added to close, moved from the run row to the
+ * task row — and only a restart clears it, because `recoverTasks` catches
+ * running-with-nothing-running, which means it would only ever be seen in
+ * production.
+ *
+ * Both routes go through `failed` rather than straight to the destination,
+ * because that is what TASK_TRANSITIONS allows from `running` — and because it
+ * is true: the attempt did fail. `recovery.ts` reaches the queue the same way
+ * for the same reason.
+ */
+export interface TaskOutcome {
+  to: TaskStatus;
+  path: readonly TaskStatus[];
+}
+
+/** Back into the queue, so the reconciler can spend the next attempt. */
+const TASK_REQUEUED: TaskOutcome = { to: 'ready', path: ['failed', 'ready'] };
+
+/** Left failed, which a human can still requeue; nothing does it automatically. */
+const TASK_GIVEN_UP: TaskOutcome = { to: 'failed', path: ['failed'] };
 
 export type WatchdogAction =
   | { kind: 'wait' }
@@ -138,11 +174,16 @@ export type WatchdogAction =
        * Without it the dead run stays `running` and the reconciler counts its
        * slot as occupied forever — a wedge that reads as a busy fleet. */
       terminal: 'failed';
+      /** And where the TASK goes, so something can actually pick the retry up.
+       * The key below reserves in the reconciler's namespace, and the
+       * reconciler only dispatches `ready` and `blocked`. */
+      task: TaskOutcome;
     }
   | { kind: 'escalate'; request: string; reason: string; severity: EscalationSeverity; key: string }
   /** Terminal for the same reason as retry: giving up on a run must not leave
-   * it holding a concurrency slot for the life of the mission. */
-  | { kind: 'give_up'; reason: string; terminal: 'failed' };
+   * it holding a concurrency slot for the life of the mission — nor its task
+   * stranded in `running`, which is the same wedge one row over. */
+  | { kind: 'give_up'; reason: string; terminal: 'failed'; task: TaskOutcome };
 
 /**
  * When the run stopped being useful — the fixed point a backoff counts from.
@@ -209,6 +250,7 @@ export function nextAction(
       kind: 'give_up',
       reason: `${spent} attempt${spent === 1 ? '' : 's'} spent on this task; not starting another`,
       terminal: 'failed',
+      task: TASK_GIVEN_UP,
     };
   }
   const afterMs = backoffMs(run.attempt, policy);
@@ -233,6 +275,7 @@ export function nextAction(
     // both be reserved, which is the thing keys exist to prevent.
     key: dispatchKey(run.missionId, run.taskId, next),
     terminal: 'failed',
+    task: TASK_REQUEUED,
   };
 }
 

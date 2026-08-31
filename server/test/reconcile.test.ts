@@ -428,3 +428,77 @@ describe('found by adversarial review', () => {
     expect(first).toEqual([{ kind: 'hold', reason: 'no task is ready' }]);
   });
 });
+
+describe('found by adversarial audit', () => {
+  it('honours the ceiling the human set on the mission, not just the server policy', () => {
+    // `mission.maxChildren` was persisted, bounded on the way in by the store,
+    // and read by no production code: a mission set to one child dispatched
+    // eight. The same shape `overBudget` already has a comment about — visible
+    // in the UI, settable by a human, enforcing nothing.
+    const tasks = Array.from({ length: 8 }, () => task());
+    const decisions = reconcile({
+      mission: mission({ maxChildren: 1 }),
+      tasks,
+      runs: [],
+      policy: { maxChildren: 8, maxAttempts: 3 },
+    });
+    expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(1);
+  });
+
+  it('takes the lower of the two ceilings, whichever way round they are', () => {
+    const tasks = Array.from({ length: 8 }, () => task());
+    const byPolicy = reconcile({
+      mission: mission({ maxChildren: 8 }),
+      tasks,
+      runs: [],
+      policy: { maxChildren: 2, maxAttempts: 3 },
+    });
+    expect(byPolicy.filter((d) => d.kind === 'dispatch')).toHaveLength(2);
+  });
+
+  it('will not dispatch on a spend it cannot read', () => {
+    // NaN >= x is false, so an unreadable number switched both budgets off
+    // silently. `tokens` is summed from model usage, where one missing field
+    // produces NaN — the fleet would have run to exhaustion with a ceiling set.
+    for (const spend of [
+      { elapsedSec: Number.NaN, tokens: 0 },
+      { elapsedSec: 0, tokens: Number.NaN },
+    ]) {
+      const decisions = reconcile({
+        mission: mission({ budgetSec: 600, budgetTokens: 1000 }),
+        tasks: [task()],
+        runs: [],
+        policy: POLICY,
+        spend,
+      });
+      expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(0);
+      expect(decisions[0]).toMatchObject({ kind: 'hold' });
+      expect(decisions[0]?.kind === 'hold' && decisions[0].reason).toMatch(/cannot read/);
+    }
+  });
+
+  it('says which of the two it could not read', () => {
+    const decisions = reconcile({
+      mission: mission({ budgetTokens: 1000 }),
+      tasks: [task()],
+      runs: [],
+      policy: POLICY,
+      spend: { elapsedSec: Number.NaN, tokens: Number.NaN },
+    });
+    // Only the token budget is set, so only the token spend is load-bearing:
+    // an unreadable elapsed time with no time budget is not a reason to stop.
+    expect(decisions[0]?.kind === 'hold' && decisions[0].reason).toContain('token spend');
+    expect(decisions[0]?.kind === 'hold' && decisions[0].reason).not.toContain('elapsed');
+  });
+
+  it('still dispatches when the unreadable number is not one being enforced', () => {
+    const decisions = reconcile({
+      mission: mission(),
+      tasks: [task()],
+      runs: [],
+      policy: POLICY,
+      spend: { elapsedSec: Number.NaN, tokens: Number.NaN },
+    });
+    expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(1);
+  });
+});

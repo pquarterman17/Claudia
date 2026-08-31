@@ -39,7 +39,13 @@ export interface AppendedEvent {
 
 /** A page big enough for a normal resync, small enough not to stall a socket. */
 export const DEFAULT_PAGE = 500;
-const MAX_PAGE = 5000;
+
+/**
+ * The largest batch this log will ever return, and therefore the largest
+ * window a resync may plan for. Exported so `maxBatch` can be chosen against
+ * the number the store actually honours rather than guessed.
+ */
+export const MAX_PAGE = 5000;
 
 const COLUMNS = 'seq, mission_id, task_id, run_id, actor, kind, payload, at, idempotency_key';
 
@@ -154,6 +160,50 @@ export class FleetEventLog {
       const rows = this.db
         .prepare(`SELECT ${COLUMNS} FROM fleet_events WHERE task_id = ? AND seq > ? ORDER BY seq LIMIT ?`)
         .all(taskId, afterSeq, page(limit)) as Row[];
+      return rows.map(toEvent);
+    });
+  }
+
+  /**
+   * Exactly the window a resync planned, or a failure saying why not.
+   *
+   * Found by audit: `planResync` produced `{fromSeq: 1, toSeq: 1200,
+   * more: false}` and the caller read it with `sinceForMission(id, 0)`, whose
+   * limit defaults to 500. The store returned 500 events, `replayIsUsable`
+   * on a filtered stream accepted them, and the client was told it was caught
+   * up to 1200 having been sent a third of it — a 700-event hole, which is the
+   * exact silent gap the whole resync design exists to prevent.
+   *
+   * The bug was not the clamp, it was that the limit and the window were two
+   * numbers a caller had to keep equal by hand. This takes the window and
+   * derives the limit, so they cannot disagree; a window bigger than the log
+   * will ever return is refused rather than quietly served short.
+   */
+  replay(window: { fromSeq: number; toSeq: number; missionId?: string; taskId?: string }): StoreResult<FleetEvent[]> {
+    return attempt('replay a window of the fleet log', () => {
+      const { fromSeq, toSeq, missionId, taskId } = window;
+      if (!Number.isSafeInteger(fromSeq) || !Number.isSafeInteger(toSeq) || toSeq < fromSeq) {
+        refuse('That is not a window the log can be read for.');
+      }
+      const size = toSeq - fromSeq + 1;
+      if (size > MAX_PAGE) {
+        refuse(`A replay window of ${size} is larger than the ${MAX_PAGE} events this log will return at once.`);
+      }
+      const filters = ['seq >= ?', 'seq <= ?'];
+      const values: (string | number)[] = [fromSeq, toSeq];
+      if (missionId !== undefined) {
+        filters.push('mission_id = ?');
+        values.push(missionId);
+      }
+      if (taskId !== undefined) {
+        filters.push('task_id = ?');
+        values.push(taskId);
+      }
+      const rows = this.db
+        .prepare(`SELECT ${COLUMNS} FROM fleet_events WHERE ${filters.join(' AND ')} ORDER BY seq LIMIT ?`)
+        // The window is the limit. Asking for one more would be a way to
+        // detect truncation; there is nothing to detect once they are equal.
+        .all(...values, size) as Row[];
       return rows.map(toEvent);
     });
   }

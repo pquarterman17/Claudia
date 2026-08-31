@@ -244,6 +244,14 @@ const CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f\u200e\u200f\u202a-\u202
  */
 export function sanitizeReport(raw: unknown, limits: ReportLimits = DEFAULT_REPORT_LIMITS): SanitizedReport {
   if (typeof raw !== 'string') return { ok: false, reason: 'a report must be text' };
+  // Found by audit: with a non-positive byte budget the trimming loop below
+  // never terminates — `''.slice(0, -1)` is `''`, so the condition stays true
+  // forever. A synchronous infinite loop on the server's event loop, reached
+  // from a config value. `planResync` already refuses an unusable `maxBatch`
+  // for exactly this class; this validated nothing.
+  if (!usableLimit(limits.maxBytes) || !usableLimit(limits.maxLines)) {
+    return { ok: false, reason: 'the report limits are not usable' };
+  }
 
   const stripped = raw.replace(CONTROL_CHARS, '');
   let truncated = false;
@@ -262,6 +270,11 @@ export function sanitizeReport(raw: unknown, limits: ReportLimits = DEFAULT_REPO
     truncated = true;
   }
   return { ok: true, text, truncated };
+}
+
+/** A bound has to be a whole number above zero to be a bound at all. */
+function usableLimit(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0;
 }
 
 /**

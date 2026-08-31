@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { cleanupWorktree } from '../src/fleet/worktree-owner.js';
+import { claimWorktree, cleanupWorktree } from '../src/fleet/worktree-owner.js';
 import { planRecovery } from '../src/fleet/recovery.js';
 import { reconcile } from '../src/fleet/reconcile.js';
 import { openFleetStore, type FleetStore } from '../src/store/index.js';
@@ -189,5 +189,97 @@ describe('cleanup decisions can be applied', () => {
     if (!record) throw new Error('setup');
     const verdict = cleanupWorktree(record, { exists: false }, { busyTaskIds: new Set() });
     expect(verdict).toMatchObject({ kind: 'keep' });
+  });
+});
+
+describe('claim decisions can be applied', () => {
+  /**
+   * The unique index is the second thing a decision has to survive, alongside
+   * the transition tables. `worktrees_live_path` is UNIQUE (path) WHERE
+   * state <> 'removed', so every state but `removed` still owns its path — and
+   * a verdict of `create` there is an insert the store refuses.
+   */
+  it.each(['active', 'idle', 'stale', 'archived'] as const)(
+    'adopts rather than duplicating the row a %s record still holds the path with',
+    (state) => {
+      const fleet = store();
+      const mission = unwrap(fleet.missions.create({ name: 'm', body: '', cwd: '/repo' }));
+      const task = unwrap(
+        fleet.tasks.create({ missionId: mission.id, title: 't', description: '', cwd: '/repo', acceptance: '' }),
+      );
+      const worktree = unwrap(
+        fleet.worktrees.create({
+          repo: '/repo',
+          path: '/wt/one',
+          branch: 'claudia/task-1',
+          baseSha: 'a',
+          ownerMissionId: mission.id,
+          ownerTaskId: task.id,
+          dirty: false,
+        }),
+      );
+      if (state === 'archived') unwrap(fleet.worktrees.setState(worktree.id, 'idle'));
+      if (state !== 'active') unwrap(fleet.worktrees.setState(worktree.id, state));
+
+      const record = unwrap(fleet.worktrees.get(worktree.id));
+      if (!record) throw new Error('setup');
+      const verdict = claimWorktree(
+        { repo: '/repo', path: '/wt/one', branch: 'claudia/task-1', missionId: mission.id, taskId: task.id },
+        record,
+        // The directory is gone: the case that used to answer `create`.
+        { exists: false },
+      );
+      expect(verdict.kind).toBe('adopt');
+      if (verdict.kind !== 'adopt') return;
+
+      for (const step of verdict.path) {
+        const applied = fleet.worktrees.setState(worktree.id, step);
+        expect(applied.ok, `${step}: ${applied.ok ? '' : applied.message}`).toBe(true);
+      }
+      expect(unwrap(fleet.worktrees.get(worktree.id))?.state).toBe('active');
+      // And exactly one row still holds the path, which is the whole point.
+      expect(unwrap(fleet.worktrees.listByMission(mission.id)).filter((w) => w.state !== 'removed')).toHaveLength(1);
+    },
+  );
+
+  it('creates a second row only once the first has actually been removed', () => {
+    const fleet = store();
+    const mission = unwrap(fleet.missions.create({ name: 'm', body: '', cwd: '/repo' }));
+    const task = unwrap(
+      fleet.tasks.create({ missionId: mission.id, title: 't', description: '', cwd: '/repo', acceptance: '' }),
+    );
+    const first = unwrap(
+      fleet.worktrees.create({
+        repo: '/repo',
+        path: '/wt/two',
+        branch: 'b',
+        baseSha: 'a',
+        ownerMissionId: mission.id,
+        ownerTaskId: task.id,
+        dirty: false,
+      }),
+    );
+    unwrap(fleet.worktrees.setState(first.id, 'idle'));
+    unwrap(fleet.worktrees.setState(first.id, 'archived'));
+    unwrap(fleet.worktrees.setState(first.id, 'removed'));
+
+    const record = unwrap(fleet.worktrees.get(first.id));
+    if (!record) throw new Error('setup');
+    const verdict = claimWorktree(
+      { repo: '/repo', path: '/wt/two', branch: 'b', missionId: mission.id, taskId: task.id },
+      record,
+      { exists: false },
+    );
+    expect(verdict.kind).toBe('create');
+    const second = fleet.worktrees.create({
+      repo: '/repo',
+      path: '/wt/two',
+      branch: 'b',
+      baseSha: 'a',
+      ownerMissionId: mission.id,
+      ownerTaskId: task.id,
+      dirty: false,
+    });
+    expect(second.ok, second.ok ? '' : second.message).toBe(true);
   });
 });

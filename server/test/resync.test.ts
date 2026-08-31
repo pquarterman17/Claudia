@@ -1,4 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
+import { DEFAULT_PAGE, MAX_PAGE } from '../src/store/events.js';
+import { openFleetStore, type FleetStore } from '../src/store/index.js';
 import {
   coalesceSnapshots,
   isOverwhelmed,
@@ -15,6 +20,25 @@ import {
  */
 
 const BOUNDS: ResyncBounds = { oldestSeq: 100, newestSeq: 200, maxBatch: 50 };
+
+const dir = mkdtempSync(join(tmpdir(), 'claudia-resync-'));
+const opened: FleetStore[] = [];
+afterAll(() => {
+  for (const fleet of opened) fleet.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+function store(): FleetStore {
+  const result = openFleetStore(join(dir, `db-${opened.length}`, 'fleet.db'));
+  if (!result.ok) throw new Error(result.message);
+  opened.push(result.value);
+  return result.value;
+}
+
+function unwrap<T>(result: { ok: true; value: T } | { ok: false; message: string }): T {
+  if (!result.ok) throw new Error(result.message);
+  return result.value;
+}
 
 describe('planResync', () => {
   it('says nothing to do when the client is current', () => {
@@ -194,5 +218,62 @@ describe('replayIsUsable', () => {
     // The whole reason the two modes exist as separate answers.
     expect(replayIsUsable([101, 103], 101, 103)).toBe(false);
     expect(replayIsUsable([101, 103], 101, 103, 'filtered')).toBe(true);
+  });
+});
+
+describe('the window and the read cannot disagree', () => {
+  /**
+   * Found by audit, and it is the sharpest edge on the filtered path: nothing
+   * in `replayIsUsable` can tell a short batch caused by the store's page
+   * limit from one caused by another mission's events. So the limit stopped
+   * being a second number a caller keeps equal to the window by hand.
+   */
+  it('reads exactly the window that was planned, however large', () => {
+    const fleet = store();
+    for (let i = 0; i < 1200; i++) {
+      unwrap(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'tick', payload: { i } }));
+    }
+    const plan = planResync({ lastSeq: 0 }, { oldestSeq: 1, newestSeq: 1200, maxBatch: 1200 });
+    expect(plan).toMatchObject({ kind: 'replay', fromSeq: 1, toSeq: 1200, more: false });
+    if (plan.kind !== 'replay') return;
+
+    // The old shape of this call: a window of 1200 read with the default page.
+    expect(unwrap(fleet.events.sinceForMission('m1', 0))).toHaveLength(DEFAULT_PAGE);
+
+    const batch = unwrap(fleet.events.replay({ missionId: 'm1', fromSeq: plan.fromSeq, toSeq: plan.toSeq }));
+    expect(batch).toHaveLength(1200);
+    expect(replayIsUsable(batch.map((e) => e.seq), plan.fromSeq, plan.toSeq, 'filtered')).toBe(true);
+  });
+
+  it('refuses a window larger than the log will ever return at once', () => {
+    // Better a named failure than a batch quietly one page long.
+    const fleet = store();
+    const refused = fleet.events.replay({ fromSeq: 1, toSeq: MAX_PAGE + 1 });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.message).toContain(String(MAX_PAGE));
+  });
+
+  it('refuses a window that is not one', () => {
+    const fleet = store();
+    for (const window of [
+      { fromSeq: 10, toSeq: 1 },
+      { fromSeq: Number.NaN, toSeq: 5 },
+      { fromSeq: 1, toSeq: 1.5 },
+    ]) {
+      expect(fleet.events.replay(window).ok).toBe(false);
+    }
+  });
+
+  it('narrows to one mission without narrowing the window it promised', () => {
+    const fleet = store();
+    for (let i = 0; i < 10; i++) {
+      unwrap(fleet.events.append({ missionId: i % 2 === 0 ? 'm1' : 'm2', actor: 'system', kind: 'tick', payload: {} }));
+    }
+    const batch = unwrap(fleet.events.replay({ missionId: 'm1', fromSeq: 1, toSeq: 10 }));
+    expect(batch.map((e) => e.seq)).toEqual([1, 3, 5, 7, 9]);
+    // The holes are other missions', which is the whole reason the filtered
+    // mode exists and the reason completeness cannot be checked here.
+    expect(replayIsUsable(batch.map((e) => e.seq), 1, 10, 'filtered')).toBe(true);
+    expect(replayIsUsable(batch.map((e) => e.seq), 1, 10)).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import type { ChildRun } from '@claudia/shared';
+import { isLegalRoute, TASK_TRANSITIONS, type ChildRun } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
 import {
   assess,
@@ -94,9 +94,16 @@ describe('nextAction', () => {
   it('escalates a stuck approval instead of retrying it', () => {
     // A retry would park on the same approval at full price, and a child
     // cannot grant itself the capability.
-    const action = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, observe({ run: run() }));
+    const action = nextAction(
+      { kind: 'stuck', reason: 'waiting 6m for approval of Bash', tool: 'Bash' },
+      observe({ run: run() }),
+    );
     expect(action.kind).toBe('escalate');
     expect(action.kind === 'escalate' && action.severity).toBe('blocking');
+    // `tool` was missing here until the tests were typechecked, and the key it
+    // produced was 'escalation:r1:undefined' — a test passing while pinning a
+    // dedup key that deduplicates every stuck run onto one inbox row.
+    expect(action.kind === 'escalate' && action.key).toBe('escalation:r1:Bash');
   });
 
   it('retries a silent run', () => {
@@ -223,9 +230,13 @@ describe('a tick is not a launch', () => {
 
   it('files one escalation for a stuck run however often it is ticked', () => {
     const r = run();
-    const first = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, observe({ run: r }));
-    const second = nextAction({ kind: 'stuck', reason: 'waiting 6m for approval of Bash' }, observe({ run: r }));
+    const stuck = { kind: 'stuck', reason: 'waiting 6m for approval of Bash', tool: 'Bash' } as const;
+    const first = nextAction(stuck, observe({ run: r }));
+    const second = nextAction(stuck, observe({ run: r }));
     expect(first.kind === 'escalate' && first.key).toBe(second.kind === 'escalate' && second.key);
+    // And two runs stuck on the same tool are still two rows a human must see.
+    const other = nextAction(stuck, observe({ run: run({ id: 'r2' }) }));
+    expect(first.kind === 'escalate' && first.key).not.toBe(other.kind === 'escalate' && other.key);
   });
 });
 
@@ -273,5 +284,52 @@ describe('found by adversarial review', () => {
   it('terminalizes the old run when it retries', () => {
     const observation = observe({ run: run({ id: 'r1', attempt: 1 }), sessionAlive: false });
     expect(nextAction(assess(observation), observation)).toMatchObject({ kind: 'retry', terminal: 'failed' });
+  });
+});
+
+describe('found by adversarial audit', () => {
+  it('says what becomes of the TASK when it gives up, not only the run', () => {
+    // Applying give_up used to leave the task `running` with its run `failed`.
+    // reconcile only looks at ready/blocked and the watchdog only looks at live
+    // runs, so nothing in the fleet could move that task again for the life of
+    // the process — the same wedge `terminal` closed, one row over.
+    const action = nextAction(
+      { kind: 'silent', reason: 'nothing for 20m' },
+      observe({ run: run({ attempt: 3 }), attemptsSpent: 3 }),
+      { ...DEFAULT_WATCHDOG, maxAttempts: 3 },
+    );
+    expect(action).toMatchObject({ kind: 'give_up', terminal: 'failed', task: { to: 'failed', path: ['failed'] } });
+  });
+
+  it('puts a retried task back where the reconciler will find it', () => {
+    // The retry reserves in the reconciler's key namespace, so the reconciler
+    // is what dispatches it — and it only ever dispatches ready and blocked.
+    const action = nextAction({ kind: 'silent', reason: 'nothing for 20m' }, observe());
+    expect(action).toMatchObject({ kind: 'retry', task: { to: 'ready', path: ['failed', 'ready'] } });
+  });
+
+  it('routes both through failed, which is what the contract allows from running', () => {
+    // Not decoration: `running -> ready` is not an edge, so a decision naming
+    // it is one the store refuses.
+    for (const outcome of [
+      nextAction({ kind: 'silent', reason: 'x' }, observe()),
+      nextAction({ kind: 'silent', reason: 'x' }, observe({ run: run({ attempt: 9 }), attemptsSpent: 9 })),
+    ]) {
+      const task = 'task' in outcome ? outcome.task : undefined;
+      expect(task).toBeDefined();
+      expect(isLegalRoute('running', task?.path ?? [], TASK_TRANSITIONS)).toBe(true);
+      expect(task?.path.at(-1)).toBe(task?.to);
+    }
+  });
+
+  it('calls a run silent when it cannot tell how long it has been quiet', () => {
+    // NaN >= x is false, so an unreadable timestamp made every run healthy
+    // forever: the one fault this module exists to catch, silenced by the
+    // arithmetic that catches it.
+    expect(assess(observe({ lastActivityAt: Number.NaN })).kind).toBe('silent');
+    expect(assess(observe({ now: Number.NaN })).kind).toBe('silent');
+    // A run with no recorded activity falls back to startedAt, which must also
+    // be readable.
+    expect(assess(observe({ run: run({ startedAt: Number.NaN }), lastActivityAt: undefined })).kind).toBe('silent');
   });
 });

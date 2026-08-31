@@ -70,9 +70,33 @@ export interface ClaimRequest {
 }
 
 export type ClaimVerdict =
+  /** No live record holds this path: a brand new row, and a directory to match. */
   | { kind: 'create'; reason: string }
-  | { kind: 'reuse'; reason: string }
+  /**
+   * A record already holds this path. `path` is the legal route from where
+   * that record is to `active`, and `createDirectory` says whether the
+   * directory itself still has to be made.
+   *
+   * Found by audit: this used to say `create` whenever the directory was
+   * missing, for records in every state. `worktrees_live_path` is
+   * `UNIQUE (path) WHERE state <> 'removed'`, so an active, idle, stale or
+   * archived row still owns that path and the insert was refused —
+   * "UNIQUE constraint failed: worktrees.path" — for all four. A decision the
+   * store cannot carry out is not a decision, which is the same lesson
+   * `CleanupVerdict.path` was added for.
+   */
+  | { kind: 'adopt'; path: readonly WorktreeState[]; createDirectory: boolean; reason: string }
   | { kind: 'refuse'; reason: string };
+
+/**
+ * The route from a record's current state to `active`.
+ *
+ * `removed` is deliberately absent: that row no longer owns its path (the
+ * unique index exempts it), so the answer there is a new row, not a revival.
+ */
+function toActive(state: WorktreeState): readonly WorktreeState[] {
+  return state === 'active' ? [] : state === 'archived' ? ['active'] : ['active'];
+}
 
 /**
  * Decides how a task may acquire the worktree it asked for.
@@ -104,13 +128,28 @@ export function claimWorktree(
     if (observed.exists) {
       return { kind: 'refuse', reason: `the record says ${record.state} but the directory is still there` };
     }
-    return { kind: 'create', reason: `re-creating a worktree that was ${record.state}` };
+    // Only `removed` frees the path. An archived row still holds it, so
+    // reviving that row is the move the unique index permits.
+    return record.state === 'removed'
+      ? { kind: 'create', reason: 'the previous worktree here was removed' }
+      : {
+          kind: 'adopt',
+          path: toActive(record.state),
+          createDirectory: true,
+          reason: 'reviving an archived worktree whose directory is gone',
+        };
   }
 
   if (!observed.exists) {
     // Nothing can be lost by rebuilding: the directory is gone, and the branch
-    // (with any commits on it) survives independently.
-    return { kind: 'create', reason: 'the recorded worktree is missing from disk' };
+    // (with any commits on it) survives independently. The ROW stays, because
+    // it still owns the path.
+    return {
+      kind: 'adopt',
+      path: toActive(record.state),
+      createDirectory: true,
+      reason: 'the recorded worktree is missing from disk',
+    };
   }
 
   // Everything below decides whether to WRITE into a directory that already
@@ -152,7 +191,14 @@ export function claimWorktree(
     return { kind: 'refuse', reason: 'another task owns that worktree' };
   }
 
-  return { kind: 'reuse', reason: 'the same task is picking up where it left off' };
+  return {
+    kind: 'adopt',
+    // A worktree being picked up is `active` again; an idle or stale record
+    // left saying so is one the reconciler and the cleanup both misread.
+    path: toActive(record.state),
+    createDirectory: false,
+    reason: 'the same task is picking up where it left off',
+  };
 }
 
 export type CleanupVerdict =
@@ -238,7 +284,17 @@ export function cleanupWorktree(
   if (record.state === 'active') {
     return { kind: 'keep', reason: 'the fleet still has it marked active' };
   }
-  if (!observed.exists) {
+  // Tri-state, and checked in that order. Found by audit: this read
+  // `!observed.exists`, and `exists` is optional with "absent means nobody
+  // could tell" written on it — so an observation that FAILED took the removal
+  // branch, ahead of the identity, dirty and merged vetoes that are all
+  // correctly tri-state. It removed a worktree with uncommitted work in it on
+  // an observation that never looked, and `claimWorktree` refuses that same
+  // unknown, which made the destructive path the more permissive of the two.
+  if (observed.exists === undefined) {
+    return { kind: 'keep', reason: 'cannot tell whether anything is at that path' };
+  }
+  if (observed.exists === false) {
     return removal(record, 'the directory is already gone; clearing the record');
   }
 

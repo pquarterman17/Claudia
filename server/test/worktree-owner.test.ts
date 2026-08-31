@@ -63,8 +63,18 @@ describe('claimWorktree', () => {
     expect(verdict.reason).toContain('no record of it');
   });
 
-  it('reuses its own worktree', () => {
-    expect(claimWorktree(REQUEST, record(), there)).toMatchObject({ kind: 'reuse' });
+  it('adopts its own worktree, and says how the record gets back to active', () => {
+    expect(claimWorktree(REQUEST, record(), there)).toMatchObject({ kind: 'adopt', createDirectory: false });
+  });
+
+  it.each(['idle', 'stale'] as const)('routes a %s record back to active rather than leaving it there', (state) => {
+    // A record left saying idle is one the reconciler and the cleanup both
+    // misread — cleanup treats idle as a removal candidate.
+    expect(claimWorktree(REQUEST, record({ state }), there)).toMatchObject({
+      kind: 'adopt',
+      path: ['active'],
+      createDirectory: false,
+    });
   });
 
   it('refuses a worktree owned by another task, even when it is clean', () => {
@@ -96,9 +106,12 @@ describe('claimWorktree', () => {
     expect(verdict.kind).toBe('refuse');
   });
 
-  it('rebuilds a recorded worktree that has vanished from disk', () => {
+  it('rebuilds a recorded worktree that has vanished from disk, keeping the row', () => {
     // Nothing can be lost: the directory is gone and the branch survives it.
-    expect(claimWorktree(REQUEST, record(), gone)).toMatchObject({ kind: 'create' });
+    // Found by audit: this said `create`, and the row still owns the path —
+    // `worktrees_live_path` is UNIQUE where state <> 'removed', so the insert
+    // was refused. The directory is rebuilt; the record is adopted.
+    expect(claimWorktree(REQUEST, record(), gone)).toMatchObject({ kind: 'adopt', createDirectory: true });
   });
 
   it.each(['archived', 'removed'] as const)('refuses a %s record whose directory is still there', (state) => {
@@ -107,8 +120,18 @@ describe('claimWorktree', () => {
     expect(verdict.reason).toContain('still there');
   });
 
-  it.each(['archived', 'removed'] as const)('re-creates from a %s record once the directory is gone', (state) => {
-    expect(claimWorktree(REQUEST, record({ state }), gone)).toMatchObject({ kind: 'create' });
+  it('creates a new row once the previous worktree here was removed', () => {
+    // `removed` is the one state that frees the path: the unique index exempts
+    // it, so a new row is exactly what can be written.
+    expect(claimWorktree(REQUEST, record({ state: 'removed' }), gone)).toMatchObject({ kind: 'create' });
+  });
+
+  it('revives an archived record rather than writing a second row for its path', () => {
+    expect(claimWorktree(REQUEST, record({ state: 'archived' }), gone)).toMatchObject({
+      kind: 'adopt',
+      path: ['active'],
+      createDirectory: true,
+    });
   });
 
   it('refuses a record with no owner rather than treating it as free', () => {
@@ -166,7 +189,26 @@ describe('cleanupWorktree', () => {
   });
 
   it('keeps a worktree when nothing was observed at all', () => {
-    expect(cleanupWorktree(finished({ dirty: true }), { exists: true }, IDLE).kind).toBe('keep');
+    // Rewritten: this passed `{ exists: true }`, which is existence positively
+    // OBSERVED, so it kept for an unrelated reason and the name claimed
+    // coverage the file did not have. The genuinely-empty observation removed,
+    // and applying that removal against a real store deleted the record.
+    const verdict = cleanupWorktree(finished({ dirty: true }), {}, IDLE);
+    expect(verdict).toMatchObject({ kind: 'keep', reason: 'cannot tell whether anything is at that path' });
+  });
+
+  it('will not delete on an observation that failed to look', () => {
+    // The destructive direction must never be the more permissive of the two,
+    // and `claimWorktree` refuses this same unknown outright.
+    expect(cleanupWorktree(finished(), {}, IDLE).kind).toBe('keep');
+    expect(claimWorktree(REQUEST, record(), {}).kind).toBe('refuse');
+  });
+
+  it('still clears the record when the directory is positively gone', () => {
+    expect(cleanupWorktree(finished(), { exists: false }, IDLE)).toMatchObject({
+      kind: 'remove',
+      path: ['archived', 'removed'],
+    });
   });
 
   it('keeps an unmerged branch unless a human confirmed it', () => {

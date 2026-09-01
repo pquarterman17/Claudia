@@ -348,17 +348,22 @@ describe('a sequence number nobody can act on too early', () => {
 });
 
 describe('a transaction this module did not open', () => {
-  it('nests under a raw BEGIN instead of failing on a second one', () => {
-    // `db` is exposed for exactly this, and before isTransaction was consulted
-    // the documented escape hatch and the documented reentrancy could not be
-    // used together: the repository method issued a second BEGIN and failed
-    // with "cannot start a transaction within a transaction".
+  it('refuses as a VALUE, because this guard runs before anything wraps it', () => {
+    // The store's contract is that no method throws at a caller reached from a
+    // websocket handler. This check sits ahead of `transact`, so `refuse()`
+    // here escaped uncaught — caught by the dead-connection test next door.
     const fleet = store();
     fleet.db.exec('BEGIN IMMEDIATE');
-    const appended = fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'a', payload: {} });
-    expect(appended.ok, appended.ok ? '' : appended.message).toBe(true);
+    let threw = false;
+    let result;
+    try {
+      result = fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'a', payload: {} });
+    } catch {
+      threw = true;
+    }
     fleet.db.exec('ROLLBACK');
-    expect(value(fleet.events.since(0))).toEqual([]);
+    expect(threw).toBe(false);
+    expect(result?.ok).toBe(false);
   });
 
   it('does not publish from inside one either, and never publishes it LATER', () => {
@@ -374,8 +379,8 @@ describe('a transaction this module did not open', () => {
     fleet.events.onAppended((event) => seen.push(`${event.seq}:${event.kind}`));
 
     fleet.db.exec('BEGIN IMMEDIATE');
-    value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'rolled-back', payload: {} }));
-    expect(seen, 'the raw transaction has not committed').toEqual([]);
+    expect(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'rolled-back', payload: {} }).ok).toBe(false);
+    expect(seen, 'nothing was appended, so nothing is pending').toEqual([]);
     fleet.db.exec('ROLLBACK');
     expect(seen).toEqual([]);
 
@@ -385,20 +390,23 @@ describe('a transaction this module did not open', () => {
     expect(value(fleet.events.since(0)).map((e) => e.kind)).toEqual(['real']);
   });
 
-  it('drops the notification even when the foreign transaction commits', () => {
-    // The honest cost of the fix, stated: this module cannot see a BEGIN it did
-    // not issue reach COMMIT, so it says nothing rather than guessing. A
-    // dropped broadcast is a resync away; a false one is a client holding a
-    // number the log will hand to a different event.
+  it('publishes an event a LISTENER appends, rather than storing it in silence', () => {
+    // Found in review: the drain ran while the depth counter still read 1, so a
+    // listener's own append looked nested to a transaction that had already
+    // committed — the row was written and its notification dropped. Announced
+    // ["1:first"] while the log held ["first", "by-listener"].
     const fleet = store();
     const seen: string[] = [];
-    fleet.events.onAppended((event) => seen.push(`${event.seq}:${event.kind}`));
-    fleet.db.exec('BEGIN IMMEDIATE');
-    value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'committed-quietly', payload: {} }));
-    fleet.db.exec('COMMIT');
-    expect(seen).toEqual([]);
-    // And the queue is not carrying it into the next commit either.
-    value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'next', payload: {} }));
-    expect(seen).toEqual(['2:next']);
+    fleet.events.onAppended((event) => {
+      seen.push(`${event.seq}:${event.kind}`);
+      if (event.kind === 'first') {
+        fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'by-listener', payload: {} });
+      }
+    });
+    transact(fleet.db, 'outer', () =>
+      value(fleet.events.append({ missionId: 'm1', actor: 'system', kind: 'first', payload: {} })),
+    );
+    expect(seen).toEqual(['1:first', '2:by-listener']);
+    expect(value(fleet.events.since(0)).map((e) => e.kind)).toEqual(['first', 'by-listener']);
   });
 });

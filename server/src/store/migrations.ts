@@ -1,6 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { ESCALATION_KEYS, FLEET_CORE } from './schema.js';
-import { DURABLE_ESCALATIONS, refuseUnknownAgents, SCHEMA_BOUNDS } from './schema-constraints.js';
+import {
+  CANONICAL_WORKTREE_PATHS,
+  canonicaliseWorktreePaths,
+  DURABLE_ESCALATIONS,
+  refuseUnknownAgents,
+  SCHEMA_BOUNDS,
+} from './schema-constraints.js';
 
 /**
  * Schema history, as an ordered list, and the runner that applies it.
@@ -65,6 +71,15 @@ export const MIGRATIONS: readonly Migration[] = [
     name: 'durable-escalations',
     rebuildsTables: true,
     up: (db) => db.exec(DURABLE_ESCALATIONS),
+  },
+  {
+    version: 5,
+    name: 'canonical-worktree-paths',
+    rebuildsTables: true,
+    up: (db) => {
+      db.exec(CANONICAL_WORKTREE_PATHS);
+      canonicaliseWorktreePaths(db, process.platform === 'win32' ? 'win32' : 'posix');
+    },
   },
 ];
 

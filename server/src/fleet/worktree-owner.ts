@@ -1,4 +1,4 @@
-import { isLegalRoute, WORKTREE_TRANSITIONS, type WorktreeRecord, type WorktreeState } from '@claudia/shared';
+import { isLegalRoute, WORKTREE_TRANSITIONS, worktreePathKey, type WorktreeRecord, type WorktreeState } from '@claudia/shared';
 
 /**
  * Whether two paths name the same place.
@@ -14,17 +14,8 @@ import { isLegalRoute, WORKTREE_TRANSITIONS, type WorktreeRecord, type WorktreeS
  * path fix in this repo look correct on Linux and fail on a Windows runner.
  */
 export function samePath(a: string, b: string, platform: NodeJS.Platform = process.platform): boolean {
-  const normalize = (p: string): string => {
-    // Backslash is a SEPARATOR on Windows and a legal filename character on
-    // POSIX, so translating it everywhere made `/repo/a\b` and `/repo/a/b` —
-    // two different directories — compare equal. The trailing-slash strip
-    // keeps one character, or `/` reduces to `''` and an unwritten path
-    // equals the filesystem root.
-    const separated = platform === 'win32' ? p.replace(/\\/g, '/') : p;
-    const trimmed = separated.replace(/(.)\/+$/, '$1');
-    return platform === 'win32' ? trimmed.toLowerCase() : trimmed;
-  };
-  return normalize(a) === normalize(b);
+  const key = platform === 'win32' ? 'win32' : 'posix';
+  return worktreePathKey(a, key) === worktreePathKey(b, key);
 }
 
 /**

@@ -557,3 +557,17 @@ describe('found reviewing my own fix', () => {
     }
   });
 });
+
+describe('the reservation key cannot be forged by a colon', () => {
+  it('does not collide for ids that merely rearrange the separators', () => {
+    // The same defect escalationKey was fixed for, in its sibling, which that
+    // fix did not reach. A raw join made ('m1', 't1:2', 3) and ('m1:t1', '2', 3)
+    // one reservation, so a dispatch could suppress an unrelated one.
+    expect(dispatchKey('m1', 't1:2', 3)).not.toBe(dispatchKey('m1:t1', '2', 3));
+    expect(dispatchKey('m/1', 't 1', 3)).not.toBe(dispatchKey('m', '1/t 1', 3));
+  });
+
+  it('is still stable for the same inputs, which is the whole point of it', () => {
+    expect(dispatchKey('m1', 't1', 2)).toBe(dispatchKey('m1', 't1', 2));
+  });
+});

@@ -2,6 +2,7 @@ import {
   canTransitionRun,
   canTransitionWorktree,
   isAgentKind,
+  worktreePathKey,
   RUN_TRANSITIONS,
   type AgentKind,
   type ChildRun,
@@ -41,6 +42,10 @@ const RUN_COLUMNS =
   'id, mission_id, task_id, session_id, worktree_id, agent, attempt, state, started_at, ended_at, terminal_reason';
 const WORKTREE_COLUMNS =
   'id, repo, path, branch, base_sha, owner_mission_id, owner_task_id, state, dirty, last_seen_at, created_at';
+const WORKTREE_INSERT = `${WORKTREE_COLUMNS}, path_key`;
+
+/** This machine's spelling rules, for the one place that has to persist them. */
+const PATH_PLATFORM = process.platform === 'win32' ? 'win32' : 'posix';
 
 /**
  * Checks an agent rather than asserting one, on the way in AND on the way out.
@@ -208,7 +213,7 @@ export class WorktreeRepo {
         createdAt: now,
       };
       this.db
-        .prepare(`INSERT INTO worktrees (${WORKTREE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .prepare(`INSERT INTO worktrees (${WORKTREE_INSERT}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           record.id,
           record.repo,
@@ -221,6 +226,7 @@ export class WorktreeRepo {
           boolToInt(record.dirty),
           record.lastSeenAt,
           record.createdAt,
+          worktreePathKey(record.path, PATH_PLATFORM),
         );
       return record;
     });
@@ -237,8 +243,8 @@ export class WorktreeRepo {
   byPath(path: string): StoreResult<WorktreeRecord | undefined> {
     return attempt('read the worktree record', () => {
       const row = this.db
-        .prepare(`SELECT ${WORKTREE_COLUMNS} FROM worktrees WHERE path = ? AND state <> 'removed'`)
-        .get(path) as Row | undefined;
+        .prepare(`SELECT ${WORKTREE_COLUMNS} FROM worktrees WHERE path_key = ? AND state <> 'removed'`)
+        .get(worktreePathKey(path, PATH_PLATFORM)) as Row | undefined;
       return row ? toWorktree(row) : undefined;
     });
   }

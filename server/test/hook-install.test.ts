@@ -224,11 +224,25 @@ describe('two writes in the same millisecond', () => {
   });
 
   it('still refuses when the backup fails for a reason that is not a name clash', async () => {
-    // A directory that cannot be written to is a real failure, and the owner
-    // agreed to the edit on the condition the original was kept.
-    const file = join(mkdtempSync(join(tmpdir(), 'claudia-hooks-')), 'nested', 'settings.json');
-    writeFileSync(join(file, '..', '..', 'blocker'), 'x');
-    const result = await installHooks(PORT, join(file, '..', '..', 'blocker', 'settings.json'));
-    expect(result.ok).toBe(false);
+    // Rewritten after review: the previous version pointed through a FILE, so
+    // readExisting failed with ENOTDIR and returned before takeBackup was ever
+    // reached. It asserted ok:false for a reason that had nothing to do with
+    // the code it named — the same shape of mistake as a test that passes
+    // while pinning nothing.
+    //
+    // This one has a real, readable settings file whose BACKUP cannot be
+    // written: the backup name is derived from the file's own path, so a name
+    // long enough to blow the OS limit fails the copy and nothing else.
+    const dir = mkdtempSync(join(tmpdir(), 'claudia-hooks-'));
+    const file = join(dir, `${'n'.repeat(230)}.json`);
+    const original = { hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'mine.sh' }] }] } };
+    writeFileSync(file, JSON.stringify(original, null, 2));
+
+    const result = await installHooks(PORT, file);
+    expect(result.ok, 'the backup must fail, not the read').toBe(false);
+    if (!result.ok) expect(result.error).toContain('Could not back up');
+    // The promise the backup exists to keep: the original is untouched.
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(original);
+    expect(backups(file)).toHaveLength(0);
   });
 });

@@ -17,8 +17,15 @@ import { applyMigrations, type Migration } from './migrations.js';
  *
  * node:sqlite rather than better-sqlite3 because Claudia ships as a Tauri
  * sidecar: a native module would need rebuilding per platform and per Node ABI,
- * and the built-in needs no build step at all. It requires Node 22.13+, which
- * is why the root engines field moved.
+ * and the built-in needs no build step at all.
+ *
+ * The floor is 22.16, not the 22.13 that node:sqlite alone needs. Found in
+ * review: `transact` reads `DatabaseSync.isTransaction`, which landed in
+ * 22.16.0, and on 22.13-22.15 an absent property is simply `undefined` — so a
+ * repository call inside a raw BEGIN would issue a second BEGIN, and `onCommit`
+ * would publish from inside a transaction it could not see finish. Both are
+ * silent, and CI's matrix tests only the LATEST 22, so nothing here would have
+ * caught it. `openFleetDb` refuses outright rather than running degraded.
  *
  * FAILURE CONTRACT: nothing in this directory throws at its callers. Every
  * public store method returns a StoreResult, because these are reached from
@@ -102,7 +109,28 @@ const ownsTransaction = new WeakMap<DatabaseSync, true>();
 /** Whether anything is open on this connection — including a BEGIN this module
  * did not issue, which `depth` alone cannot see. */
 function inTransaction(db: DatabaseSync): boolean {
-  return (depth.get(db) ?? 0) > 0 || db.isTransaction;
+  if ((depth.get(db) ?? 0) > 0) return true;
+  try {
+    return db.isTransaction;
+  } catch {
+    // A closed connection throws on the getter. Caught by a test asserting the
+    // store reports a dead connection as a VALUE: this is reached before
+    // `attempt` wraps anything, so letting it escape would break the failure
+    // contract the whole directory rests on. Nothing is open on a closed
+    // database, and the operation that follows fails with a proper message.
+    return false;
+  }
+}
+
+/**
+ * Whether a transaction is open that this module did not start.
+ *
+ * The one state in which deferred work has no observable outcome, so callers
+ * whose correctness depends on being able to announce something can refuse
+ * up front rather than write and stay quiet.
+ */
+export function foreignTransaction(db: DatabaseSync): boolean {
+  return inTransaction(db) && ownsTransaction.get(db) !== true;
 }
 
 /**
@@ -196,6 +224,14 @@ export function transact<T>(db: DatabaseSync, what: string, fn: () => T): StoreR
       db.exec(nested ? `RELEASE ${savepoint}` : 'COMMIT');
       if (!nested) {
         ownsTransaction.delete(db);
+        // Depth first. Found in review: draining while it still read 1 meant a
+        // listener that appended an event was inside a "nested" transaction
+        // that no longer existed — the row was written and committed, and its
+        // own notification was then dropped because ownership had already been
+        // cleared. Announced ["1:first"] while the log held ["first",
+        // "by-listener"]. Resetting first makes a listener's append an
+        // ordinary top-level one that publishes on its own commit.
+        depth.set(db, level);
         drainAfterCommit(db);
       }
       return value;
@@ -255,6 +291,13 @@ export function openFleetDb(
   return attempt('open the fleet database', () => {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     const db = new DatabaseSync(path, { enableForeignKeyConstraints: true });
+    if (typeof db.isTransaction !== 'boolean') {
+      db.close();
+      refuse(
+        `This build needs Node 22.16 or newer for its transaction handling; ${process.version} does not report ` +
+          'DatabaseSync.isTransaction. Update Node, or run without the mission layer.',
+      );
+    }
     try {
       // WAL so a long read (a browser resyncing a large event log) never blocks
       // the writer, and so a crash mid-write recovers from the log rather than

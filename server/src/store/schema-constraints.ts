@@ -1,3 +1,4 @@
+import { worktreePathKey } from '@claudia/shared';
 import type { DatabaseSync } from 'node:sqlite';
 
 /**
@@ -168,4 +169,74 @@ export function refuseUnknownAgents(db: DatabaseSync): void {
       "be carried forward: run  UPDATE child_runs SET agent='claude' WHERE agent NOT IN ('claude','codex');  " +
       'against the file (or delete those rows) and reopen.',
   );
+}
+
+/**
+ * One live claim per DIRECTORY, not per spelling of one.
+ *
+ * `worktrees_live_path` was unique on the raw `path` text while `samePath`
+ * folded case and separators, so `C:\\Repo\\Work` and `c:/repo/work` were one
+ * directory to the policy that decides who may write there and two rows to the
+ * index that makes ownership provable. Measured before this was written: both
+ * inserts succeeded, two live claims, two owners, one checkout on disk.
+ *
+ * The key is stored rather than computed in the query so the uniqueness is the
+ * database's, not a convention every caller has to remember. `path` keeps
+ * whatever the caller wrote, because that is what a human reads and what gets
+ * handed to `cd`.
+ */
+export const CANONICAL_WORKTREE_PATHS = `
+CREATE TABLE worktrees_rebuild (
+  id                TEXT    PRIMARY KEY,
+  repo              TEXT    NOT NULL,
+  path              TEXT    NOT NULL,
+  -- The same directory, spelled one way. Written by the repository from the
+  -- contract's worktreePathKey, so policy and storage cannot drift apart.
+  path_key          TEXT    NOT NULL,
+  branch            TEXT    NOT NULL,
+  base_sha          TEXT    NOT NULL,
+  owner_mission_id  TEXT    REFERENCES missions(id) ON DELETE SET NULL,
+  owner_task_id     TEXT    REFERENCES tasks(id) ON DELETE SET NULL,
+  state             TEXT    NOT NULL CHECK (state IN ('active','idle','stale','archived','removed')),
+  dirty             INTEGER NOT NULL CHECK (dirty IN (0,1)),
+  last_seen_at      INTEGER NOT NULL,
+  created_at        INTEGER NOT NULL
+) STRICT;
+
+INSERT INTO worktrees_rebuild
+  SELECT id, repo, path, path, branch, base_sha, owner_mission_id, owner_task_id,
+         state, dirty, last_seen_at, created_at
+    FROM worktrees;
+
+DROP TABLE worktrees;
+ALTER TABLE worktrees_rebuild RENAME TO worktrees;
+`;
+
+/**
+ * Fills in the key, and settles any duplication the old index allowed.
+ *
+ * Done here rather than in SQL because the canonical form is the contract's,
+ * not something to re-implement in SQLite string functions and keep in step.
+ *
+ * Rows that collapse onto one key are the old bug's output, not two real
+ * claims: the newest keeps the directory and the rest are marked `removed`,
+ * which is what they always were in fact. Refusing instead would make a file
+ * unopenable over damage this schema itself permitted — the hazard the
+ * clamping decision above was taken to avoid.
+ */
+export function canonicaliseWorktreePaths(db: DatabaseSync, platform: 'win32' | 'posix'): void {
+  const rows = db
+    .prepare('SELECT id, path, state, created_at FROM worktrees ORDER BY created_at DESC, id DESC')
+    .all() as { id: string; path: string; state: string; created_at: number }[];
+  const setKey = db.prepare('UPDATE worktrees SET path_key = ? WHERE id = ?');
+  const retire = db.prepare("UPDATE worktrees SET state = 'removed' WHERE id = ?");
+  const claimed = new Set<string>();
+  for (const row of rows) {
+    const key = worktreePathKey(row.path, platform);
+    setKey.run(key, row.id);
+    if (row.state === 'removed') continue;
+    if (claimed.has(key)) retire.run(row.id);
+    else claimed.add(key);
+  }
+  db.exec(`CREATE UNIQUE INDEX worktrees_live_path ON worktrees (path_key) WHERE state <> 'removed'`);
 }

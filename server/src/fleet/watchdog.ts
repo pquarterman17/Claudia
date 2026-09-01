@@ -78,14 +78,23 @@ export type RunHealth =
  */
 export function assess(observation: RunObservation, policy: WatchdogPolicy = DEFAULT_WATCHDOG): RunHealth {
   const { run, now } = observation;
+  // A policy nobody can read is not a policy. Found in review: a non-finite
+  // threshold made every comparison below false, so every run was healthy
+  // forever — the same shape as the NaN clock, one input over. `pendingSince`
+  // is checked at its own branch below, where an unreadable timestamp now
+  // falls through to the `stuck` arm rather than reading as healthy: not
+  // knowing how long it has waited is not evidence that it has not waited long.
+  if (!usablePolicy(policy)) {
+    return { kind: 'silent', reason: 'the watchdog policy is not usable' };
+  }
   if (run.state === 'stopped' || run.state === 'failed' || run.state === 'reported') {
     return { kind: 'finished' };
   }
   if (!observation.sessionAlive) {
     return { kind: 'orphaned', reason: 'the record says running but the session is gone' };
   }
-  if (observation.pendingApproval && observation.pendingSince !== undefined) {
-    const waited = now - observation.pendingSince;
+  if (observation.pendingApproval && Number.isFinite(observation.pendingSince)) {
+    const waited = now - (observation.pendingSince ?? Number.NaN);
     if (waited >= policy.approvalStuckAfterMs) {
       return {
         kind: 'stuck',
@@ -204,6 +213,13 @@ export function retryAnchor(observation: RunObservation): number {
   return observation.run.endedAt ?? observation.lastActivityAt ?? observation.run.startedAt;
 }
 
+/** Every threshold this module compares against has to be a real number. */
+function usablePolicy(policy: WatchdogPolicy): boolean {
+  return [policy.silentAfterMs, policy.approvalStuckAfterMs, policy.retryBaseMs, policy.retryMaxMs].every((ms) =>
+    Number.isFinite(ms),
+  );
+}
+
 /** When the fault this action answers first became visible. */
 function faultAt(health: RunHealth, observation: RunObservation, policy: WatchdogPolicy): number {
   const anchor = retryAnchor(observation);
@@ -252,6 +268,22 @@ export function nextAction(
   // let the watchdog propose an attempt another run already holds, and call a
   // task retryable that the reconciler had already blocked.
   const spent = Math.max(run.attempt, observation.attemptsSpent ?? run.attempt);
+  // Counted, or nothing below means anything. Found in review: an
+  // `attemptsSpent` of NaN produced an EXECUTABLE retry announcing
+  // `attempt: NaN`, `afterMs: NaN`, `notBefore: NaN` and the reservation key
+  // `dispatch:m:t:NaN` — and since `now < NaN` is false it sailed past the
+  // backoff gate as well. A count that cannot be read is not a count, and
+  // guessing one either re-runs work already paid for or gives up early, so
+  // this is a question for a person rather than a decision to take.
+  if (!Number.isSafeInteger(spent) || spent < 1 || !Number.isSafeInteger(policy.maxAttempts)) {
+    return {
+      kind: 'escalate',
+      request: 'unreadable attempt count',
+      reason: `cannot tell how many attempts ${run.taskId} has spent, so neither retrying nor giving up is safe`,
+      severity: 'blocking',
+      key: escalationKey(run.id, 'unreadable-attempt-count'),
+    };
+  }
   const next = spent + 1;
   if (next > policy.maxAttempts) {
     return {

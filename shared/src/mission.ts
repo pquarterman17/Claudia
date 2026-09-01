@@ -287,3 +287,29 @@ export const MAX_CHILDREN_PRESETS = [1, 2, 4, 8] as const;
 export const MAX_CHILDREN_DEFAULT = 4;
 /** Temporary, until the 16-child scale gate passes. See the plan's defaults. */
 export const MAX_CHILDREN_CEILING = 12;
+
+/**
+ * The identity of a worktree directory, as one string.
+ *
+ * Ownership is defined in terms of "is this the same directory", and that
+ * question had two different answers: `samePath` folded case and separators on
+ * Windows, while the store compared raw text. So `C:\\Repo\\Work` and
+ * `c:/repo/work` were one directory to the policy that decides who may write
+ * there and two rows to the index that is supposed to make ownership provable —
+ * measured, two live claims on one checkout, with two owners.
+ *
+ * Lives in the contract rather than in either half, because a canonical form
+ * kept in two places is the same bug waiting to happen again. The platform is
+ * a required argument and no `process` is read, so this stays usable from the
+ * browser bundle.
+ */
+export function worktreePathKey(path: string, platform: 'win32' | 'posix'): string {
+  // Backslash is a SEPARATOR on Windows and a legal filename character on
+  // POSIX, so translating it everywhere would make `/repo/a\\b` and `/repo/a/b`
+  // — two different directories — compare equal.
+  const separated = platform === 'win32' ? path.replace(/\\/g, '/') : path;
+  // A drive ROOT is not a drive-RELATIVE path: `C:/` must not reduce to `C:`,
+  // which would mean "wherever the process happens to be on that drive".
+  const trimmed = /^[a-zA-Z]:\/$/.test(separated) ? separated : separated.replace(/(.)\/+$/, '$1');
+  return platform === 'win32' ? trimmed.toLowerCase() : trimmed;
+}

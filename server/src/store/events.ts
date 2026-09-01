@@ -1,6 +1,6 @@
 import type { FleetActor, FleetEvent } from '@claudia/shared';
 import type { DatabaseSync } from 'node:sqlite';
-import { attempt, onCommit, refuse, transact, type StoreResult } from './db.js';
+import { attempt, fail, foreignTransaction, onCommit, refuse, transact, type StoreResult } from './db.js';
 import { int, optText, text, type Row } from './rows.js';
 
 /**
@@ -85,6 +85,20 @@ export class FleetEventLog {
    * guarantees it — this only keeps the common path from having to fail first.
    */
   append(input: NewFleetEvent): StoreResult<AppendedEvent> {
+    // Refused, not silently unannounced. `onCommit` cannot observe a
+    // transaction this module did not open, so it drops the notification — and
+    // a dropped notification is only harmless if something else repairs it. A
+    // connected client does NOT resync merely because one event went missing,
+    // so it would sit there with a gap it has no reason to look for. Raised in
+    // review, and the answer is the one the store already has: `transact` is
+    // the composition API, and it drains on its own commit.
+    // Returned, not thrown: this guard sits BEFORE `transact`, so nothing here
+    // would wrap it, and the whole directory's contract is that no store method
+    // throws at a caller reached from a websocket handler. Caught by the test
+    // that asserts a dead connection comes back as a value.
+    if (foreignTransaction(this.db)) {
+      return fail('An event cannot be appended inside a transaction the store did not open; use transact().');
+    }
     return transact(this.db, 'append a fleet event', () => {
       const key = input.idempotencyKey;
       if (key !== undefined) {

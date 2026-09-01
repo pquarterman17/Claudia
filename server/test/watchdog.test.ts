@@ -428,3 +428,38 @@ describe('the backoff belongs to the task, not to one run', () => {
     expect(action.kind === 'retry' && action.afterMs).toBe(backoffMs(1));
   });
 });
+
+describe('numeric inputs the review found still failing open', () => {
+  it('escalates rather than emitting a retry for attempt NaN', () => {
+    // Reproduced from the review: an executable retry announcing attempt NaN,
+    // afterMs NaN, notBefore NaN and the reservation key dispatch:m:t:NaN —
+    // and since `now < NaN` is false it sailed past the backoff gate too.
+    const action = nextAction(
+      { kind: 'orphaned', reason: 'gone' },
+      observe({ attemptsSpent: Number.NaN, sessionAlive: false }),
+    );
+    expect(action.kind).toBe('escalate');
+    if (action.kind !== 'escalate') return;
+    expect(action.severity).toBe('blocking');
+    expect(action.key).not.toContain('NaN');
+  });
+
+  it('does not read a parked approval with an unreadable timestamp as healthy', () => {
+    // `waited >= threshold` is false for NaN, so it fell through to healthy —
+    // when the branch below already treats "parked, with no record of when" as
+    // stuck, for the stated reason that not knowing how long it has waited is
+    // not evidence that it has not waited long.
+    const health = assess(observe({ pendingApproval: 'Bash', pendingSince: Number.NaN }));
+    expect(health.kind).toBe('stuck');
+  });
+
+  it('does not call every run healthy when the policy itself is unreadable', () => {
+    for (const bad of [
+      { ...DEFAULT_WATCHDOG, silentAfterMs: Number.NaN },
+      { ...DEFAULT_WATCHDOG, approvalStuckAfterMs: Number.NaN },
+      { ...DEFAULT_WATCHDOG, retryBaseMs: Number.POSITIVE_INFINITY },
+    ]) {
+      expect(assess(observe(), bad).kind).not.toBe('healthy');
+    }
+  });
+});

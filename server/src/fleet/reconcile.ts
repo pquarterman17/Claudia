@@ -247,7 +247,13 @@ function overBudget(mission: Mission, spend: MissionSpend | undefined): string |
  * prevent.
  */
 export function dispatchKey(missionId: string, taskId: string, attempt: number): string {
-  return `dispatch:${missionId}:${taskId}:${attempt}`;
+  // Encoded, for exactly the reason escalationKey already is — and this is its
+  // sibling, which that fix did not reach. Found in review: a raw join
+  // collides, so ('m1', 't1:2', 3) and ('m1:t1', '2', 3) produced the same
+  // reservation and one dispatch could suppress an unrelated one. The key is
+  // what stops a repeated pulse spending twice; a key that can be forged by a
+  // colon in an id is not one.
+  return `dispatch:${encodeURIComponent(missionId)}:${encodeURIComponent(taskId)}:${attempt}`;
 }
 
 /**

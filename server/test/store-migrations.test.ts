@@ -5,6 +5,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { AGENT_KINDS, MAX_CHILDREN_CEILING, PULSE_MAX_SEC, PULSE_MIN_SEC } from '@claudia/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import { closeFleetDb, openFleetDb } from '../src/store/db.js';
+import { openFleetStore } from '../src/store/index.js';
 import { isSqliteExperimentalWarning } from '../src/store/experimental-warning.js';
 import { applyMigrations, latestVersion, MIGRATIONS, schemaVersion, type Migration } from '../src/store/migrations.js';
 
@@ -573,5 +574,80 @@ describe('a file that arrives damaged still opens', () => {
     } finally {
       holder.value.exec('ROLLBACK');
     }
+  });
+});
+
+describe('one live claim per directory, not per spelling', () => {
+  it('refuses a second live row for the same Windows checkout', () => {
+    // Measured before this migration: samePath folded case and separators while
+    // the unique index compared raw text, so `C:\Repo\Work` and `c:/repo/work`
+    // were one directory to the policy that decides who may write there and two
+    // rows to the index that makes ownership provable. Two live claims, two
+    // owners, one checkout on disk.
+    const db = fresh();
+    db.prepare(
+      `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+       VALUES ('m1', 'M', '', 'active', 'paused', 60, 4, '/repo', 1, 1)`,
+    ).run();
+    const insert = (id: string, key: string) =>
+      db
+        .prepare(
+          `INSERT INTO worktrees (id, repo, path, path_key, branch, base_sha, owner_mission_id, state, dirty, last_seen_at, created_at)
+           VALUES (?, 'C:\\Repo', ?, ?, 'b', 'a', 'm1', 'active', 0, 1, 1)`,
+        )
+        .run(id, id, key);
+    insert('w1', 'c:/repo/work');
+    expect(() => insert('w2', 'c:/repo/work')).toThrow(/UNIQUE/);
+    // A removed row frees it again, as before.
+    db.prepare("UPDATE worktrees SET state = 'removed' WHERE id = 'w1'").run();
+    expect(() => insert('w3', 'c:/repo/work')).not.toThrow();
+  });
+
+  it('settles duplicates the old index allowed, keeping the newest', () => {
+    // Rows that collapse onto one key are the old bug's output, not two real
+    // claims. Refusing would make a file unopenable over damage this schema
+    // itself permitted — the hazard the clamping decision was taken to avoid.
+    const path = join(dir, 'dup-paths', 'fleet.db');
+    const before = openFleetDb(path, MIGRATIONS.filter((m) => m.version <= 4));
+    if (!before.ok) throw new Error(before.message);
+    kept.push(before.value);
+    before.value.exec(
+      `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+         VALUES ('m1', 'M', '', 'active', 'paused', 60, 4, '/repo', 1, 1);
+       INSERT INTO worktrees (id, repo, path, branch, base_sha, owner_mission_id, state, dirty, last_seen_at, created_at)
+         VALUES ('old', '/repo', '/wt/Work', 'b', 'a', 'm1', 'active', 0, 1, 1),
+                ('new', '/repo', '/wt/Work/', 'b', 'a', 'm1', 'active', 0, 1, 2);`,
+    );
+    expect(applyMigrations(before.value)).toBe(1);
+    const live = before.value
+      .prepare("SELECT id FROM worktrees WHERE state <> 'removed'")
+      .all()
+      .map((r) => String(r['id']));
+    expect(live).toEqual(['new']);
+    // The older claim is retired rather than deleted: it is still history.
+    expect(before.value.prepare('SELECT COUNT(*) AS n FROM worktrees').get()?.['n']).toBe(2);
+  });
+
+  it('keeps the path the caller wrote, and canonicalises only the key', () => {
+    const fleet = openFleetStore(join(dir, 'keeps-path', 'fleet.db'));
+    if (!fleet.ok) throw new Error(fleet.message);
+    kept.push(fleet.value.db);
+    const mission = fleet.value.missions.create({ name: 'm', body: '', cwd: '/repo' });
+    if (!mission.ok) throw new Error(mission.message);
+    const made = fleet.value.worktrees.create({
+      repo: '/repo',
+      path: '/wt/Mixed/Case/',
+      branch: 'b',
+      baseSha: 'a',
+      ownerMissionId: mission.value.id,
+      dirty: false,
+    });
+    expect(made.ok, made.ok ? '' : made.message).toBe(true);
+    if (!made.ok) return;
+    // What a human reads, and what gets handed to `cd`, is untouched.
+    expect(made.value.path).toBe('/wt/Mixed/Case/');
+    // And the trailing slash no longer makes it a different directory.
+    const found = fleet.value.worktrees.byPath('/wt/Mixed/Case');
+    expect(found.ok && found.value?.id).toBe(made.value.id);
   });
 });

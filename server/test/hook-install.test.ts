@@ -223,26 +223,40 @@ describe('two writes in the same millisecond', () => {
     expect(JSON.parse(readFileSync(join(file, '..', String(first)), 'utf8'))).toEqual(original);
   });
 
-  it('still refuses when the backup fails for a reason that is not a name clash', async () => {
-    // Rewritten after review: the previous version pointed through a FILE, so
-    // readExisting failed with ENOTDIR and returned before takeBackup was ever
-    // reached. It asserted ok:false for a reason that had nothing to do with
-    // the code it named — the same shape of mistake as a test that passes
-    // while pinning nothing.
+  it('still refuses when the backup itself cannot be taken, leaving the file untouched', async () => {
+    // Third attempt at this test, and the first two are the lesson.
     //
-    // This one has a real, readable settings file whose BACKUP cannot be
-    // written: the backup name is derived from the file's own path, so a name
-    // long enough to blow the OS limit fails the copy and nothing else.
-    const dir = mkdtempSync(join(tmpdir(), 'claudia-hooks-'));
-    const file = join(dir, `${'n'.repeat(230)}.json`);
+    // The original pointed through a FILE, so readExisting failed with ENOTDIR
+    // and returned before takeBackup was reached — it asserted ok:false for a
+    // reason unrelated to the code it named. Caught in review.
+    //
+    // The rewrite used a 230-character basename to blow the OS name limit. That
+    // passed on Linux and FAILED ON WINDOWS, where the long name survives the
+    // copy and instead blows MAX_PATH later, inside writeAtomic's temp file:
+    // "Could not write ... ENOENT ... .tmp". The product refused correctly on
+    // both; the test had pinned WHICH STAGE refused, and that is a property of
+    // the platform. Exactly the trap the review had just pointed out.
+    //
+    // So the failure is now one this code owns rather than one the filesystem
+    // decides: every backup name for this instant already taken, which is the
+    // bound takeBackup gives up at. Deterministic on every platform.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-31T01:00:00.000Z'));
     const original = { hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'mine.sh' }] }] } };
-    writeFileSync(file, JSON.stringify(original, null, 2));
+    const file = settingsFile(original);
+    const stamp = '2026-08-31T01-00-00-000Z';
+    for (let attempt = 0; attempt < 50; attempt++) {
+      writeFileSync(`${file}.claudia-backup-${stamp}${attempt === 0 ? '' : `-${attempt}`}`, 'taken');
+    }
 
     const result = await installHooks(PORT, file);
-    expect(result.ok, 'the backup must fail, not the read').toBe(false);
+    expect(result.ok, 'the backup must fail, not the read or the write').toBe(false);
     if (!result.ok) expect(result.error).toContain('Could not back up');
-    // The promise the backup exists to keep: the original is untouched.
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(original);
-    expect(backups(file)).toHaveLength(0);
+    // The promise the backup exists to keep: the owner agreed to this edit on
+    // the condition the original was kept, so a backup that did not happen
+    // means the edit does not happen either.
+    expect(read(file)).toEqual(original);
+    // And nothing it left behind: the 50 squatters, and not one more.
+    expect(backups(file)).toHaveLength(50);
   });
 });

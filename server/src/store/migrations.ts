@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { FLEET_META } from './path-platform.js';
 import { ESCALATION_KEYS, FLEET_CORE } from './schema.js';
 import {
   CANONICAL_WORKTREE_PATHS,
@@ -92,6 +93,15 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 7,
     name: 'derived-worktree-keys',
     up: (db) => db.exec(DERIVED_WORKTREE_KEYS),
+  },
+  {
+    version: 8,
+    name: 'path-platform-stamp',
+    // Only the table. What goes in it is decided on every open by
+    // `alignPathPlatform`, because the platform can change without the schema
+    // changing — and a migration that stamped a file it had not just rewritten
+    // would be recording an answer it had no way to check.
+    up: (db) => db.exec(FLEET_META),
   },
 ];
 

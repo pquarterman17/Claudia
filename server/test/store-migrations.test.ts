@@ -45,7 +45,15 @@ describe('opening the fleet database', () => {
   it('migrates an empty file to the latest version', () => {
     const db = fresh();
     expect(schemaVersion(db)).toBe(latestVersion(MIGRATIONS));
-    expect(tables(db)).toEqual(['child_runs', 'escalations', 'fleet_events', 'missions', 'tasks', 'worktrees']);
+    expect(tables(db)).toEqual([
+      'child_runs',
+      'escalations',
+      'fleet_events',
+      'fleet_meta',
+      'missions',
+      'tasks',
+      'worktrees',
+    ]);
     closeFleetDb(db);
   });
 

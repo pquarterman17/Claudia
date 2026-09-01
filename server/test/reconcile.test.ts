@@ -571,3 +571,23 @@ describe('the reservation key cannot be forged by a colon', () => {
     expect(dispatchKey('m1', 't1', 2)).toBe(dispatchKey('m1', 't1', 2));
   });
 });
+
+describe('the attempt ceiling is a ceiling too', () => {
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['zero', 0],
+  ])('holds rather than dispatching without limit when maxAttempts is %s', (_label, maxAttempts) => {
+    // `attempts >= NaN` and `attempts >= Infinity` are both false, so a task
+    // could be re-dispatched forever. The same omission as the child ceiling,
+    // in the same file, found one review later.
+    const decisions = reconcile({
+      mission: mission(),
+      tasks: [task({ status: 'ready' })],
+      runs: [],
+      policy: { maxChildren: 2, maxAttempts },
+    });
+    expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(0);
+    expect(decisions[0]?.kind === 'hold' && decisions[0].reason).toMatch(/how many attempts/);
+  });
+});

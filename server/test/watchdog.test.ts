@@ -463,3 +463,33 @@ describe('numeric inputs the review found still failing open', () => {
     }
   });
 });
+
+describe('validation composes, because the two entry points are separate', () => {
+  it.each([
+    ['silentAfterMs NaN', { silentAfterMs: Number.NaN }],
+    ['retryBaseMs NaN', { retryBaseMs: Number.NaN }],
+    ['retryBaseMs negative', { retryBaseMs: -500 }],
+    ['retryMaxMs below the base', { retryBaseMs: 60_000, retryMaxMs: 1_000 }],
+    ['maxAttempts NaN', { maxAttempts: Number.NaN }],
+  ])('escalates rather than retrying when the policy says %s', (_label, over) => {
+    // `assess` validating the policy proves nothing about `nextAction`: they
+    // are separate entry points a caller composes. With an unusable policy every
+    // arithmetic result is NaN, and `now < NaN` is false — so the backoff gate
+    // this branch added waved through an executable retry announcing a delay it
+    // had never computed. A negative retryBaseMs is finite and produced
+    // afterMs: -500, due before the fault it answers.
+    const action = nextAction({ kind: 'silent', reason: 'x' }, due(), { ...DEFAULT_WATCHDOG, ...over });
+    expect(action.kind).toBe('escalate');
+  });
+
+  it('escalates rather than retrying when the clock is unreadable', () => {
+    expect(nextAction({ kind: 'silent', reason: 'x' }, due({ now: Number.NaN })).kind).toBe('escalate');
+  });
+
+  it('does not call a parked approval healthy when it cannot read the clock', () => {
+    // The guard for this existed on the silent path and was reachable through
+    // the approval branch instead, where `NaN >= threshold` is false.
+    const health = assess(observe({ now: Number.NaN, pendingApproval: 'Bash', pendingSince: NOW - 1 }));
+    expect(health.kind).not.toBe('healthy');
+  });
+});

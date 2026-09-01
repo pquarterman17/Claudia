@@ -432,3 +432,36 @@ describe('the path key is linear in its input', () => {
     expect(worktreePathKey(input, platform)).toBe(expected);
   });
 });
+
+describe('the key names a directory, not a spelling of one', () => {
+  it.each([
+    ['/repo//work', '/repo/work', 'posix'],
+    ['/repo/./work', '/repo/work', 'posix'],
+    ['/repo/work/../work', '/repo/work', 'posix'],
+    ['/repo/work/', '/repo/work', 'posix'],
+    ['C:/repo//work', 'C:\\repo\\work', 'win32'],
+    ['C:\\repo\\.\\work', 'C:/repo/work', 'win32'],
+    ['C:/repo/work/../work', 'C:/repo/work', 'win32'],
+  ] as const)('gives %s and %s one key', (a, b, platform) => {
+    // Found in review: repeated separators and . / .. left the same directory
+    // with two different keys, so it could still take two live claims — which
+    // is the whole thing the key exists to prevent.
+    expect(worktreePathKey(a, platform)).toBe(worktreePathKey(b, platform));
+  });
+
+  it.each([
+    ['C:/', 'C:', 'win32'],
+    ['/a/b', '/a', 'posix'],
+    ['../a', 'a', 'posix'],
+    ['//server/share/a', '/server/share/a', 'win32'],
+  ] as const)('keeps %s and %s apart', (a, b, platform) => {
+    // The parts that say WHERE a path starts from survive folding: a drive root
+    // is not drive-relative, and a UNC share is not two redundant separators.
+    expect(worktreePathKey(a, platform)).not.toBe(worktreePathKey(b, platform));
+  });
+
+  it('clamps .. at an absolute root but keeps it in a relative path', () => {
+    expect(worktreePathKey('/a/../..', 'posix')).toBe('/');
+    expect(worktreePathKey('a/../..', 'posix')).toBe('..');
+  });
+});

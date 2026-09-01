@@ -308,25 +308,36 @@ export function worktreePathKey(path: string, platform: 'win32' | 'posix'): stri
   // POSIX, so translating it everywhere would make `/repo/a\\b` and `/repo/a/b`
   // — two different directories — compare equal.
   const separated = platform === 'win32' ? path.replace(/\\/g, '/') : path;
-  // A drive ROOT is not a drive-RELATIVE path: `C:/` must not reduce to `C:`,
-  // which would mean "wherever the process happens to be on that drive".
-  const trimmed = /^[a-zA-Z]:\/$/.test(separated) ? separated : stripTrailingSlashes(separated);
-  return platform === 'win32' ? trimmed.toLowerCase() : trimmed;
-}
+  const folded = platform === 'win32' ? separated.toLowerCase() : separated;
 
-/**
- * Drops trailing separators, keeping at least one character.
- *
- * A scan rather than `replace(/(.)\/+$/, '$1')`, which CodeQL flagged as
- * polynomial on this branch: anchoring at `$` makes the engine retry from
- * every starting offset, so a path of many slashes costs O(n²) — and the input
- * is a path out of a record or a request, which is exactly the "uncontrolled"
- * the alert means. One backwards pass, and the same answer: `/` stays `/`
- * rather than reducing to the empty string and making an unwritten path equal
- * the filesystem root.
- */
-function stripTrailingSlashes(path: string): string {
-  let end = path.length;
-  while (end > 1 && path.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
-  return path.slice(0, end);
+  // A drive prefix and a leading-separator run are the parts that say WHERE a
+  // path starts from, and they survive component folding untouched. `//host` is
+  // a UNC share on Windows, not two redundant separators, and on POSIX a path
+  // beginning `//` is implementation-defined rather than the same as `/`.
+  const drive = /^[a-z]:/.exec(folded)?.[0] ?? '';
+  const rest = folded.slice(drive.length);
+  const leading = /^\/*/.exec(rest)?.[0] ?? '';
+  const root = drive + (platform === 'win32' ? leading.slice(0, 2) : leading.slice(0, 1));
+
+  // Found in review: repeated separators and `.` / `..` left the SAME directory
+  // with two different keys — `C:/repo//work` against `C:/repo/work`, and
+  // `/repo/work/../work` against `/repo/work` — so it could still take two live
+  // claims, which is the whole thing this key exists to prevent.
+  const parts: string[] = [];
+  for (const part of rest.slice(leading.length).split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part !== '..') {
+      parts.push(part);
+      continue;
+    }
+    const last = parts[parts.length - 1];
+    if (last !== undefined && last !== '..') parts.pop();
+    // `..` above an absolute root is still the root; above a RELATIVE path it is
+    // a real component and has to be kept, or `../a` and `a` would collide.
+    else if (root === '') parts.push('..');
+  }
+
+  const joined = parts.join('/');
+  if (root === '') return joined === '' ? '.' : joined;
+  return joined === '' ? root : `${root}${joined}`;
 }

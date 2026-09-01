@@ -99,6 +99,15 @@ export function reconcile(input: ReconcileInput): Decision[] {
   }
 
   const decisions: Decision[] = [];
+  // The other half of the cost guard, and the same omission twice: `attempts >=
+  // NaN` and `attempts >= Infinity` are both false, so a task could be
+  // re-dispatched without limit. Found in review, in the file where the child
+  // ceiling had just been given exactly this check.
+  if (!Number.isSafeInteger(policy.maxAttempts) || policy.maxAttempts < 1) {
+    decisions.push({ kind: 'hold', reason: 'cannot read how many attempts a task may spend' });
+    return decisions;
+  }
+
   const candidates: Task[] = [];
 
   for (const task of tasks) {

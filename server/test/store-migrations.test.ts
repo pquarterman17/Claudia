@@ -618,7 +618,7 @@ describe('one live claim per directory, not per spelling', () => {
          VALUES ('old', '/repo', '/wt/Work', 'b', 'a', 'm1', 'active', 0, 1, 1),
                 ('new', '/repo', '/wt/Work/', 'b', 'a', 'm1', 'active', 0, 1, 2);`,
     );
-    expect(applyMigrations(before.value)).toBe(1);
+    expect(applyMigrations(before.value)).toBe(MIGRATIONS.filter((m) => m.version > 4).length);
     const live = before.value
       .prepare("SELECT id FROM worktrees WHERE state <> 'removed'")
       .all()
@@ -649,5 +649,39 @@ describe('one live claim per directory, not per spelling', () => {
     // And the trailing slash no longer makes it a different directory.
     const found = fleet.value.worktrees.byPath('/wt/Mixed/Case');
     expect(found.ok && found.value?.id).toBe(made.value.id);
+  });
+});
+
+describe('a worktree path cannot drift from its key', () => {
+  it('refuses to change either column once the row exists', () => {
+    // Found in review, through the deliberately exposed connection: updating
+    // `path` and leaving `path_key` behind made byPath('/b') miss the row,
+    // made byPath('/a') return a record whose path is '/b', and let a SECOND
+    // live '/b' row be written. The index still held; it was simply no longer
+    // about the directory.
+    const fleet = openFleetStore(join(dir, 'immutable', 'fleet.db'));
+    if (!fleet.ok) throw new Error(fleet.message);
+    kept.push(fleet.value.db);
+    const mission = fleet.value.missions.create({ name: 'm', body: '', cwd: '/repo' });
+    if (!mission.ok) throw new Error(mission.message);
+    const made = fleet.value.worktrees.create({
+      repo: '/repo',
+      path: '/a',
+      branch: 'b',
+      baseSha: 'x',
+      ownerMissionId: mission.value.id,
+      dirty: false,
+    });
+    if (!made.ok) throw new Error(made.message);
+
+    for (const column of ['path', 'path_key']) {
+      expect(() => fleet.value.db.prepare(`UPDATE worktrees SET ${column} = '/b' WHERE id = ?`).run(made.value.id)).toThrow(
+        /cannot be changed/,
+      );
+    }
+    // Everything else about the row still moves.
+    expect(fleet.value.worktrees.setState(made.value.id, 'idle').ok).toBe(true);
+    const after = fleet.value.worktrees.get(made.value.id);
+    expect(after.ok && after.value?.path).toBe('/a');
   });
 });

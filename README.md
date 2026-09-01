@@ -19,7 +19,7 @@ Everything runs locally on `127.0.0.1`. Nothing is exposed to the network.
 
 | Requirement | Notes |
 | --- | --- |
-| **Node.js ≥ 20.11** | Uses `import.meta.dirname`; Node 22/24 recommended |
+| **Node.js ≥ 22.16** | `node:sqlite` needs 22.13, and the fleet store needs `DatabaseSync.isTransaction` from 22.16; Node 24 also supported |
 | **npm** | Ships with Node; the repo uses npm workspaces |
 | **Claude Code, installed and signed in** | Claudia launches sessions through the Agent SDK, which uses your existing Claude Code auth and plan — there is no separate API key |
 | A browser | Anything modern; Firefox and Chrome are what it's been used with |

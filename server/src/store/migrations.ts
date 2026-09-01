@@ -4,6 +4,7 @@ import {
   CANONICAL_WORKTREE_PATHS,
   canonicaliseWorktreePaths,
   DURABLE_ESCALATIONS,
+  IMMUTABLE_WORKTREE_PATHS,
   refuseUnknownAgents,
   SCHEMA_BOUNDS,
 } from './schema-constraints.js';
@@ -80,6 +81,11 @@ export const MIGRATIONS: readonly Migration[] = [
       db.exec(CANONICAL_WORKTREE_PATHS);
       canonicaliseWorktreePaths(db, process.platform === 'win32' ? 'win32' : 'posix');
     },
+  },
+  {
+    version: 6,
+    name: 'immutable-worktree-paths',
+    up: (db) => db.exec(IMMUTABLE_WORKTREE_PATHS),
   },
 ];
 

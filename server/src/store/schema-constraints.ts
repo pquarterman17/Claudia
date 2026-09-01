@@ -240,3 +240,34 @@ export function canonicaliseWorktreePaths(db: DatabaseSync, platform: 'win32' | 
   }
   db.exec(`CREATE UNIQUE INDEX worktrees_live_path ON worktrees (path_key) WHERE state <> 'removed'`);
 }
+
+/**
+ * A worktree's path stops being editable, so its key cannot drift from it.
+ *
+ * `path` and `path_key` were two independent writable columns, and the
+ * uniqueness guarantee lives entirely on the second. Found in review, through
+ * the deliberately exposed connection: updating `path` from `/a` to `/b` and
+ * leaving the key behind made `byPath('/b')` miss the row, made `byPath('/a')`
+ * return a record whose path is `/b`, and let a SECOND live `/b` row be
+ * written. The index still held; it was simply no longer about the directory.
+ *
+ * Immutability is the answer rather than a paired-update rule, because there is
+ * no such thing as moving a worktree here: a different path is a different
+ * checkout, with a different branch and a different owner. Nothing in the
+ * repository updates either column, so this forbids only what was never meant
+ * to happen — and it is the database that forbids it, which is the point, since
+ * the caller doing it is the one holding the raw connection.
+ *
+ * INSERT is still the repository's to get right: SQLite cannot re-run the
+ * contract's canonicaliser, so a trigger cannot check a key it cannot compute.
+ * What this closes is drift AFTER the row is written, which is the reachable
+ * half.
+ */
+export const IMMUTABLE_WORKTREE_PATHS = `
+CREATE TRIGGER worktrees_path_is_immutable
+BEFORE UPDATE OF path, path_key ON worktrees
+FOR EACH ROW WHEN NEW.path IS NOT OLD.path OR NEW.path_key IS NOT OLD.path_key
+BEGIN
+  SELECT RAISE(ABORT, 'a worktree path cannot be changed; record a new worktree instead');
+END;
+`;

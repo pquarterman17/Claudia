@@ -136,21 +136,86 @@ describe('properties, rather than a second table of expected strings', () => {
     'a:/b',
   ] as const;
 
-  it.each(inputs)('is idempotent for %s', (input) => {
-    // The key is written to a column and read back for comparison, so a key
-    // that is not itself a canonical path would compare unequal to a fresh
-    // canonicalisation of the same directory.
-    for (const platform of ['win32', 'posix'] as const) {
-      const once = worktreePathKey(input, platform);
-      expect(worktreePathKey(once, platform)).toBe(once);
-    }
-  });
-
   it.each(inputs)('does not change what %s is anchored to', (input) => {
-    // The single property every one of the four bugs above violated: folding
-    // the spelling must not move a path between "fixed directory" and "wherever
-    // this process happens to be". Asserted against `path.win32` itself, so the
+    // Folding the spelling must not move a path between "fixed directory" and
+    // "wherever this process happens to be" — the property every one of the
+    // four bugs above violated. Asserted against `path.win32` itself, so the
     // test cannot inherit the same misunderstanding as the code.
     expect(win32.isAbsolute(worktreePathKey(input, 'win32'))).toBe(win32.isAbsolute(input));
   });
+
+  it('never gives two different directories the same key', () => {
+    // The dangerous direction, and the reason for a generated corpus rather
+    // than a list: a false SPLIT costs a missed lookup, a false MERGE puts two
+    // missions in one checkout each believing it owns the place.
+    //
+    // Judged by `win32.resolve` from a fixed base rather than by this module's
+    // own idea of sameness, so the oracle cannot share the code's mistakes.
+    // Only merges are asserted: resolve settles a drive-relative path against
+    // the base's drive, which this deliberately does NOT do — `C:work` and
+    // `work` are one directory to resolve and two to the key, correctly, since
+    // the key must not depend on where the process happens to be standing.
+    const BASE = 'C:\\base\\dir';
+    const byKey = new Map<string, Set<string>>();
+    for (const path of corpus(4_000)) {
+      const key = worktreePathKey(path, 'win32');
+      const at = win32.resolve(BASE, path).toLowerCase();
+      const group = byKey.get(key) ?? new Set<string>();
+      group.add(at);
+      byKey.set(key, group);
+    }
+    const merged = [...byKey].filter(([, at]) => at.size > 1);
+    expect(merged.map(([key, at]) => `${key} <- ${[...at].join(' , ')}`)).toEqual([]);
+  });
+
+  it('gives a directory whose name ends in a colon one key', () => {
+    // Found fuzzing against `win32.resolve`. The guard that keeps `C:/` from
+    // collapsing to the drive-relative `C:` tested for a colon and nothing
+    // else, so it read ANY component ending in one as a root and kept its
+    // trailing separator — and `:` is an ordinary, legal character in a POSIX
+    // filename. Two spellings of one directory, two ownership keys.
+    for (const platform of ['posix', 'win32'] as const) {
+      expect(worktreePathKey('/wt/build:/', platform)).toBe(worktreePathKey('/wt/build:', platform));
+    }
+    // And the root it was protecting is still protected.
+    expect(worktreePathKey('C:/', 'win32')).not.toBe(worktreePathKey('C:', 'win32'));
+  });
 });
+
+/**
+ * A deterministic corpus of awkward spellings.
+ *
+ * Seeded rather than random: a property test that fails one run in ten is a
+ * test nobody trusts, and the point is a corpus wider than a human writes by
+ * hand, not a different one each time.
+ *
+ * The generator is bounded, not "loop until we have enough". The first version
+ * was the latter, over an LCG read by its low bits — which have a short period,
+ * so the set saturated well under the target and the loop span forever. A test
+ * that hangs the runner is the same defect this branch already fixed once in
+ * `sanitizeReport`, written into the thing checking for it.
+ */
+function corpus(attempts: number): string[] {
+  const SEGMENTS = ['a', 'B', '..', '.', '', 'c:', 'C:', 'share', 'x y', '..a', 'build:'];
+  const SEPARATORS = ['/', '\\', '//', '\\\\', '/\\'];
+  const PREFIXES = ['', '/', '\\', '//', 'C:', 'C:/', 'c:\\', '//srv/share/', 'D:'];
+  let seed = 0x5eed;
+  // Read from the HIGH bits, where an LCG's period is long enough to be worth
+  // sampling; the low ones cycle every few draws.
+  const next = (bound: number): number => {
+    seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+    return (seed >>> 15) % bound;
+  };
+  const pick = <T>(from: readonly T[]): T => from[next(from.length)] as T;
+  const paths = new Set<string>();
+  for (let i = 0; i < attempts; i++) {
+    let path = pick(PREFIXES);
+    const depth = 1 + next(4);
+    for (let segment = 0; segment < depth; segment++) {
+      path += pick(SEGMENTS);
+      if (segment < depth - 1 || next(3) === 0) path += pick(SEPARATORS);
+    }
+    paths.add(path);
+  }
+  return [...paths];
+}

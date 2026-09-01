@@ -310,6 +310,23 @@ export function worktreePathKey(path: string, platform: 'win32' | 'posix'): stri
   const separated = platform === 'win32' ? path.replace(/\\/g, '/') : path;
   // A drive ROOT is not a drive-RELATIVE path: `C:/` must not reduce to `C:`,
   // which would mean "wherever the process happens to be on that drive".
-  const trimmed = /^[a-zA-Z]:\/$/.test(separated) ? separated : separated.replace(/(.)\/+$/, '$1');
+  const trimmed = /^[a-zA-Z]:\/$/.test(separated) ? separated : stripTrailingSlashes(separated);
   return platform === 'win32' ? trimmed.toLowerCase() : trimmed;
+}
+
+/**
+ * Drops trailing separators, keeping at least one character.
+ *
+ * A scan rather than `replace(/(.)\/+$/, '$1')`, which CodeQL flagged as
+ * polynomial on this branch: anchoring at `$` makes the engine retry from
+ * every starting offset, so a path of many slashes costs O(n²) — and the input
+ * is a path out of a record or a request, which is exactly the "uncontrolled"
+ * the alert means. One backwards pass, and the same answer: `/` stays `/`
+ * rather than reducing to the empty string and making an unwritten path equal
+ * the filesystem root.
+ */
+function stripTrailingSlashes(path: string): string {
+  let end = path.length;
+  while (end > 1 && path.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
+  return path.slice(0, end);
 }

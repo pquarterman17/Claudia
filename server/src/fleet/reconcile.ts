@@ -163,7 +163,12 @@ export function reconcile(input: ReconcileInput): Decision[] {
   // hold: the fleet did nothing and said nothing about why, which this file's
   // own design calls out as indistinguishable from being broken. The same
   // commit guarded a non-finite budget and left the identical hazard here.
-  if (!Number.isFinite(capacity)) {
+  // A whole number of children, or it is not a ceiling. `isFinite` alone let a
+  // fractional or negative one through into human-facing text — "0.5 task(s)
+  // waiting on a free slot", "0 of -1 children busy" — which is nonsense in the
+  // one line a person reads to find out why nothing is happening. Zero is left
+  // alone: "0 of 0 children busy" is coherent, and says what it means.
+  if (!Number.isSafeInteger(ceiling) || ceiling < 0) {
     decisions.push({ kind: 'hold', reason: 'cannot read how many children this mission may run' });
     return decisions;
   }

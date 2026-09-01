@@ -507,6 +507,8 @@ describe('found reviewing my own fix', () => {
   it.each([
     ['NaN', Number.NaN],
     ['absent', undefined as unknown as number],
+    ['fractional', 2.5],
+    ['negative', -1],
   ])('holds, with a reason, when the mission ceiling is %s', (_label, maxChildren) => {
     // The commit that started reading mission.maxChildren introduced this:
     // Math.min(NaN, 2) is NaN, NaN <= 0 is false, and slice(0, NaN) is empty,
@@ -514,15 +516,30 @@ describe('found reviewing my own fix', () => {
     // a hold — the fleet did nothing and said nothing about why, which this
     // file's own design calls out as indistinguishable from being broken. The
     // same commit guarded a non-finite budget and left this untouched.
+    // The policy ceiling is deliberately ABOVE the mission's here: taking the
+    // minimum of the two would otherwise mask a bad mission value behind a good
+    // policy one, which is what happens with a fractional ceiling and a policy
+    // of 2 — min(2.5, 2) is 2, a perfectly usable number.
     const decisions = reconcile({
       mission: mission({ maxChildren }),
       tasks: [task(), task()],
       runs: [],
-      policy: POLICY,
+      policy: { maxChildren: 8, maxAttempts: 3 },
     });
     expect(decisions).not.toEqual([]);
     expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(0);
     expect(decisions[0]?.kind === 'hold' && decisions[0].reason).toMatch(/cannot read how many children/);
+  });
+
+  it('lets a good policy ceiling mask a bad mission one, because the minimum is the answer', () => {
+    // Not a hole: 2.5 and a policy of 2 give an effective ceiling of 2.
+    const decisions = reconcile({
+      mission: mission({ maxChildren: 2.5 }),
+      tasks: [task(), task(), task()],
+      runs: [],
+      policy: POLICY,
+    });
+    expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(2);
   });
 
   it('still dispatches on a readable ceiling either side of the minimum', () => {

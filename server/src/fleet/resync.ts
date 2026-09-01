@@ -96,9 +96,17 @@ export type ReplayStream = 'global' | 'filtered';
  * handed a batch with a hole in it and told it is contiguous, which is the
  * same silent gap the snapshot path exists to avoid.
  *
- * On a filtered stream the trade is explicit: gaps cannot be distinguished
- * from other missions' events, so ordering and range are checked and pruning
- * inside the window is caught by `planResync`'s `oldestSeq` guard instead.
+ * On a filtered stream the trade is explicit and narrower than it first looks:
+ * a gap cannot be distinguished from another mission's events, so ordering and
+ * range are checked and completeness is not.
+ *
+ * That makes two things the CALLER has to get right, and an audit found the
+ * second one wrong. The bounds passed to `planResync` must be that stream's own
+ * oldest and newest, not the whole log's, or pruning inside the window goes
+ * unnoticed. And the batch must be read with `FleetEventLog.replay`, which
+ * derives its limit from the window: read with a loose `since*` call the store
+ * returned its default page of 500 for a window of 1200, and this function
+ * accepted it — telling the client it was caught up over a 700-event hole.
  */
 export function replayIsUsable(
   seqs: readonly number[],

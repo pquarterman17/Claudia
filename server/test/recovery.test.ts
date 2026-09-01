@@ -136,7 +136,7 @@ describe('describeRecovery', () => {
         { kind: 'orphan', runId: 'b', to: 'failed', reason: '' },
         { kind: 'leave', runId: 'c' },
       ],
-      [{ taskId: 't', to: 'ready', reason: '' }],
+      [{ taskId: 't', to: 'ready', path: ['failed', 'ready'], reason: '' }],
     );
     expect(summary).toBe('recovered 1 run(s), orphaned 1, moved 1 task(s): 1 to ready');
   });
@@ -148,9 +148,9 @@ describe('describeRecovery', () => {
     const summary = describeRecovery(
       [],
       [
-        { taskId: 'a', to: 'ready', reason: '' },
-        { taskId: 'b', to: 'reported', reason: '' },
-        { taskId: 'c', to: 'ready', reason: '' },
+        { taskId: 'a', to: 'ready', path: ['failed', 'ready'], reason: '' },
+        { taskId: 'b', to: 'reported', path: ['reported'], reason: '' },
+        { taskId: 'c', to: 'ready', path: ['failed', 'ready'], reason: '' },
       ],
     );
     expect(summary).toContain('2 to ready');

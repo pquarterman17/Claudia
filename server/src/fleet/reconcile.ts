@@ -99,6 +99,15 @@ export function reconcile(input: ReconcileInput): Decision[] {
   }
 
   const decisions: Decision[] = [];
+  // The other half of the cost guard, and the same omission twice: `attempts >=
+  // NaN` and `attempts >= Infinity` are both false, so a task could be
+  // re-dispatched without limit. Found in review, in the file where the child
+  // ceiling had just been given exactly this check.
+  if (!Number.isSafeInteger(policy.maxAttempts) || policy.maxAttempts < 1) {
+    decisions.push({ kind: 'hold', reason: 'cannot read how many attempts a task may spend' });
+    return decisions;
+  }
+
   const candidates: Task[] = [];
 
   for (const task of tasks) {
@@ -146,7 +155,32 @@ export function reconcile(input: ReconcileInput): Decision[] {
   // task collapsed to a single busy slot, so the fleet believed it had room it
   // did not have — and duplicate runs are exactly the state a wedged or
   // half-recovered mission is in.
-  const capacity = policy.maxChildren - activeRuns.length;
+  // The LOWER of what the human set on this mission and what the server-wide
+  // policy allows. Found by audit: `mission.maxChildren` was written, bounded
+  // on the way in, and read by no production code — a mission set to one child
+  // dispatched eight. That is precisely the shape `overBudget` below has a
+  // comment about: visible in the UI, settable by a human, enforcing nothing.
+  // Taking the minimum means neither ceiling can be exceeded by raising the
+  // other.
+  const ceiling = Math.min(mission.maxChildren, policy.maxChildren);
+  const capacity = ceiling - activeRuns.length;
+  // A ceiling nobody can read is not a licence to dispatch, and it is not a
+  // licence to go quiet either. Found reviewing the commit that introduced this
+  // line: `Math.min(NaN, 2)` is NaN, `NaN <= 0` is false, and
+  // `candidates.slice(0, NaN)` is empty — so a mission whose maxChildren was
+  // NaN or absent produced NO decisions at all. Not a dispatch, not even a
+  // hold: the fleet did nothing and said nothing about why, which this file's
+  // own design calls out as indistinguishable from being broken. The same
+  // commit guarded a non-finite budget and left the identical hazard here.
+  // A whole number of children, or it is not a ceiling. `isFinite` alone let a
+  // fractional or negative one through into human-facing text — "0.5 task(s)
+  // waiting on a free slot", "0 of -1 children busy" — which is nonsense in the
+  // one line a person reads to find out why nothing is happening. Zero is left
+  // alone: "0 of 0 children busy" is coherent, and says what it means.
+  if (!Number.isSafeInteger(ceiling) || ceiling < 0) {
+    decisions.push({ kind: 'hold', reason: 'cannot read how many children this mission may run' });
+    return decisions;
+  }
   if (candidates.length === 0) {
     // Only worth a hold when there was nothing to say at all; a list of blocks
     // already explains itself.
@@ -156,7 +190,7 @@ export function reconcile(input: ReconcileInput): Decision[] {
   if (capacity <= 0) {
     decisions.push({
       kind: 'hold',
-      reason: `${activeRuns.length} of ${policy.maxChildren} children busy; ${candidates.length} task(s) waiting`,
+      reason: `${activeRuns.length} of ${ceiling} children busy; ${candidates.length} task(s) waiting`,
     });
     return decisions;
   }
@@ -194,6 +228,16 @@ export function reconcile(input: ReconcileInput): Decision[] {
  */
 function overBudget(mission: Mission, spend: MissionSpend | undefined): string | undefined {
   if (!spend) return undefined;
+  // A spend nobody could measure is not a spend inside the budget. Found by
+  // audit: `NaN >= x` is false, so a single unusable number switched both
+  // ceilings off silently — and `tokens` is summed from model usage, where one
+  // missing field produces NaN. Refusing to dispatch on an unreadable spend is
+  // the same bias the rest of the fleet takes: an unknown is not permission.
+  const unreadable = [
+    mission.budgetSec !== undefined && !Number.isFinite(spend.elapsedSec) ? 'elapsed time' : undefined,
+    mission.budgetTokens !== undefined && !Number.isFinite(spend.tokens) ? 'token spend' : undefined,
+  ].filter((what): what is string => what !== undefined);
+  if (unreadable.length > 0) return `cannot read its ${unreadable.join(' or ')}`;
   if (mission.budgetSec !== undefined && spend.elapsedSec >= mission.budgetSec) {
     return `spent its ${mission.budgetSec}s budget`;
   }
@@ -212,7 +256,13 @@ function overBudget(mission: Mission, spend: MissionSpend | undefined): string |
  * prevent.
  */
 export function dispatchKey(missionId: string, taskId: string, attempt: number): string {
-  return `dispatch:${missionId}:${taskId}:${attempt}`;
+  // Encoded, for exactly the reason escalationKey already is — and this is its
+  // sibling, which that fix did not reach. Found in review: a raw join
+  // collides, so ('m1', 't1:2', 3) and ('m1:t1', '2', 3) produced the same
+  // reservation and one dispatch could suppress an unrelated one. The key is
+  // what stops a repeated pulse spending twice; a key that can be forged by a
+  // colon in an id is not one.
+  return `dispatch:${encodeURIComponent(missionId)}:${encodeURIComponent(taskId)}:${attempt}`;
 }
 
 /**

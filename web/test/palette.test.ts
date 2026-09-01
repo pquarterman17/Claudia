@@ -1,4 +1,4 @@
-import type { SessionSummary } from '@claudia/shared';
+import type { SessionSummary, ToolkitAction } from '@claudia/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { buildPaletteActions, filterActions, type PaletteAction } from '../src/palette';
 
@@ -52,6 +52,10 @@ function session(id: string, name: string): SessionSummary {
     name,
     cwd: `C:\\Users\\x\\git\\${name}`,
     permissionMode: 'auto',
+    effortLevel: 'medium',
+    thinkingMode: 'adaptive',
+    contextPending: false,
+    todos: [],
     state: 'idle',
     startedAt: 0,
     lastActivityAt: 0,

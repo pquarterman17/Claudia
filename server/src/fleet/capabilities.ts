@@ -244,6 +244,14 @@ const CONTROL_CHARS = /[\u0000-\u0008\u000b-\u001f\u007f\u200e\u200f\u202a-\u202
  */
 export function sanitizeReport(raw: unknown, limits: ReportLimits = DEFAULT_REPORT_LIMITS): SanitizedReport {
   if (typeof raw !== 'string') return { ok: false, reason: 'a report must be text' };
+  // Found by audit: with a non-positive byte budget the trimming loop below
+  // never terminates — `''.slice(0, -1)` is `''`, so the condition stays true
+  // forever. A synchronous infinite loop on the server's event loop, reached
+  // from a config value. `planResync` already refuses an unusable `maxBatch`
+  // for exactly this class; this validated nothing.
+  if (!usableLimit(limits.maxBytes) || !usableLimit(limits.maxLines)) {
+    return { ok: false, reason: 'the report limits are not usable' };
+  }
 
   const stripped = raw.replace(CONTROL_CHARS, '');
   let truncated = false;
@@ -255,13 +263,41 @@ export function sanitizeReport(raw: unknown, limits: ReportLimits = DEFAULT_REPO
   }
   let text = lines.join('\n');
   if (Buffer.byteLength(text, 'utf8') > limits.maxBytes) {
-    // Cut by code unit, then walk back until the BYTE budget is met: a
-    // multi-byte character otherwise slips past a length-based cut.
-    text = text.slice(0, limits.maxBytes);
-    while (Buffer.byteLength(text, 'utf8') > limits.maxBytes) text = text.slice(0, -1);
+    text = cutToBytes(text, limits.maxBytes);
     truncated = true;
   }
   return { ok: true, text, truncated };
+}
+
+/**
+ * Truncates to a byte budget in one pass, on a character boundary.
+ *
+ * The previous version cut by code unit and then walked back one unit at a
+ * time, re-measuring the whole string each step. Found by audit and measured:
+ * clean quadratic, 4x per doubling of the budget, and at the SHIPPED defaults a
+ * 1.2 MB report of multi-byte text cost 482ms of synchronous work on the event
+ * loop — against 2.6ms for the same byte count in ASCII, so it was the
+ * walk-back and not the size. A caller-chosen 512 KiB budget did not finish in
+ * two minutes. The earlier fix removed `forever` and left `long`.
+ *
+ * It also cut mid-surrogate: the orphan's replacement-character encoding
+ * satisfied the byte budget, so the loop stopped with a lone surrogate still in
+ * the output. This function exists to produce text safe to store and display,
+ * and a lone surrogate silently becomes U+FFFD on any UTF-8 round trip — so the
+ * stored record and the byte count stop agreeing with what was sanitized.
+ *
+ * Buffer.write reports how many bytes it wrote without ever splitting a
+ * character, so the truncation and the boundary are the same operation.
+ */
+function cutToBytes(text: string, maxBytes: number): string {
+  const room = Buffer.allocUnsafe(maxBytes);
+  const written = room.write(text, 0, maxBytes, 'utf8');
+  return room.toString('utf8', 0, written);
+}
+
+/** A bound has to be a whole number above zero to be a bound at all. */
+function usableLimit(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0;
 }
 
 /**

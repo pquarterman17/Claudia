@@ -39,7 +39,7 @@ describe('runBulkOp', () => {
       summary({
         id: 'b',
         pendingApproval: { requestId: 'req-b', toolName: 'Bash', summary: 'ls', requestedAt: 0 },
-        pendingQuestion: { requestId: 'q-b', questions: [] },
+        pendingQuestion: { requestId: 'q-b', questions: [], requestedAt: 0 },
       }),
     ];
     const manager = fakeManager(summaries, {

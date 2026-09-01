@@ -1,6 +1,7 @@
-import type { ChildRun, EscalationSeverity } from '@claudia/shared';
+import type { ChildRun, EscalationSeverity, TaskStatus } from '@claudia/shared';
 import { escalationKey } from './capabilities.js';
 import { dispatchKey } from './reconcile.js';
+import { backoffMs, DEFAULT_WATCHDOG, minutes, usablePolicy, type WatchdogPolicy } from './watchdog-policy.js';
 
 /**
  * Noticing that a child has stopped being useful.
@@ -16,29 +17,6 @@ import { dispatchKey } from './reconcile.js';
  * about at three in the morning, and the thing it guards is a bounded retry
  * loop — the one place where being wrong costs money on every iteration.
  */
-
-export interface WatchdogPolicy {
-  /** No output at all for this long is treated as silence, not thinking. */
-  silentAfterMs: number;
-  /** A pending approval older than this will not be answered by anyone. */
-  approvalStuckAfterMs: number;
-  maxAttempts: number;
-  /** First retry delay; doubles per attempt up to retryMaxMs. */
-  retryBaseMs: number;
-  retryMaxMs: number;
-}
-
-export const DEFAULT_WATCHDOG: WatchdogPolicy = {
-  // Generous: a long build or a big refactor legitimately goes quiet, and a
-  // watchdog that kills real work is worse than one that reacts late.
-  silentAfterMs: 15 * 60_000,
-  // Shorter, because a parked approval is not work in progress — nothing is
-  // happening and nothing will until a human acts.
-  approvalStuckAfterMs: 5 * 60_000,
-  maxAttempts: 3,
-  retryBaseMs: 30_000,
-  retryMaxMs: 10 * 60_000,
-};
 
 export interface RunObservation {
   run: ChildRun;
@@ -78,14 +56,32 @@ export type RunHealth =
  */
 export function assess(observation: RunObservation, policy: WatchdogPolicy = DEFAULT_WATCHDOG): RunHealth {
   const { run, now } = observation;
+  // A policy nobody can read is not a policy. Found in review: a non-finite
+  // threshold made every comparison below false, so every run was healthy
+  // forever — the same shape as the NaN clock, one input over. `pendingSince`
+  // is checked at its own branch below, where an unreadable timestamp now
+  // falls through to the `stuck` arm rather than reading as healthy: not
+  // knowing how long it has waited is not evidence that it has not waited long.
+  if (!usablePolicy(policy)) {
+    return { kind: 'silent', reason: 'the watchdog policy is not usable' };
+  }
   if (run.state === 'stopped' || run.state === 'failed' || run.state === 'reported') {
     return { kind: 'finished' };
   }
   if (!observation.sessionAlive) {
     return { kind: 'orphaned', reason: 'the record says running but the session is gone' };
   }
-  if (observation.pendingApproval && observation.pendingSince !== undefined) {
-    const waited = now - observation.pendingSince;
+  // Everything past here is arithmetic on the clock. Found in review: an
+  // unreadable `now` made the parked-approval branch below return `healthy`
+  // forever, because `NaN >= threshold` is false — the same shape as the silent
+  // check further down, which was already guarded, reached through a different
+  // branch. Whether it is stuck or merely quiet cannot be told without a clock,
+  // and `silent` is the answer that gets it looked at.
+  if (!Number.isFinite(now)) {
+    return { kind: 'silent', reason: 'cannot tell what time it is' };
+  }
+  if (observation.pendingApproval && Number.isFinite(observation.pendingSince)) {
+    const waited = now - (observation.pendingSince ?? Number.NaN);
     if (waited >= policy.approvalStuckAfterMs) {
       return {
         kind: 'stuck',
@@ -110,11 +106,47 @@ export function assess(observation: RunObservation, policy: WatchdogPolicy = DEF
   }
   const since = observation.lastActivityAt ?? run.startedAt;
   const quiet = now - since;
+  // An unreadable clock is not evidence of life. Found by audit: `NaN >= x` is
+  // false, so a single bad timestamp made every run healthy forever — the one
+  // fault this module exists to catch, silenced by the arithmetic that catches
+  // it. Treated as silence, because "I cannot tell whether it has been working"
+  // is exactly what silence means here.
+  if (!Number.isFinite(quiet)) {
+    return { kind: 'silent', reason: 'cannot tell when it was last doing anything' };
+  }
   if (quiet >= policy.silentAfterMs) {
     return { kind: 'silent', reason: `nothing for ${minutes(quiet)}` };
   }
   return { kind: 'healthy' };
 }
+
+/**
+ * What the TASK must be written to, and by what route.
+ *
+ * Found by audit: both `retry` and `give_up` said what becomes of the run and
+ * nothing about the task, so applying either left the task `running`. Nothing
+ * in the fleet can move it from there: `reconcile` only ever looks at `ready`
+ * and `blocked`, and the watchdog only ever looks at live runs. It is the
+ * exact wedge `terminal` was added to close, moved from the run row to the
+ * task row — and only a restart clears it, because `recoverTasks` catches
+ * running-with-nothing-running, which means it would only ever be seen in
+ * production.
+ *
+ * Both routes go through `failed` rather than straight to the destination,
+ * because that is what TASK_TRANSITIONS allows from `running` — and because it
+ * is true: the attempt did fail. `recovery.ts` reaches the queue the same way
+ * for the same reason.
+ */
+export interface TaskOutcome {
+  to: TaskStatus;
+  path: readonly TaskStatus[];
+}
+
+/** Back into the queue, so the reconciler can spend the next attempt. */
+const TASK_REQUEUED: TaskOutcome = { to: 'ready', path: ['failed', 'ready'] };
+
+/** Left failed, which a human can still requeue; nothing does it automatically. */
+const TASK_GIVEN_UP: TaskOutcome = { to: 'failed', path: ['failed'] };
 
 export type WatchdogAction =
   | { kind: 'wait' }
@@ -138,11 +170,24 @@ export type WatchdogAction =
        * Without it the dead run stays `running` and the reconciler counts its
        * slot as occupied forever — a wedge that reads as a busy fleet. */
       terminal: 'failed';
+      /** And where the TASK goes, so something can actually pick the retry up.
+       * The key below reserves in the reconciler's namespace, and the
+       * reconciler only dispatches `ready` and `blocked`. */
+      task: TaskOutcome;
     }
+  /**
+   * Faulted, and the retry is not due yet. Distinct from `wait`, which means
+   * nothing is wrong: a board showing "retrying in 4m" needs to tell those
+   * apart, and collapsing them would hide a failing run behind a healthy-
+   * looking tile. Deliberately carries no `task` and no `terminal` — there is
+   * nothing to apply yet, which is the whole point.
+   */
+  | { kind: 'backoff'; until: number; attempt: number; reason: string }
   | { kind: 'escalate'; request: string; reason: string; severity: EscalationSeverity; key: string }
   /** Terminal for the same reason as retry: giving up on a run must not leave
-   * it holding a concurrency slot for the life of the mission. */
-  | { kind: 'give_up'; reason: string; terminal: 'failed' };
+   * it holding a concurrency slot for the life of the mission — nor its task
+   * stranded in `running`, which is the same wedge one row over. */
+  | { kind: 'give_up'; reason: string; terminal: 'failed'; task: TaskOutcome };
 
 /**
  * When the run stopped being useful — the fixed point a backoff counts from.
@@ -150,14 +195,24 @@ export type WatchdogAction =
  * A run that ended has an end time. One that is merely silent has not ended,
  * so the anchor is when it last did anything; failing that, when it started.
  * None of these change between ticks, which is the whole requirement.
+ *
+ * `undefined` when the timestamp this run's anchor comes from is unreadable.
+ * Found in review: `??` falls back on absence, not on nonsense, so a
+ * `lastActivityAt` of NaN was SELECTED over a perfectly good `startedAt` — and
+ * every number derived from it was NaN, up to a retry announcing
+ * `notBefore: NaN` that walked straight through the `now < notBefore` gate,
+ * because a comparison with NaN is false. The next candidate down is not a
+ * repair either: it is always EARLIER than the one that could not be read, so
+ * substituting it shortens a backoff by an unknown amount. Neither reading nor
+ * guessing, then; the caller escalates.
  */
-export function retryAnchor(observation: RunObservation): number {
-  return observation.run.endedAt ?? observation.lastActivityAt ?? observation.run.startedAt;
+export function retryAnchor(observation: RunObservation): number | undefined {
+  const anchor = observation.run.endedAt ?? observation.lastActivityAt ?? observation.run.startedAt;
+  return Number.isFinite(anchor) ? anchor : undefined;
 }
 
 /** When the fault this action answers first became visible. */
-function faultAt(health: RunHealth, observation: RunObservation, policy: WatchdogPolicy): number {
-  const anchor = retryAnchor(observation);
+function faultAt(health: RunHealth, anchor: number, policy: WatchdogPolicy): number {
   return health.kind === 'silent' ? anchor + policy.silentAfterMs : anchor;
 }
 
@@ -185,6 +240,24 @@ export function nextAction(
   const { run } = observation;
   if (health.kind === 'healthy' || health.kind === 'finished') return { kind: 'wait' };
 
+  // Revalidated HERE, not only in `assess`. Found in review: the two are
+  // separate entry points and a caller composes them, so validating in one
+  // proves nothing about the other. With an unusable policy every arithmetic
+  // result below is NaN — `notBefore: NaN`, and `now < NaN` is false, so the
+  // backoff gate waves through an executable retry announcing a delay it never
+  // computed. Nothing here can be decided without a readable clock and a
+  // readable policy, and picking a default would be inventing the numbers that
+  // govern spending.
+  if (!usablePolicy(policy) || !Number.isFinite(observation.now)) {
+    return {
+      kind: 'escalate',
+      request: 'unusable watchdog configuration',
+      reason: 'the watchdog cannot read its own policy or clock, so it will not spend another attempt',
+      severity: 'blocking',
+      key: escalationKey(run.id, 'unusable-watchdog-config'),
+    };
+  }
+
   if (health.kind === 'stuck') {
     return {
       kind: 'escalate',
@@ -203,15 +276,72 @@ export function nextAction(
   // let the watchdog propose an attempt another run already holds, and call a
   // task retryable that the reconciler had already blocked.
   const spent = Math.max(run.attempt, observation.attemptsSpent ?? run.attempt);
+  // Counted, or nothing below means anything. Found in review: an
+  // `attemptsSpent` of NaN produced an EXECUTABLE retry announcing
+  // `attempt: NaN`, `afterMs: NaN`, `notBefore: NaN` and the reservation key
+  // `dispatch:m:t:NaN` — and since `now < NaN` is false it sailed past the
+  // backoff gate as well. A count that cannot be read is not a count, and
+  // guessing one either re-runs work already paid for or gives up early, so
+  // this is a question for a person rather than a decision to take.
+  if (!Number.isSafeInteger(spent) || spent < 1 || !Number.isSafeInteger(policy.maxAttempts)) {
+    return {
+      kind: 'escalate',
+      request: 'unreadable attempt count',
+      reason: `cannot tell how many attempts ${run.taskId} has spent, so neither retrying nor giving up is safe`,
+      severity: 'blocking',
+      key: escalationKey(run.id, 'unreadable-attempt-count'),
+    };
+  }
   const next = spent + 1;
   if (next > policy.maxAttempts) {
     return {
       kind: 'give_up',
       reason: `${spent} attempt${spent === 1 ? '' : 's'} spent on this task; not starting another`,
       terminal: 'failed',
+      task: TASK_GIVEN_UP,
     };
   }
-  const afterMs = backoffMs(run.attempt, policy);
+  // Read before anything is computed from it, for the same reason the policy
+  // and the clock are read above: this is the third input to the same
+  // arithmetic, and the only one that was still taken on trust. An action is
+  // the permission to spend an attempt, and a deadline nobody can compute is
+  // not a deadline that has passed.
+  const anchor = retryAnchor(observation);
+  if (anchor === undefined) {
+    return {
+      kind: 'escalate',
+      request: 'unreadable run timestamps',
+      reason: `cannot tell when run ${run.id} stopped being useful, so there is no point to count a backoff from`,
+      severity: 'blocking',
+      key: escalationKey(run.id, 'unreadable-run-anchor'),
+    };
+  }
+  // Counted over the TASK, like `spent` above, not over this one run. Found
+  // reviewing this file: `next` came from max(run.attempt, attemptsSpent) but
+  // the delay came from run.attempt alone, so a task whose OTHER runs had
+  // burned the attempts got the shortest backoff on its most expensive retry —
+  // an action announcing "attempt 5" with the 30-second delay for attempt 1.
+  // The comment on `spent` gives the reason and it applies just as much here:
+  // one run's number is not the task's.
+  const afterMs = backoffMs(spent, policy);
+  const notBefore = faultAt(health, anchor, policy) + afterMs;
+  // Withheld until it is actually due, rather than emitted early with a
+  // "do not act on this yet" attached.
+  //
+  // Found reviewing the commit that gave this action its `task` route. The
+  // backoff lives here; the dispatch lives in the reconciler; and the only
+  // thing joining them is a task status, which carries no timing. So the
+  // moment a caller applies `task` -- which is the whole point of it, the
+  // hand-off that lets the retry be picked up -- the reconciler dispatches on
+  // its next pulse whatever `notBefore` said. Measured: notBefore 30s away,
+  // task moved to `ready`, dispatched on the very next pulse.
+  //
+  // Nothing downstream can honour a deadline it is never told about, so the
+  // module that owns the deadline waits instead. `notBefore` stays on the
+  // action as the record of when it came due, not as an instruction.
+  if (observation.now < notBefore) {
+    return { kind: 'backoff', until: notBefore, attempt: next, reason: health.reason };
+  }
   return {
     kind: 'retry',
     attempt: next,
@@ -226,32 +356,17 @@ export function nextAction(
     // backoff caps at `retryMaxMs` (10m), so anchoring on last activity made
     // every silent-path deadline already expired — the backoff was structurally
     // dead on the commonest failure, and only `maxAttempts` bounded anything.
-    notBefore: faultAt(health, observation, policy) + afterMs,
+    notBefore,
     reason: health.reason,
     // The SAME namespace the reconciler reserves in. Two key spaces meant a
     // watchdog retry and a reconciler dispatch of one task's one attempt could
     // both be reserved, which is the thing keys exist to prevent.
     key: dispatchKey(run.missionId, run.taskId, next),
     terminal: 'failed',
+    task: TASK_REQUEUED,
   };
 }
 
-/**
- * Exponential, capped, and with no jitter.
- *
- * Jitter exists to stop many clients retrying in lockstep. There is one fleet
- * on one machine, so there is nothing to spread out — and the determinism is
- * worth more than the property jitter would buy.
- */
-export function backoffMs(attemptsSoFar: number, policy: WatchdogPolicy = DEFAULT_WATCHDOG): number {
-  const steps = Math.max(0, attemptsSoFar - 1);
-  // Bounded before the shift so a large attempt count cannot overflow into a
-  // negative delay, which would retry instantly and forever.
-  const uncapped = policy.retryBaseMs * 2 ** Math.min(steps, 20);
-  return Math.min(policy.retryMaxMs, uncapped);
-}
-
-function minutes(ms: number): string {
-  const m = Math.floor(ms / 60_000);
-  return m >= 1 ? `${m}m` : `${Math.floor(ms / 1000)}s`;
-}
+// Re-exported so `watchdog.js` stays the one module a caller asks about the
+// watchdog, whatever side of the split a symbol happens to live on.
+export { backoffMs, DEFAULT_WATCHDOG, type WatchdogPolicy } from './watchdog-policy.js';

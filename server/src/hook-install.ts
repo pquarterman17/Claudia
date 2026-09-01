@@ -190,19 +190,9 @@ export async function uninstallHooks(port: number, file = globalSettingsPath()):
  * an empty one to copy would be theatre.
  */
 async function write(file: string, next: Record<string, unknown>, events: string[]): Promise<HookChange> {
-  let backupPath: string | undefined;
-  try {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const candidate = `${file}.claudia-backup-${stamp}`;
-    // copyFile with EXCL so a second run in the same second cannot overwrite
-    // the backup it just took.
-    await copyFile(file, candidate, 1 /* COPYFILE_EXCL */);
-    backupPath = candidate;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      return { ok: false, path: file, error: `Could not back up ${file}: ${message(err)}` };
-    }
-  }
+  const backup = await takeBackup(file);
+  if (backup.ok === false) return { ok: false, path: file, error: backup.error };
+  const backupPath = backup.path;
 
   try {
     await writeAtomic(file, `${JSON.stringify(next, null, 2)}\n`);
@@ -210,6 +200,41 @@ async function write(file: string, next: Record<string, unknown>, events: string
   } catch (err) {
     return { ok: false, path: file, error: `Could not write ${file}: ${message(err)}`, ...(backupPath ? { backupPath } : {}) };
   }
+}
+
+/**
+ * Copies the file aside without ever overwriting a backup already there.
+ *
+ * The name is a millisecond timestamp and the copy is EXCL, which was the
+ * right instinct — a second run must not clobber the backup the first one just
+ * took — but EEXIST was then treated as a hard failure, so two writes landing
+ * in the SAME millisecond aborted the second one entirely. Install followed by
+ * uninstall is exactly that pair, and the uninstall returned ok:false having
+ * changed nothing: the user removes Claudia's hooks and keeps them, so a
+ * global settings.json goes on POSTing to a port nothing is listening on for
+ * every event in every terminal they open. Seen once as an intermittent test
+ * failure, then reproduced deterministically with a frozen clock.
+ *
+ * A collision is not a reason to refuse the edit, only a reason to pick
+ * another name. Bounded, because a directory that will not accept any name is
+ * a real failure and must not become a loop.
+ */
+async function takeBackup(file: string): Promise<{ ok: true; path?: string } | { ok: false; error: string }> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const candidate = `${file}.claudia-backup-${stamp}${attempt === 0 ? '' : `-${attempt}`}`;
+    try {
+      await copyFile(file, candidate, 1 /* COPYFILE_EXCL */);
+      return { ok: true, path: candidate };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // Nothing to back up: the file does not exist yet, and creating an empty
+      // one to copy would be theatre.
+      if (code === 'ENOENT') return { ok: true };
+      if (code !== 'EEXIST') return { ok: false, error: `Could not back up ${file}: ${message(err)}` };
+    }
+  }
+  return { ok: false, error: `Could not back up ${file}: 50 backups already exist for this moment.` };
 }
 
 const message = (err: unknown): string => (err instanceof Error ? err.message : String(err));

@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { countInstalled, hookBlock, hookUrl, installHooks, isInstalled, uninstallHooks, HOOK_EVENTS } from '../src/hook-install.js';
 
 /**
@@ -176,5 +176,87 @@ describe('hookBlock', () => {
 
   it('posts only to loopback', () => {
     expect(hookUrl(4317)).toMatch(/^http:\/\/127\.0\.0\.1:/);
+  });
+});
+
+describe('two writes in the same millisecond', () => {
+  afterEach(() => vi.useRealTimers());
+
+  /**
+   * Seen first as an intermittent failure of the uninstall test above — once in
+   * eight full-suite runs, never reproducible in isolation — then pinned here
+   * with a frozen clock. The backup name is a millisecond timestamp and the
+   * copy is EXCL, which is right: a second run must not clobber the backup the
+   * first one took. But EEXIST was a hard failure, so the second write aborted
+   * having changed nothing. Install-then-uninstall is exactly that pair.
+   */
+  it('does not abort the second write when the backup name collides', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-31T01:00:00.000Z'));
+    const theirs = { matcher: '', hooks: [{ type: 'command', command: 'mine.sh' }] };
+    const file = settingsFile({ hooks: { Stop: [theirs], SessionStart: [theirs] } });
+
+    expect(await installHooks(PORT, file)).toMatchObject({ ok: true });
+    const removal = await uninstallHooks(PORT, file);
+    // The failure this replaces: ok:false, and the user keeps hooks they asked
+    // to remove — a settings.json posting to a dead port for every event in
+    // every terminal they open.
+    expect(removal.ok, removal.ok ? '' : removal.error).toBe(true);
+    expect(read(file)).toEqual({ hooks: { Stop: [theirs], SessionStart: [theirs] } });
+  });
+
+  it('keeps both backups, so the earlier one is never overwritten', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-31T01:00:00.000Z'));
+    const original = { hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'mine.sh' }] }] } };
+    const file = settingsFile(original);
+
+    await installHooks(PORT, file);
+    await uninstallHooks(PORT, file);
+
+    const taken = backups(file);
+    expect(taken).toHaveLength(2);
+    expect(new Set(taken).size).toBe(2);
+    // The first backup still holds the file as it was before Claudia touched
+    // anything, which is the whole promise the backup exists to keep.
+    const first = taken.sort()[0];
+    expect(JSON.parse(readFileSync(join(file, '..', String(first)), 'utf8'))).toEqual(original);
+  });
+
+  it('still refuses when the backup itself cannot be taken, leaving the file untouched', async () => {
+    // Third attempt at this test, and the first two are the lesson.
+    //
+    // The original pointed through a FILE, so readExisting failed with ENOTDIR
+    // and returned before takeBackup was reached — it asserted ok:false for a
+    // reason unrelated to the code it named. Caught in review.
+    //
+    // The rewrite used a 230-character basename to blow the OS name limit. That
+    // passed on Linux and FAILED ON WINDOWS, where the long name survives the
+    // copy and instead blows MAX_PATH later, inside writeAtomic's temp file:
+    // "Could not write ... ENOENT ... .tmp". The product refused correctly on
+    // both; the test had pinned WHICH STAGE refused, and that is a property of
+    // the platform. Exactly the trap the review had just pointed out.
+    //
+    // So the failure is now one this code owns rather than one the filesystem
+    // decides: every backup name for this instant already taken, which is the
+    // bound takeBackup gives up at. Deterministic on every platform.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-31T01:00:00.000Z'));
+    const original = { hooks: { Stop: [{ matcher: '', hooks: [{ type: 'command', command: 'mine.sh' }] }] } };
+    const file = settingsFile(original);
+    const stamp = '2026-08-31T01-00-00-000Z';
+    for (let attempt = 0; attempt < 50; attempt++) {
+      writeFileSync(`${file}.claudia-backup-${stamp}${attempt === 0 ? '' : `-${attempt}`}`, 'taken');
+    }
+
+    const result = await installHooks(PORT, file);
+    expect(result.ok, 'the backup must fail, not the read or the write').toBe(false);
+    if (!result.ok) expect(result.error).toContain('Could not back up');
+    // The promise the backup exists to keep: the owner agreed to this edit on
+    // the condition the original was kept, so a backup that did not happen
+    // means the edit does not happen either.
+    expect(read(file)).toEqual(original);
+    // And nothing it left behind: the 50 squatters, and not one more.
+    expect(backups(file)).toHaveLength(50);
   });
 });

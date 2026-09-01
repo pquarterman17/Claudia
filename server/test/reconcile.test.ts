@@ -428,3 +428,166 @@ describe('found by adversarial review', () => {
     expect(first).toEqual([{ kind: 'hold', reason: 'no task is ready' }]);
   });
 });
+
+describe('found by adversarial audit', () => {
+  it('honours the ceiling the human set on the mission, not just the server policy', () => {
+    // `mission.maxChildren` was persisted, bounded on the way in by the store,
+    // and read by no production code: a mission set to one child dispatched
+    // eight. The same shape `overBudget` already has a comment about — visible
+    // in the UI, settable by a human, enforcing nothing.
+    const tasks = Array.from({ length: 8 }, () => task());
+    const decisions = reconcile({
+      mission: mission({ maxChildren: 1 }),
+      tasks,
+      runs: [],
+      policy: { maxChildren: 8, maxAttempts: 3 },
+    });
+    expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(1);
+  });
+
+  it('takes the lower of the two ceilings, whichever way round they are', () => {
+    const tasks = Array.from({ length: 8 }, () => task());
+    const byPolicy = reconcile({
+      mission: mission({ maxChildren: 8 }),
+      tasks,
+      runs: [],
+      policy: { maxChildren: 2, maxAttempts: 3 },
+    });
+    expect(byPolicy.filter((d) => d.kind === 'dispatch')).toHaveLength(2);
+  });
+
+  it('will not dispatch on a spend it cannot read', () => {
+    // NaN >= x is false, so an unreadable number switched both budgets off
+    // silently. `tokens` is summed from model usage, where one missing field
+    // produces NaN — the fleet would have run to exhaustion with a ceiling set.
+    for (const spend of [
+      { elapsedSec: Number.NaN, tokens: 0 },
+      { elapsedSec: 0, tokens: Number.NaN },
+    ]) {
+      const decisions = reconcile({
+        mission: mission({ budgetSec: 600, budgetTokens: 1000 }),
+        tasks: [task()],
+        runs: [],
+        policy: POLICY,
+        spend,
+      });
+      expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(0);
+      expect(decisions[0]).toMatchObject({ kind: 'hold' });
+      expect(decisions[0]?.kind === 'hold' && decisions[0].reason).toMatch(/cannot read/);
+    }
+  });
+
+  it('says which of the two it could not read', () => {
+    const decisions = reconcile({
+      mission: mission({ budgetTokens: 1000 }),
+      tasks: [task()],
+      runs: [],
+      policy: POLICY,
+      spend: { elapsedSec: Number.NaN, tokens: Number.NaN },
+    });
+    // Only the token budget is set, so only the token spend is load-bearing:
+    // an unreadable elapsed time with no time budget is not a reason to stop.
+    expect(decisions[0]?.kind === 'hold' && decisions[0].reason).toContain('token spend');
+    expect(decisions[0]?.kind === 'hold' && decisions[0].reason).not.toContain('elapsed');
+  });
+
+  it('still dispatches when the unreadable number is not one being enforced', () => {
+    const decisions = reconcile({
+      mission: mission(),
+      tasks: [task()],
+      runs: [],
+      policy: POLICY,
+      spend: { elapsedSec: Number.NaN, tokens: Number.NaN },
+    });
+    expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(1);
+  });
+});
+
+describe('found reviewing my own fix', () => {
+  it.each([
+    ['NaN', Number.NaN],
+    ['absent', undefined as unknown as number],
+    ['fractional', 2.5],
+    ['negative', -1],
+  ])('holds, with a reason, when the mission ceiling is %s', (_label, maxChildren) => {
+    // The commit that started reading mission.maxChildren introduced this:
+    // Math.min(NaN, 2) is NaN, NaN <= 0 is false, and slice(0, NaN) is empty,
+    // so the reconciler returned NO decisions at all. Not a dispatch, not even
+    // a hold — the fleet did nothing and said nothing about why, which this
+    // file's own design calls out as indistinguishable from being broken. The
+    // same commit guarded a non-finite budget and left this untouched.
+    // The policy ceiling is deliberately ABOVE the mission's here: taking the
+    // minimum of the two would otherwise mask a bad mission value behind a good
+    // policy one, which is what happens with a fractional ceiling and a policy
+    // of 2 — min(2.5, 2) is 2, a perfectly usable number.
+    const decisions = reconcile({
+      mission: mission({ maxChildren }),
+      tasks: [task(), task()],
+      runs: [],
+      policy: { maxChildren: 8, maxAttempts: 3 },
+    });
+    expect(decisions).not.toEqual([]);
+    expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(0);
+    expect(decisions[0]?.kind === 'hold' && decisions[0].reason).toMatch(/cannot read how many children/);
+  });
+
+  it('lets a good policy ceiling mask a bad mission one, because the minimum is the answer', () => {
+    // Not a hole: 2.5 and a policy of 2 give an effective ceiling of 2.
+    const decisions = reconcile({
+      mission: mission({ maxChildren: 2.5 }),
+      tasks: [task(), task(), task()],
+      runs: [],
+      policy: POLICY,
+    });
+    expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(2);
+  });
+
+  it('still dispatches on a readable ceiling either side of the minimum', () => {
+    for (const [missionCeiling, policyCeiling, expected] of [
+      [1, 8, 1],
+      [8, 2, 2],
+    ] as const) {
+      const decisions = reconcile({
+        mission: mission({ maxChildren: missionCeiling }),
+        tasks: [task(), task(), task()],
+        runs: [],
+        policy: { maxChildren: policyCeiling, maxAttempts: 3 },
+      });
+      expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(expected);
+    }
+  });
+});
+
+describe('the reservation key cannot be forged by a colon', () => {
+  it('does not collide for ids that merely rearrange the separators', () => {
+    // The same defect escalationKey was fixed for, in its sibling, which that
+    // fix did not reach. A raw join made ('m1', 't1:2', 3) and ('m1:t1', '2', 3)
+    // one reservation, so a dispatch could suppress an unrelated one.
+    expect(dispatchKey('m1', 't1:2', 3)).not.toBe(dispatchKey('m1:t1', '2', 3));
+    expect(dispatchKey('m/1', 't 1', 3)).not.toBe(dispatchKey('m', '1/t 1', 3));
+  });
+
+  it('is still stable for the same inputs, which is the whole point of it', () => {
+    expect(dispatchKey('m1', 't1', 2)).toBe(dispatchKey('m1', 't1', 2));
+  });
+});
+
+describe('the attempt ceiling is a ceiling too', () => {
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['zero', 0],
+  ])('holds rather than dispatching without limit when maxAttempts is %s', (_label, maxAttempts) => {
+    // `attempts >= NaN` and `attempts >= Infinity` are both false, so a task
+    // could be re-dispatched forever. The same omission as the child ceiling,
+    // in the same file, found one review later.
+    const decisions = reconcile({
+      mission: mission(),
+      tasks: [task({ status: 'ready' })],
+      runs: [],
+      policy: { maxChildren: 2, maxAttempts },
+    });
+    expect(decisions.filter((d) => d.kind === 'dispatch')).toHaveLength(0);
+    expect(decisions[0]?.kind === 'hold' && decisions[0].reason).toMatch(/how many attempts/);
+  });
+});

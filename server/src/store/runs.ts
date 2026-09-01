@@ -1,6 +1,7 @@
 import {
   canTransitionRun,
   canTransitionWorktree,
+  isAgentKind,
   RUN_TRANSITIONS,
   type AgentKind,
   type ChildRun,
@@ -10,6 +11,7 @@ import {
 } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { HOST_PLATFORM, worktreePathKey } from '../path-key.js';
 import { attempt, refuse, transact, type StoreResult } from './db.js';
 import { boolToInt, flag, int, optInt, optText, text, type Row } from './rows.js';
 
@@ -40,6 +42,50 @@ const RUN_COLUMNS =
   'id, mission_id, task_id, session_id, worktree_id, agent, attempt, state, started_at, ended_at, terminal_reason';
 const WORKTREE_COLUMNS =
   'id, repo, path, branch, base_sha, owner_mission_id, owner_task_id, state, dirty, last_seen_at, created_at';
+const WORKTREE_INSERT = `${WORKTREE_COLUMNS}, path_key`;
+
+/**
+ * Checks an agent rather than asserting one, on the way in AND on the way out.
+ *
+ * Found in review: `create()` took `input.agent` straight from its caller and
+ * `toRun` cast the column with `as AgentKind`, so `'gemini'` was accepted by
+ * the repository itself and read back as a `ChildRun` the dispatcher would try
+ * to launch a nonexistent harness for. A cast is a claim about a value, and
+ * neither end of this had anything checking the claim.
+ *
+ * Version 3 of the schema now refuses it too, which is what makes the read side
+ * safe to keep strict: a value that cannot be stored cannot be read, so
+ * refusing here can only fire on a file written by an older build, where a
+ * named failure beats a typed lie.
+ */
+function agentKind(value: string): AgentKind {
+  if (!isAgentKind(value)) refuse(`${JSON.stringify(value)} is not an agent Claudia can run.`);
+  return value;
+}
+
+/**
+ * The runs in a batch that can be read, rather than none of them.
+ *
+ * `toRun` refuses a row whose agent is outside the roster, which is right for
+ * `get` — that caller asked about that run. Found by audit: in a LIST it meant
+ * `rows.map(toRun)` threw on the first bad entry and every good run in the same
+ * mission became unreachable with it. Only a file written by an older build can
+ * hold one, which is exactly the moment a user most needs to see the rest.
+ *
+ * `events.ts` already made this call for a corrupt payload and says why: one
+ * bad row must not break the read that would let somebody see what went wrong.
+ */
+function readable(rows: readonly Row[]): ChildRun[] {
+  const runs: ChildRun[] = [];
+  for (const row of rows) {
+    try {
+      runs.push(toRun(row));
+    } catch {
+      /* unreadable, and named by get(id) for anyone who asks about it directly */
+    }
+  }
+  return runs;
+}
 
 export class ChildRunRepo {
   constructor(private readonly db: DatabaseSync) {}
@@ -52,7 +98,7 @@ export class ChildRunRepo {
         taskId: input.taskId,
         sessionId: input.sessionId,
         worktreeId: input.worktreeId,
-        agent: input.agent,
+        agent: agentKind(input.agent),
         attempt: input.attempt ?? this.nextAttempt(input.taskId),
         state: input.state ?? 'dispatched',
         startedAt: input.startedAt ?? Date.now(),
@@ -89,7 +135,7 @@ export class ChildRunRepo {
       const rows = this.db
         .prepare(`SELECT ${RUN_COLUMNS} FROM child_runs WHERE task_id = ? ORDER BY attempt`)
         .all(taskId) as Row[];
-      return rows.map(toRun);
+      return readable(rows);
     });
   }
 
@@ -98,7 +144,7 @@ export class ChildRunRepo {
       const rows = this.db
         .prepare(`SELECT ${RUN_COLUMNS} FROM child_runs WHERE mission_id = ? ORDER BY started_at`)
         .all(missionId) as Row[];
-      return rows.map(toRun);
+      return readable(rows);
     });
   }
 
@@ -164,7 +210,7 @@ export class WorktreeRepo {
         createdAt: now,
       };
       this.db
-        .prepare(`INSERT INTO worktrees (${WORKTREE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .prepare(`INSERT INTO worktrees (${WORKTREE_INSERT}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           record.id,
           record.repo,
@@ -177,6 +223,7 @@ export class WorktreeRepo {
           boolToInt(record.dirty),
           record.lastSeenAt,
           record.createdAt,
+          worktreePathKey(record.path, HOST_PLATFORM),
         );
       return record;
     });
@@ -193,8 +240,8 @@ export class WorktreeRepo {
   byPath(path: string): StoreResult<WorktreeRecord | undefined> {
     return attempt('read the worktree record', () => {
       const row = this.db
-        .prepare(`SELECT ${WORKTREE_COLUMNS} FROM worktrees WHERE path = ? AND state <> 'removed'`)
-        .get(path) as Row | undefined;
+        .prepare(`SELECT ${WORKTREE_COLUMNS} FROM worktrees WHERE path_key = ? AND state <> 'removed'`)
+        .get(worktreePathKey(path, HOST_PLATFORM)) as Row | undefined;
       return row ? toWorktree(row) : undefined;
     });
   }
@@ -244,7 +291,7 @@ function toRun(row: Row): ChildRun {
     taskId: text(row, 'task_id'),
     sessionId: optText(row, 'session_id'),
     worktreeId: optText(row, 'worktree_id'),
-    agent: text(row, 'agent') as AgentKind,
+    agent: agentKind(text(row, 'agent')),
     attempt: int(row, 'attempt'),
     state: text(row, 'state') as ChildRunState,
     startedAt: int(row, 'started_at'),

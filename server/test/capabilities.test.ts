@@ -313,3 +313,93 @@ describe('found by adversarial review', () => {
     expect(escalationKey('r1', 'a:b')).not.toBe(escalationKey('r1:a', 'b'));
   });
 });
+
+describe('found by adversarial audit', () => {
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])('refuses an unusable byte budget %s', (maxBytes) => {
+    // The trimming loop walks back one code unit at a time while the string is
+    // over budget. With a non-positive budget `''.slice(0, -1)` is `''` and the
+    // condition never goes false: a synchronous infinite loop on the event
+    // loop, from a config value. Confirmed by a subprocess that had to be
+    // killed on a timeout before this guard existed.
+    expect(sanitizeReport('hello world', { maxBytes, maxLines: 400 })).toMatchObject({ ok: false });
+  });
+
+  it.each([0, -1, Number.NaN])('refuses an unusable line budget %s', (maxLines) => {
+    expect(sanitizeReport('a\nb', { maxBytes: 32_768, maxLines })).toMatchObject({ ok: false });
+  });
+
+  it('still accepts the smallest budget that means anything', () => {
+    expect(sanitizeReport('abc', { maxBytes: 1, maxLines: 1 })).toMatchObject({ ok: true, text: 'a', truncated: true });
+  });
+});
+
+/**
+ * Every unpaired surrogate in a string. `String.prototype.isWellFormed` would
+ * say this in one call but needs an ES2024 lib, and the build targets ES2022 —
+ * caught by type-checking the tests, which this branch turned on.
+ */
+function loneSurrogates(text: string): number[] {
+  const orphans: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const unit = text.charCodeAt(i);
+    const isHigh = unit >= 0xd800 && unit <= 0xdbff;
+    const isLow = unit >= 0xdc00 && unit <= 0xdfff;
+    if (!isHigh && !isLow) continue;
+    const next = text.charCodeAt(i + 1);
+    if (isHigh && next >= 0xdc00 && next <= 0xdfff) {
+      i++;
+      continue;
+    }
+    orphans.push(i);
+  }
+  return orphans;
+}
+
+describe('truncation is one pass, on a character boundary', () => {
+  it('does not scale quadratically with the byte budget', () => {
+    // Measured before the fix: 4x per doubling, and 482ms of synchronous event
+    // loop for a 1.2MB multi-byte report at the SHIPPED defaults. The earlier
+    // limit guard removed `forever` and left `long`.
+    const report = '日'.repeat(400_000);
+    const started = performance.now();
+    const result = sanitizeReport(report, DEFAULT_REPORT_LIMITS);
+    const elapsed = performance.now() - started;
+    expect(result).toMatchObject({ ok: true, truncated: true });
+    expect(elapsed, `took ${elapsed.toFixed(0)}ms`).toBeLessThan(100);
+  });
+
+  it('stays inside the byte budget, counted in bytes and not code units', () => {
+    for (const [label, text] of [
+      ['multi-byte', '日'.repeat(5_000)],
+      ['ascii', 'a'.repeat(5_000)],
+      ['astral', '😀'.repeat(5_000)],
+      ['mixed', 'a日😀'.repeat(2_000)],
+    ] as const) {
+      const result = sanitizeReport(text, { maxBytes: 1_000, maxLines: 400 });
+      expect(result.ok, label).toBe(true);
+      if (!result.ok) continue;
+      expect(Buffer.byteLength(result.text, 'utf8'), label).toBeLessThanOrEqual(1_000);
+    }
+  });
+
+  it('never returns a lone surrogate, whatever the budget lands on', () => {
+    // Cutting by code unit split surrogate pairs, and the orphan's
+    // replacement-character encoding satisfied the byte budget — so the loop
+    // stopped with it still there. A lone surrogate silently becomes U+FFFD on
+    // any UTF-8 round trip, so the stored record stops agreeing with what was
+    // sanitized.
+    for (let maxBytes = 1; maxBytes <= 24; maxBytes++) {
+      const result = sanitizeReport('ok 😀😀😀', { maxBytes, maxLines: 400 });
+      expect(result.ok).toBe(true);
+      if (!result.ok) continue;
+      expect(loneSurrogates(result.text), `maxBytes ${maxBytes}: ${JSON.stringify(result.text)}`).toEqual([]);
+      // And it survives the round trip it will actually take into the store.
+      expect(Buffer.from(result.text, 'utf8').toString('utf8')).toBe(result.text);
+    }
+  });
+
+  it('still keeps as much as fits', () => {
+    const result = sanitizeReport('abcdef', { maxBytes: 3, maxLines: 400 });
+    expect(result).toMatchObject({ ok: true, text: 'abc', truncated: true });
+  });
+});

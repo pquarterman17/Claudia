@@ -3,6 +3,7 @@ import { usageHeadline } from '../src/components/UsagePanel';
 
 describe('usageHeadline', () => {
   const window = {
+    hours: 5,
     label: 'Current session', billableTokens: 280, referenceTokens: 100,
     referenceLabel: 'typical', remainingPct: 0, level: 'critical' as const,
     tokens: { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 },

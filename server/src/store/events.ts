@@ -1,6 +1,6 @@
 import type { FleetActor, FleetEvent } from '@claudia/shared';
 import type { DatabaseSync } from 'node:sqlite';
-import { attempt, refuse, transact, type StoreResult } from './db.js';
+import { attempt, fail, foreignTransaction, onCommit, refuse, transact, type StoreResult } from './db.js';
 import { int, optText, text, type Row } from './rows.js';
 
 /**
@@ -39,12 +39,43 @@ export interface AppendedEvent {
 
 /** A page big enough for a normal resync, small enough not to stall a socket. */
 export const DEFAULT_PAGE = 500;
-const MAX_PAGE = 5000;
+
+/**
+ * The largest batch this log will ever return, and therefore the largest
+ * window a resync may plan for. Exported so `maxBatch` can be chosen against
+ * the number the store actually honours rather than guessed.
+ */
+export const MAX_PAGE = 5000;
 
 const COLUMNS = 'seq, mission_id, task_id, run_id, actor, kind, payload, at, idempotency_key';
 
 export class FleetEventLog {
   constructor(private readonly db: DatabaseSync) {}
+
+  private readonly listeners = new Set<(event: FleetEvent) => void>();
+
+  /**
+   * Subscribes to events that have actually landed. Returns an unsubscribe.
+   *
+   * This is the ONLY safe way to forward an event to a client, and the reason
+   * is `seq`. `append` returns the number immediately because a caller needs it
+   * for its own bookkeeping, but inside a transaction that number is not yet
+   * real: sqlite_sequence rolls back with everything else, so a failed step
+   * releases the seq and the next event is given the same one. Reproduced
+   * before this was written -- seq 1 went out for a `dispatch`, the step threw,
+   * and seq 1 came back for a `task_failed`. A browser told the first number
+   * would never be shown the second event, which is the exact hole
+   * AUTOINCREMENT was chosen to close.
+   *
+   * Listeners here fire from the after-commit queue, so they cannot observe a
+   * sequence the log might still reuse.
+   */
+  onAppended(listener: (event: FleetEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
 
   /**
    * Appends one event, or returns the existing one with the same key.
@@ -54,6 +85,20 @@ export class FleetEventLog {
    * guarantees it — this only keeps the common path from having to fail first.
    */
   append(input: NewFleetEvent): StoreResult<AppendedEvent> {
+    // Refused, not silently unannounced. `onCommit` cannot observe a
+    // transaction this module did not open, so it drops the notification — and
+    // a dropped notification is only harmless if something else repairs it. A
+    // connected client does NOT resync merely because one event went missing,
+    // so it would sit there with a gap it has no reason to look for. Raised in
+    // review, and the answer is the one the store already has: `transact` is
+    // the composition API, and it drains on its own commit.
+    // Returned, not thrown: this guard sits BEFORE `transact`, so nothing here
+    // would wrap it, and the whole directory's contract is that no store method
+    // throws at a caller reached from a websocket handler. Caught by the test
+    // that asserts a dead connection comes back as a value.
+    if (foreignTransaction(this.db)) {
+      return fail('An event cannot be appended inside a transaction the store did not open; use transact().');
+    }
     return transact(this.db, 'append a fleet event', () => {
       const key = input.idempotencyKey;
       if (key !== undefined) {
@@ -78,7 +123,22 @@ export class FleetEventLog {
           key ?? null,
         ) as Row | undefined;
       if (!row) refuse('The fleet event was not written.');
-      return { event: toEvent(row), created: true };
+      const event = toEvent(row);
+      // Deferred, not called: see onAppended. Nothing fires for the idempotent
+      // path above, because nothing was appended.
+      onCommit(this.db, () => {
+        // Guarded per listener, not around the loop. Found by the test below:
+        // one wrapper around the whole fan-out meant the first subscriber to
+        // throw swallowed the event for every subscriber after it.
+        for (const listener of this.listeners) {
+          try {
+            listener(event);
+          } catch {
+            /* a subscriber's problem, not the log's */
+          }
+        }
+      });
+      return { event, created: true };
     });
   }
 
@@ -114,6 +174,50 @@ export class FleetEventLog {
       const rows = this.db
         .prepare(`SELECT ${COLUMNS} FROM fleet_events WHERE task_id = ? AND seq > ? ORDER BY seq LIMIT ?`)
         .all(taskId, afterSeq, page(limit)) as Row[];
+      return rows.map(toEvent);
+    });
+  }
+
+  /**
+   * Exactly the window a resync planned, or a failure saying why not.
+   *
+   * Found by audit: `planResync` produced `{fromSeq: 1, toSeq: 1200,
+   * more: false}` and the caller read it with `sinceForMission(id, 0)`, whose
+   * limit defaults to 500. The store returned 500 events, `replayIsUsable`
+   * on a filtered stream accepted them, and the client was told it was caught
+   * up to 1200 having been sent a third of it — a 700-event hole, which is the
+   * exact silent gap the whole resync design exists to prevent.
+   *
+   * The bug was not the clamp, it was that the limit and the window were two
+   * numbers a caller had to keep equal by hand. This takes the window and
+   * derives the limit, so they cannot disagree; a window bigger than the log
+   * will ever return is refused rather than quietly served short.
+   */
+  replay(window: { fromSeq: number; toSeq: number; missionId?: string; taskId?: string }): StoreResult<FleetEvent[]> {
+    return attempt('replay a window of the fleet log', () => {
+      const { fromSeq, toSeq, missionId, taskId } = window;
+      if (!Number.isSafeInteger(fromSeq) || !Number.isSafeInteger(toSeq) || toSeq < fromSeq) {
+        refuse('That is not a window the log can be read for.');
+      }
+      const size = toSeq - fromSeq + 1;
+      if (size > MAX_PAGE) {
+        refuse(`A replay window of ${size} is larger than the ${MAX_PAGE} events this log will return at once.`);
+      }
+      const filters = ['seq >= ?', 'seq <= ?'];
+      const values: (string | number)[] = [fromSeq, toSeq];
+      if (missionId !== undefined) {
+        filters.push('mission_id = ?');
+        values.push(missionId);
+      }
+      if (taskId !== undefined) {
+        filters.push('task_id = ?');
+        values.push(taskId);
+      }
+      const rows = this.db
+        .prepare(`SELECT ${COLUMNS} FROM fleet_events WHERE ${filters.join(' AND ')} ORDER BY seq LIMIT ?`)
+        // The window is the limit. Asking for one more would be a way to
+        // detect truncation; there is nothing to detect once they are equal.
+        .all(...values, size) as Row[];
       return rows.map(toEvent);
     });
   }

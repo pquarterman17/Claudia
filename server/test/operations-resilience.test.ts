@@ -57,6 +57,7 @@ describe('rewindFiles never rejects', () => {
 
 describe('acceptedImages is the single source of truth for what is sent', () => {
   const image = (mb: number) => ({
+    name: 'shot.png',
     mediaType: 'image/png' as const,
     // 4 base64 chars per 3 bytes, no padding, so the decoded size is predictable.
     data: 'A'.repeat(Math.ceil((mb * 1024 * 1024 * 4) / 3)),
@@ -74,7 +75,7 @@ describe('acceptedImages is the single source of truth for what is sent', () => 
   });
 
   it('rejects a non-image media type', () => {
-    expect(acceptedImages([{ mediaType: 'application/pdf', data: 'AAAA' } as never])).toHaveLength(0);
+    expect(acceptedImages([{ name: 'shot.png', mediaType: 'application/pdf', data: 'AAAA' } as never])).toHaveLength(0);
   });
 
   it('rejects a single image over the per-image limit', () => {
@@ -82,6 +83,6 @@ describe('acceptedImages is the single source of truth for what is sent', () => 
   });
 
   it('rejects data that is not base64', () => {
-    expect(acceptedImages([{ mediaType: 'image/png', data: 'not base64!!' }])).toHaveLength(0);
+    expect(acceptedImages([{ name: 'shot.png', mediaType: 'image/png', data: 'not base64!!' }])).toHaveLength(0);
   });
 });

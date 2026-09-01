@@ -94,8 +94,14 @@ export type ClaimVerdict =
  * `removed` is deliberately absent: that row no longer owns its path (the
  * unique index exempts it), so the answer there is a new row, not a revival.
  */
-function toActive(state: WorktreeState): readonly WorktreeState[] {
-  return state === 'active' ? [] : state === 'archived' ? ['active'] : ['active'];
+function toActive(state: WorktreeState): readonly WorktreeState[] | undefined {
+  // `removed` is terminal in WORKTREE_TRANSITIONS, so it has no route back and
+  // saying `['active']` would be a decision the store refuses — which the two
+  // identical tail arms this replaces did say, and which the comment above
+  // already claimed they did not. `removalRoute` next door answers `undefined`
+  // for a state with no route; this now matches it.
+  if (state === 'removed') return undefined;
+  return state === 'active' ? [] : ['active'];
 }
 
 /**
@@ -124,31 +130,66 @@ export function claimWorktree(
     };
   }
 
-  if (record.state === 'removed' || record.state === 'archived') {
-    if (observed.exists) {
-      return { kind: 'refuse', reason: `the record says ${record.state} but the directory is still there` };
-    }
-    // Only `removed` frees the path. An archived row still holds it, so
-    // reviving that row is the move the unique index permits.
-    return record.state === 'removed'
-      ? { kind: 'create', reason: 'the previous worktree here was removed' }
-      : {
-          kind: 'adopt',
-          path: toActive(record.state),
-          createDirectory: true,
-          reason: 'reviving an archived worktree whose directory is gone',
-        };
+  if (record.state === 'removed' && !observed.exists) {
+    // `removed` is the one state that frees the path, so a fresh row is what
+    // the unique index permits. It carries no owner to check against, because
+    // the record it came from is history.
+    return { kind: 'create', reason: 'the previous worktree here was removed' };
+  }
+  if ((record.state === 'removed' || record.state === 'archived') && observed.exists) {
+    return { kind: 'refuse', reason: `the record says ${record.state} but the directory is still there` };
+  }
+
+  // WHAT THE RECORD SAYS, checked before anything is decided and WITHOUT
+  // needing the directory to exist. Found by audit: the missing-directory
+  // return used to sit above these, so a task asking for a different
+  // repository, a different branch, a different path or another mission's work
+  // was handed the row anyway as long as the directory happened to be gone.
+  // The identical request with the directory PRESENT was refused — the safety
+  // of this function depended on the filesystem, which is the one input it
+  // cannot trust. Before this branch the answer there was `create`, which the
+  // unique index refused: a failed launch, but safe. `adopt` succeeds, and
+  // leaves a row that lies about which repository and branch it holds while
+  // locking its rightful owner out.
+  if (request.repo !== record.repo) {
+    return { kind: 'refuse', reason: `the record is for ${record.repo}, not ${request.repo}` };
+  }
+  if (request.branch !== record.branch) {
+    return { kind: 'refuse', reason: `that worktree is for ${record.branch}, not ${request.branch}` };
+  }
+  if (!samePath(request.path, record.path)) {
+    return { kind: 'refuse', reason: `the record is for ${record.path}, not ${request.path}` };
+  }
+  // Ownership must be COMPLETE and match. A half-recorded owner is a record
+  // written by something that crashed midway, which is not evidence that this
+  // task may write into it.
+  if (!record.ownerMissionId || !record.ownerTaskId) {
+    return { kind: 'refuse', reason: 'that worktree has no recorded owner' };
+  }
+  if (record.ownerMissionId !== request.missionId || record.ownerTaskId !== request.taskId) {
+    // Refused even when clean. A clean worktree on somebody else's branch is
+    // still their branch, and two tasks sharing one is the collision the
+    // whole scheme exists to prevent.
+    return { kind: 'refuse', reason: 'another task owns that worktree' };
   }
 
   if (!observed.exists) {
     // Nothing can be lost by rebuilding: the directory is gone, and the branch
     // (with any commits on it) survives independently. The ROW stays, because
-    // it still owns the path.
+    // it still owns the path. Reached only after everything above has agreed
+    // that this row is this task's.
+    const path = toActive(record.state);
+    if (!path) {
+      return { kind: 'refuse', reason: `a worktree that is ${record.state} cannot be made active again` };
+    }
     return {
       kind: 'adopt',
-      path: toActive(record.state),
+      path,
       createDirectory: true,
-      reason: 'the recorded worktree is missing from disk',
+      reason:
+        record.state === 'archived'
+          ? 'reviving an archived worktree whose directory is gone'
+          : 'the recorded worktree is missing from disk',
     };
   }
 
@@ -168,34 +209,15 @@ export function claimWorktree(
     if (!matches) return { kind: 'refuse', reason: `that worktree is on ${what} ${seen}, not ${expected}` };
   }
 
-  if (request.repo !== record.repo) {
-    return { kind: 'refuse', reason: `the record is for ${record.repo}, not ${request.repo}` };
+  const reviveRoute = toActive(record.state);
+  if (!reviveRoute) {
+    return { kind: 'refuse', reason: `a worktree that is ${record.state} cannot be made active again` };
   }
-  if (request.branch !== record.branch) {
-    return { kind: 'refuse', reason: `that worktree is for ${record.branch}, not ${request.branch}` };
-  }
-  if (!samePath(request.path, record.path)) {
-    return { kind: 'refuse', reason: `the record is for ${record.path}, not ${request.path}` };
-  }
-
-  // Ownership must be COMPLETE and match. A half-recorded owner is a record
-  // written by something that crashed midway, which is not evidence that this
-  // task may write into it.
-  if (!record.ownerMissionId || !record.ownerTaskId) {
-    return { kind: 'refuse', reason: 'that worktree has no recorded owner' };
-  }
-  if (record.ownerMissionId !== request.missionId || record.ownerTaskId !== request.taskId) {
-    // Refused even when clean. A clean worktree on somebody else's branch is
-    // still their branch, and two tasks sharing one is the collision the
-    // whole scheme exists to prevent.
-    return { kind: 'refuse', reason: 'another task owns that worktree' };
-  }
-
   return {
     kind: 'adopt',
     // A worktree being picked up is `active` again; an idle or stale record
     // left saying so is one the reconciler and the cleanup both misread.
-    path: toActive(record.state),
+    path: reviveRoute,
     createDirectory: false,
     reason: 'the same task is picking up where it left off',
   };
@@ -274,7 +296,15 @@ export function cleanupWorktree(
   // cannot be shown to be idle. claimWorktree already refuses to WRITE into
   // one of these ("no recorded owner"); deleting it on the same evidence
   // would make the destructive path the more permissive of the two.
-  if (!record.ownerTaskId) return { kind: 'keep', reason: 'that worktree has no recorded owner' };
+  // BOTH owner fields, matching claimWorktree. Found by audit: this checked
+  // only the task, so a record with a task but no mission — which the schema
+  // permits, since both owner columns are ON DELETE SET NULL — was refused by
+  // `claim` and REMOVED by `cleanup`. The comment below says this branch exists
+  // to stop the destructive path being the more permissive of the two, and it
+  // was, on exactly that record.
+  if (!record.ownerTaskId || !record.ownerMissionId) {
+    return { kind: 'keep', reason: 'that worktree has no recorded owner' };
+  }
   if (options.busyTaskIds.has(record.ownerTaskId)) {
     return { kind: 'keep', reason: 'a run is using it right now' };
   }

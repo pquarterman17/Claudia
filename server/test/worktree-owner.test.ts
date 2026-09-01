@@ -1,3 +1,4 @@
+import { isLegalRoute, WORKTREE_TRANSITIONS } from '@claudia/shared';
 import type { WorktreeRecord } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
 import {
@@ -327,5 +328,74 @@ describe('samePath', () => {
     // the machine the suite happens to run on.
     expect(samePath('D:\\A\\B', 'd:/a/b', 'win32')).toBe(true);
     expect(samePath('D:\\A\\B', 'd:/a/b', 'linux')).toBe(false);
+  });
+});
+
+describe('a missing directory is not a way past the checks', () => {
+  /**
+   * The regression this branch introduced and an audit caught. The
+   * missing-directory return sat ABOVE the identity and ownership checks, so
+   * the safety of this function depended on whether a directory happened to
+   * exist — the one input it cannot trust. Before the `adopt` verdict the
+   * answer there was `create`, which the unique index refused: a failed
+   * launch, but safe. `adopt` succeeds, and leaves a row that lies about which
+   * repository and branch it holds while locking its rightful owner out.
+   */
+  const owned = () =>
+    record({ ownerMissionId: 'm-owner', ownerTaskId: 't-owner', repo: '/repo', branch: 'claudia/task-1', state: 'idle' });
+
+  it.each([
+    ['another task', { ...REQUEST, missionId: 'm-owner', taskId: 't-intruder' }],
+    ['another mission', { ...REQUEST, missionId: 'm-other', taskId: 't-owner' }],
+    ['another repository', { ...REQUEST, repo: '/other-repo' }],
+    ['another branch', { ...REQUEST, branch: 'claudia/task-99' }],
+    ['another path', { ...REQUEST, path: '/wt/somewhere-else' }],
+  ])('refuses %s just the same when the directory is gone', (_who, request) => {
+    const asked = { ...request, missionId: request.missionId ?? 'm-owner', taskId: request.taskId ?? 't-owner' };
+    expect(claimWorktree(asked, owned(), gone).kind, 'directory gone').toBe('refuse');
+    // And the answer does not change with the filesystem.
+    expect(claimWorktree(asked, owned(), { ...there, repo: '/repo', branch: 'claudia/task-1' }).kind).toBe('refuse');
+  });
+
+  it('still adopts for the rightful owner', () => {
+    const asked = { ...REQUEST, missionId: 'm-owner', taskId: 't-owner', repo: '/repo', branch: 'claudia/task-1' };
+    expect(claimWorktree(asked, owned(), gone)).toMatchObject({ kind: 'adopt', createDirectory: true });
+  });
+
+  it('refuses a half-recorded owner even with the directory gone', () => {
+    const orphan = owned();
+    delete orphan.ownerMissionId;
+    expect(claimWorktree(REQUEST, orphan, gone)).toMatchObject({ kind: 'refuse', reason: 'that worktree has no recorded owner' });
+  });
+
+  it('never offers a route out of removed, which the store would refuse', () => {
+    // `toActive` had two identical tail arms, so `removed` answered ['active'] —
+    // illegal under WORKTREE_TRANSITIONS — while its own comment claimed
+    // `removed` was deliberately absent.
+    for (const state of ['active', 'idle', 'stale', 'archived', 'removed'] as const) {
+      const verdict = claimWorktree(
+        { ...REQUEST, missionId: 'm-owner', taskId: 't-owner', repo: '/repo', branch: 'claudia/task-1' },
+        record({ ownerMissionId: 'm-owner', ownerTaskId: 't-owner', repo: '/repo', branch: 'claudia/task-1', state }),
+        gone,
+      );
+      if (verdict.kind !== 'adopt') continue;
+      expect(isLegalRoute(state, verdict.path, WORKTREE_TRANSITIONS), `${state}: ${verdict.path.join(' -> ')}`).toBe(true);
+    }
+  });
+});
+
+describe('cleanup is never more permissive than claim', () => {
+  it('keeps a record whose owner is only half recorded', () => {
+    // Both owner columns are ON DELETE SET NULL, so a half-null row is a state
+    // the schema permits. claimWorktree refused it; cleanupWorktree checked
+    // only the task id and REMOVED it — the exact asymmetry the branch above it
+    // says it exists to prevent.
+    const half = finished();
+    delete half.ownerMissionId;
+    expect(cleanupWorktree(half, { ...there, merged: true }, IDLE)).toMatchObject({
+      kind: 'keep',
+      reason: 'that worktree has no recorded owner',
+    });
+    expect(claimWorktree(REQUEST, half, there).kind).toBe('refuse');
   });
 });

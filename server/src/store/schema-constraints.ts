@@ -163,7 +163,9 @@ export function refuseUnknownAgents(db: DatabaseSync): void {
   const named = rows.map((row) => `${row.id} (agent ${JSON.stringify(row.agent)})`).join(', ');
   throw new Error(
     `child_runs holds ${rows.length === 5 ? 'at least 5' : String(rows.length)} run(s) whose agent is not a harness ` +
-      `Claudia knows: ${named}. Nothing writes those, so the file has been edited by hand. Correct the agent ` +
-      'column to claude or codex, or delete those rows, and reopen.',
+      `Claudia knows: ${named}. Builds before this one accepted any string here, through the repository as well ` +
+      'as by hand, so this need not be an edited file. Nothing can guess which harness did the work, so it cannot ' +
+      "be carried forward: run  UPDATE child_runs SET agent='claude' WHERE agent NOT IN ('claude','codex');  " +
+      'against the file (or delete those rows) and reopen.',
   );
 }

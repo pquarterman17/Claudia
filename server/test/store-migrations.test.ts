@@ -14,8 +14,10 @@ const dir = mkdtempSync(join(tmpdir(), 'claudia-store-mig-'));
  * EBUSY on Windows, failing the whole file in teardown while every test
  * reports as passing — invisible on Linux, which unlinks open files. */
 const opened: DatabaseSync[] = [];
+/** Same teardown, for handles opened by the damaged-file cases below. */
+const kept: DatabaseSync[] = [];
 afterAll(() => {
-  for (const db of opened) closeFleetDb(db);
+  for (const db of [...opened, ...kept]) closeFleetDb(db);
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -467,5 +469,109 @@ describe('an escalation outlives what it was about', () => {
     // thing that owns it, the record of what happened does not.
     expect(db.prepare('SELECT COUNT(*) AS n FROM child_runs').get()?.['n']).toBe(0);
     expect(db.prepare('SELECT COUNT(*) AS n FROM tasks').get()?.['n']).toBe(0);
+  });
+});
+
+describe('a file that arrives damaged still opens', () => {
+  /** Opens at v2, orphans a row with foreign keys OFF the way an external tool
+   * would, and hands back the path to reopen at the latest version. */
+  function orphanedAt(name: string, orphan: (db: DatabaseSync) => void): string {
+    const path = join(dir, name, 'fleet.db');
+    const at2 = openFleetDb(path, MIGRATIONS.filter((m) => m.version <= 2));
+    if (!at2.ok) throw new Error(at2.message);
+    at2.value.exec(
+      `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+         VALUES ('m1', 'M', '', 'active', 'paused', 60, 4, '/repo', 1, 1);
+       INSERT INTO tasks (id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, created_at, updated_at)
+         VALUES ('t1', 'm1', 'T', '', '/repo', 'proposed', 0, '[]', '', 1, 1);`,
+    );
+    // Both the sqlite3 CLI and Python's driver default this OFF, which is how
+    // an orphan gets into a file nothing in Claudia would have produced.
+    at2.value.exec('PRAGMA foreign_keys = OFF');
+    orphan(at2.value);
+    closeFleetDb(at2.value);
+    return path;
+  }
+
+  it('migrates past an orphan it did not create, in a table it never touches', () => {
+    // Found by audit. `PRAGMA foreign_key_check` scans the WHOLE database, and
+    // version 3 is the first migration to run it — so every pre-existing orphan
+    // anywhere in the file became a permanent refusal to open, taking the entire
+    // mission layer down and blaming a rebuild that had done nothing wrong.
+    const path = orphanedAt('orphan-task', (db) => db.exec("DELETE FROM missions WHERE id = 'm1'"));
+    const opened = openFleetDb(path);
+    expect(opened.ok, opened.ok ? '' : opened.message).toBe(true);
+    if (!opened.ok) return;
+    kept.push(opened.value);
+    expect(schemaVersion(opened.value)).toBe(latestVersion(MIGRATIONS));
+    // The damage is carried forward, not silently repaired — that is the user's
+    // call, and the rows are still there to make it with.
+    expect(opened.value.prepare('SELECT COUNT(*) AS n FROM tasks').get()?.['n']).toBe(1);
+  });
+
+  it('is not blocked by the very thing migration 4 exists to allow', () => {
+    // The sharpest case: an escalation whose mission was deleted externally
+    // blocked version 3 — while version 4, the next entry, exists precisely so
+    // that an escalation CAN outlive its mission.
+    const path = orphanedAt('orphan-escalation', (db) => {
+      db.exec(
+        `INSERT INTO escalations (id, mission_id, source, request, reason, severity, resolution, created_at, resolved_at, resolution_note)
+           VALUES ('e1', 'm1', 'human', 'git.push', 'x', 'blocking', 'approved', 1, 2, 'approved at the console');
+         DELETE FROM missions WHERE id = 'm1';`,
+      );
+    });
+    const opened = openFleetDb(path);
+    expect(opened.ok, opened.ok ? '' : opened.message).toBe(true);
+    if (!opened.ok) return;
+    kept.push(opened.value);
+    expect(opened.value.prepare('SELECT resolution_note FROM escalations WHERE id = ?').get('e1')).toMatchObject({
+      resolution_note: 'approved at the console',
+    });
+  });
+
+  it('still refuses a rebuild that breaks a reference itself', () => {
+    // The gate is now a difference, not a total — so it must still catch damage
+    // the migration causes, on a file that already had some.
+    const path = orphanedAt('orphan-and-broken', (db) => db.exec("DELETE FROM missions WHERE id = 'm1'"));
+    const at2 = openFleetDb(path, MIGRATIONS.filter((m) => m.version <= 2));
+    if (!at2.ok) throw new Error(at2.message);
+    kept.push(at2.value);
+    const breaking: Migration[] = [
+      ...MIGRATIONS.filter((m) => m.version <= 2),
+      {
+        version: 3,
+        name: 'breaks-more',
+        rebuildsTables: true,
+        up: (db) =>
+          db.exec(
+            `INSERT INTO tasks (id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, created_at, updated_at)
+               VALUES ('t2', 'also-missing', 'T', '', '/repo', 'proposed', 0, '[]', '', 1, 1)`,
+          ),
+      },
+    ];
+    expect(() => applyMigrations(at2.value, breaking)).toThrow(/referencing a row that is not there.*tasks/s);
+    expect(schemaVersion(at2.value)).toBe(2);
+  });
+
+  it('names the migration even when the write lock is held by somebody else', () => {
+    // BEGIN IMMEDIATE sat outside the try that names the migration, so the one
+    // failure a user is most likely to hit came back as a bare
+    // "database is locked" with nothing saying a migration was involved.
+    const path = join(dir, 'locked', 'fleet.db');
+    const holder = openFleetDb(path, MIGRATIONS.filter((m) => m.version <= 2));
+    if (!holder.ok) throw new Error(holder.message);
+    kept.push(holder.value);
+    const other = openFleetDb(path, MIGRATIONS.filter((m) => m.version <= 2));
+    if (!other.ok) throw new Error(other.message);
+    kept.push(other.value);
+
+    holder.value.exec('BEGIN IMMEDIATE');
+    holder.value.exec('PRAGMA busy_timeout = 0');
+    other.value.exec('PRAGMA busy_timeout = 0');
+    try {
+      expect(() => applyMigrations(other.value)).toThrow(/Migration 3 \(schema-bounds\) failed/);
+    } finally {
+      holder.value.exec('ROLLBACK');
+    }
   });
 });

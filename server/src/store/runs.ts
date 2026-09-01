@@ -61,6 +61,30 @@ function agentKind(value: string): AgentKind {
   return value;
 }
 
+/**
+ * The runs in a batch that can be read, rather than none of them.
+ *
+ * `toRun` refuses a row whose agent is outside the roster, which is right for
+ * `get` — that caller asked about that run. Found by audit: in a LIST it meant
+ * `rows.map(toRun)` threw on the first bad entry and every good run in the same
+ * mission became unreachable with it. Only a file written by an older build can
+ * hold one, which is exactly the moment a user most needs to see the rest.
+ *
+ * `events.ts` already made this call for a corrupt payload and says why: one
+ * bad row must not break the read that would let somebody see what went wrong.
+ */
+function readable(rows: readonly Row[]): ChildRun[] {
+  const runs: ChildRun[] = [];
+  for (const row of rows) {
+    try {
+      runs.push(toRun(row));
+    } catch {
+      /* unreadable, and named by get(id) for anyone who asks about it directly */
+    }
+  }
+  return runs;
+}
+
 export class ChildRunRepo {
   constructor(private readonly db: DatabaseSync) {}
 
@@ -109,7 +133,7 @@ export class ChildRunRepo {
       const rows = this.db
         .prepare(`SELECT ${RUN_COLUMNS} FROM child_runs WHERE task_id = ? ORDER BY attempt`)
         .all(taskId) as Row[];
-      return rows.map(toRun);
+      return readable(rows);
     });
   }
 
@@ -118,7 +142,7 @@ export class ChildRunRepo {
       const rows = this.db
         .prepare(`SELECT ${RUN_COLUMNS} FROM child_runs WHERE mission_id = ? ORDER BY started_at`)
         .all(missionId) as Row[];
-      return rows.map(toRun);
+      return readable(rows);
     });
   }
 

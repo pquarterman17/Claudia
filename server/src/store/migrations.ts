@@ -109,8 +109,13 @@ export function applyMigrations(db: DatabaseSync, migrations: readonly Migration
     const enforcing = migration.rebuildsTables === true ? foreignKeysOn(db) : undefined;
     if (enforcing === true) db.exec('PRAGMA foreign_keys = OFF');
     try {
-      db.exec('BEGIN IMMEDIATE');
+      // Inside the try that names the migration. Found by audit: this sat
+      // outside it, so the one failure a user is most likely to hit — another
+      // connection holding the write lock, surfacing after the 5s busy timeout
+      // as a bare "database is locked" — was the only one that never said a
+      // migration was involved.
       try {
+        db.exec('BEGIN IMMEDIATE');
         // Re-read INSIDE the write lock. The version above was sampled before
         // anything was serialised, so two processes opening the same file — the
         // old sidecar still holding it while a new one starts, which is the
@@ -123,13 +128,16 @@ export function applyMigrations(db: DatabaseSync, migrations: readonly Migration
           db.exec('ROLLBACK');
           continue;
         }
+        // Sampled BEFORE the rebuild, so the check afterwards can tell what
+        // this migration broke from what was already broken. See below.
+        const before = migration.rebuildsTables === true ? referenceViolations(db) : undefined;
         migration.up(db);
         // Enforcement was off for a rebuild, so nothing checked the references
         // the copy carried forward. This is the check, inside the same
         // transaction that did the work: a rebuild that lost a parent row or
         // mistyped a column rolls back rather than committing a file whose
         // foreign keys silently no longer hold.
-        if (migration.rebuildsTables === true) assertReferencesHold(db, migration);
+        if (before) assertNoNewViolations(db, before, migration);
         // PRAGMA takes no bound parameters, so the version is interpolated. It is
         // an integer checked by assertOrdered, never anything user-supplied.
         db.exec(`PRAGMA user_version = ${migration.version}`);
@@ -162,18 +170,52 @@ function foreignKeysOn(db: DatabaseSync): boolean {
 }
 
 /**
- * Fails the migration if the rebuild left a reference pointing at nothing.
+ * Every foreign key violation in the file, counted per constraint.
  *
- * `PRAGMA foreign_key_check` reports every violation in the file rather than
- * stopping at the first, so the message can say which table and how many —
- * enough to tell a botched copy from a pre-existing orphan.
+ * Keyed on table/parent/fkid rather than rowid, because a rebuild reassigns
+ * rowids: an orphan that already existed in a table being rebuilt would
+ * otherwise come back with a different rowid and read as newly created.
  */
-function assertReferencesHold(db: DatabaseSync, migration: Migration): void {
-  const violations = db.prepare('PRAGMA foreign_key_check').all() as { table?: unknown }[];
-  if (violations.length === 0) return;
-  const tables = [...new Set(violations.map((row) => String(row.table ?? 'unknown')))].sort();
+function referenceViolations(db: DatabaseSync): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const row of db.prepare('PRAGMA foreign_key_check').all() as Record<string, unknown>[]) {
+    const key = `${String(row['table'] ?? '?')}|${String(row['parent'] ?? '?')}|${String(row['fkid'] ?? '?')}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Fails the migration if the rebuild left a reference pointing at nothing —
+ * and ONLY if the rebuild is what left it there.
+ *
+ * `PRAGMA foreign_key_check` scans the whole database, not the tables the
+ * migration touched, and version 3 is the first migration ever to run it. So
+ * the first version of this turned every pre-existing orphan anywhere in the
+ * file into a permanent, unrecoverable refusal to open: found by audit, with a
+ * `tasks` row orphaned by an external tool (both the sqlite3 CLI and Python's
+ * driver default foreign keys OFF, so no cascade fires), the same message came
+ * back on every open and took the entire mission layer down with it. It named
+ * a table this migration never touches and blamed a rebuild that had done
+ * nothing wrong.
+ *
+ * The sharpest case was an escalation whose mission had been deleted
+ * externally: that blocked version 3, even though version 4 — the very next
+ * entry — exists precisely so an escalation CAN outlive its mission.
+ *
+ * So the gate is now a difference, not a total. A file may arrive with damage;
+ * what it must not do is leave with more.
+ */
+function assertNoNewViolations(db: DatabaseSync, before: Map<string, number>, migration: Migration): void {
+  const after = referenceViolations(db);
+  const worse: string[] = [];
+  for (const [key, count] of after) {
+    const was = before.get(key) ?? 0;
+    if (count > was) worse.push(`${key.split('|')[0] ?? '?'} (${count - was} more)`);
+  }
+  if (worse.length === 0) return;
   throw new Error(
-    `rebuilding left ${violations.length} row(s) referencing a row that is not there, in: ${tables.join(', ')}. ` +
+    `rebuilding left rows referencing a row that is not there, in: ${[...new Set(worse)].sort().join(', ')}. ` +
       `The file is unchanged; ${migration.name} did not commit.`,
   );
 }

@@ -236,13 +236,18 @@ export const WORKTREE_LIVE_PATH_INDEX = `CREATE UNIQUE INDEX worktrees_live_path
  * Rewrites every key under `platform`, retiring rows that collapse onto one.
  *
  * Split out from the migration above so the platform-realignment on open can
- * reuse it rather than own a second copy of the same decision. The caller
- * handles the index: migration 5 creates it afterwards because it does not
- * exist yet, and the realignment drops it first because an intermediate state
- * mid-rewrite can hold a duplicate the finished state does not.
+ * reuse the rewrite. The caller handles the index: migration 5 creates it
+ * afterwards because it does not exist yet, and the realignment drops it first
+ * because an intermediate state mid-rewrite can hold a duplicate the finished
+ * state does not.
  *
  * Newest-wins, and the losers are marked `removed` rather than deleted: they
  * are still history, and `removed` is the one state the live index exempts.
+ * That retirement is migration 5's decision and only migration 5's — its
+ * duplicates are ONE directory recorded twice by an index that compared raw
+ * text, so nothing real is lost. The realignment refuses before it gets here
+ * (see `alignPathPlatform`), because its duplicates are two directories that
+ * genuinely existed and each held a claim.
  */
 export function recanonicaliseWorktreeKeys(db: DatabaseSync, platform: PathPlatform): void {
   const rows = db

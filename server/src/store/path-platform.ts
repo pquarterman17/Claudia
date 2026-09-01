@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { HOST_PLATFORM, type PathPlatform } from '../path-key.js';
+import { HOST_PLATFORM, worktreePathKey, type PathPlatform } from '../path-key.js';
 import { IMMUTABLE_WORKTREE_PATHS, recanonicaliseWorktreeKeys, WORKTREE_LIVE_PATH_INDEX } from './schema-constraints.js';
 
 /**
@@ -60,13 +60,21 @@ export function storedPathPlatform(db: DatabaseSync): PathPlatform | undefined {
  * transaction that puts it back, rather than to write an exemption into it that
  * is then always there.
  *
- * Realigning can retire a row: two directories that POSIX keeps apart can be
- * one directory to Windows, and only one of them can hold the claim. Newest
- * wins, the rest are marked `removed`, and nothing is deleted — the same
- * decision migration 5 took, for the same reason, that a file must not become
- * unopenable over a conflict the schema itself allowed to exist. A row retired
- * on the way to Windows is not revived on the way back; its directory is simply
- * claimable again.
+ * Refuses rather than choosing, when the new rules merge two live claims. Two
+ * directories POSIX keeps apart can be one directory to Windows, and one host
+ * cannot honour both claims — but both are REAL. Migration 5 retires its
+ * duplicates because they are one directory recorded twice, the output of an
+ * index that compared raw text; these are two directories that genuinely
+ * existed, each claimed by a different task. Picking a winner by timestamp
+ * would discard an ownership record nobody was told about, in the one part of
+ * the fleet whose whole job is to know who owns what.
+ *
+ * So it stops, names the pairs, and says what to do about them. The hazard of
+ * an unopenable file is real and the answer to it is the same one migration 3
+ * gives for an unknown agent: refuse by hand, with the rows and a repair, since
+ * "UNIQUE constraint failed" is not something a person can act on. Nothing is
+ * written — the whole realignment is one transaction, and this throws inside
+ * it.
  */
 export function alignPathPlatform(db: DatabaseSync, platform: PathPlatform = HOST_PLATFORM): boolean {
   // A file older than the migration that adds the table has nothing to align
@@ -94,6 +102,7 @@ export function alignPathPlatform(db: DatabaseSync, platform: PathPlatform = HOS
       db.exec('COMMIT');
       return false;
     }
+    refuseMergedClaims(db, platform, storedPathPlatform(db));
     db.exec('DROP TRIGGER IF EXISTS worktrees_path_is_immutable');
     db.exec('DROP INDEX IF EXISTS worktrees_live_path');
     recanonicaliseWorktreeKeys(db, platform);
@@ -116,6 +125,44 @@ export function alignPathPlatform(db: DatabaseSync, platform: PathPlatform = HOS
     throw err;
   }
   return true;
+}
+
+/**
+ * Stops the realignment before it can turn two live claims into one.
+ *
+ * Read before anything is written, so the message can promise the file is
+ * untouched and mean it. Live rows only: a `removed` row holds no claim and the
+ * index that enforces this exempts it.
+ */
+function refuseMergedClaims(db: DatabaseSync, platform: PathPlatform, stored: PathPlatform | undefined): void {
+  const rows = db.prepare("SELECT id, path FROM worktrees WHERE state <> 'removed'").all() as {
+    id: string;
+    path: string;
+  }[];
+  const byKey = new Map<string, { id: string; path: string }[]>();
+  for (const row of rows) {
+    const key = worktreePathKey(row.path, platform);
+    const together = byKey.get(key) ?? [];
+    together.push(row);
+    byKey.set(key, together);
+  }
+  const merged = [...byKey.values()].filter((group) => group.length > 1);
+  if (merged.length === 0) return;
+
+  // Id AND path, raw. The id is what the repair below takes, and the path is
+  // how a person recognises which checkout it is. Not JSON-quoted: the paths
+  // this refusal is ABOUT are the ones with backslashes in them, and printing
+  // `/wt/a\\b` for a row that says `/wt/a\b` sends the reader looking for a
+  // row that is not there.
+  const shown = merged.slice(0, 5).map((group) => group.map((row) => `${row.id} (${row.path})`).join(' and '));
+  throw new Error(
+    `This fleet.db recorded its worktree paths under ${stored ?? 'unknown'} rules and is being opened under ` +
+      `${platform} rules, where ${merged.length === 1 ? 'these two worktrees are' : 'each of these groups is'} ` +
+      `the same directory: ${shown.join('; ')}${merged.length > 5 ? `; and ${merged.length - 5} more` : ''}. Each ` +
+      'is a live claim held by a task, and one host cannot honour both — so this will not pick one for you. Retire ' +
+      "the ones you no longer want with  UPDATE worktrees SET state='removed' WHERE id='<id>';  against the file " +
+      'and reopen; the directories and their branches are untouched, and so is this database.',
+  );
 }
 
 function hasFleetMeta(db: DatabaseSync): boolean {

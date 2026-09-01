@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { worktreePathKey } from '../path-key.js';
 import { applyMigrations, type Migration } from './migrations.js';
+import { alignPathPlatform } from './path-platform.js';
 
 /**
  * The fleet database: one SQLite file beside settings.json.
@@ -319,6 +320,10 @@ export function openFleetDb(
       // connection nobody holds.
       db.function('claudia_path_key', { deterministic: true }, (value) => worktreePathKey(String(value)));
       applyMigrations(db, migrations);
+      // After the migrations, because it needs the table one of them adds, and
+      // on EVERY open rather than once, because the platform a file's worktree
+      // keys were written under can change while its schema version does not.
+      alignPathPlatform(db);
       return db;
     } catch (err) {
       // A half-open connection is worse than none: close it before reporting,

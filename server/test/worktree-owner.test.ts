@@ -1,4 +1,4 @@
-import { isLegalRoute, WORKTREE_TRANSITIONS, worktreePathKey } from '@claudia/shared';
+import { isLegalRoute, WORKTREE_TRANSITIONS } from '@claudia/shared';
 import type { WorktreeRecord } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
 import {
@@ -397,71 +397,5 @@ describe('cleanup is never more permissive than claim', () => {
       reason: 'that worktree has no recorded owner',
     });
     expect(claimWorktree(REQUEST, half, there).kind).toBe('refuse');
-  });
-});
-
-describe('the path key is linear in its input', () => {
-  it('does not degrade on a path that is mostly separators', () => {
-    // CodeQL flagged the previous `replace(/(.)\/+$/, '$1')` as polynomial:
-    // anchoring at `$` makes the engine retry from every starting offset, so a
-    // path of many slashes cost O(n²) — and the input is a path out of a record
-    // or a request, which is the "uncontrolled data" the alert means.
-    const timeFor = (n: number): number => {
-      const hostile = `a${'/'.repeat(n)}`;
-      const started = performance.now();
-      expect(worktreePathKey(hostile, 'posix')).toBe('a');
-      return performance.now() - started;
-    };
-    timeFor(10_000);
-    const elapsed = timeFor(200_000);
-    expect(elapsed, `20x the input took ${elapsed.toFixed(0)}ms`).toBeLessThan(50);
-  });
-
-  it.each([
-    ['/', 'posix', '/'],
-    ['//', 'posix', '/'],
-    ['/a//', 'posix', '/a'],
-    ['/a/b', 'posix', '/a/b'],
-    ['C:/', 'win32', 'c:/'],
-    ['C:', 'win32', 'c:'],
-    ['C:\\Repo\\Work\\', 'win32', 'c:/repo/work'],
-  ] as const)('still answers %s the same way it did', (input, platform, expected) => {
-    // The scan replaced a regex, so every boundary it used to get right has to
-    // survive: `/` stays `/` rather than reducing to the empty string and
-    // making an unwritten path equal the filesystem root.
-    expect(worktreePathKey(input, platform)).toBe(expected);
-  });
-});
-
-describe('the key names a directory, not a spelling of one', () => {
-  it.each([
-    ['/repo//work', '/repo/work', 'posix'],
-    ['/repo/./work', '/repo/work', 'posix'],
-    ['/repo/work/../work', '/repo/work', 'posix'],
-    ['/repo/work/', '/repo/work', 'posix'],
-    ['C:/repo//work', 'C:\\repo\\work', 'win32'],
-    ['C:\\repo\\.\\work', 'C:/repo/work', 'win32'],
-    ['C:/repo/work/../work', 'C:/repo/work', 'win32'],
-  ] as const)('gives %s and %s one key', (a, b, platform) => {
-    // Found in review: repeated separators and . / .. left the same directory
-    // with two different keys, so it could still take two live claims — which
-    // is the whole thing the key exists to prevent.
-    expect(worktreePathKey(a, platform)).toBe(worktreePathKey(b, platform));
-  });
-
-  it.each([
-    ['C:/', 'C:', 'win32'],
-    ['/a/b', '/a', 'posix'],
-    ['../a', 'a', 'posix'],
-    ['//server/share/a', '/server/share/a', 'win32'],
-  ] as const)('keeps %s and %s apart', (a, b, platform) => {
-    // The parts that say WHERE a path starts from survive folding: a drive root
-    // is not drive-relative, and a UNC share is not two redundant separators.
-    expect(worktreePathKey(a, platform)).not.toBe(worktreePathKey(b, platform));
-  });
-
-  it('clamps .. at an absolute root but keeps it in a relative path', () => {
-    expect(worktreePathKey('/a/../..', 'posix')).toBe('/');
-    expect(worktreePathKey('a/../..', 'posix')).toBe('..');
   });
 });

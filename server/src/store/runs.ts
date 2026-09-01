@@ -2,7 +2,6 @@ import {
   canTransitionRun,
   canTransitionWorktree,
   isAgentKind,
-  worktreePathKey,
   RUN_TRANSITIONS,
   type AgentKind,
   type ChildRun,
@@ -12,6 +11,7 @@ import {
 } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import { HOST_PLATFORM, worktreePathKey } from '../path-key.js';
 import { attempt, refuse, transact, type StoreResult } from './db.js';
 import { boolToInt, flag, int, optInt, optText, text, type Row } from './rows.js';
 
@@ -43,9 +43,6 @@ const RUN_COLUMNS =
 const WORKTREE_COLUMNS =
   'id, repo, path, branch, base_sha, owner_mission_id, owner_task_id, state, dirty, last_seen_at, created_at';
 const WORKTREE_INSERT = `${WORKTREE_COLUMNS}, path_key`;
-
-/** This machine's spelling rules, for the one place that has to persist them. */
-const PATH_PLATFORM = process.platform === 'win32' ? 'win32' : 'posix';
 
 /**
  * Checks an agent rather than asserting one, on the way in AND on the way out.
@@ -226,7 +223,7 @@ export class WorktreeRepo {
           boolToInt(record.dirty),
           record.lastSeenAt,
           record.createdAt,
-          worktreePathKey(record.path, PATH_PLATFORM),
+          worktreePathKey(record.path, HOST_PLATFORM),
         );
       return record;
     });
@@ -244,7 +241,7 @@ export class WorktreeRepo {
     return attempt('read the worktree record', () => {
       const row = this.db
         .prepare(`SELECT ${WORKTREE_COLUMNS} FROM worktrees WHERE path_key = ? AND state <> 'removed'`)
-        .get(worktreePathKey(path, PATH_PLATFORM)) as Row | undefined;
+        .get(worktreePathKey(path, HOST_PLATFORM)) as Row | undefined;
       return row ? toWorktree(row) : undefined;
     });
   }

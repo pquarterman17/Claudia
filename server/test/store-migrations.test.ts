@@ -578,29 +578,65 @@ describe('a file that arrives damaged still opens', () => {
 });
 
 describe('one live claim per directory, not per spelling', () => {
-  it('refuses a second live row for the same Windows checkout', () => {
+  it('refuses a second live row for the same checkout, spelled differently', () => {
     // Measured before this migration: samePath folded case and separators while
     // the unique index compared raw text, so `C:\Repo\Work` and `c:/repo/work`
     // were one directory to the policy that decides who may write there and two
     // rows to the index that makes ownership provable. Two live claims, two
     // owners, one checkout on disk.
+    //
+    // Spelled with separators rather than with case, because the key the
+    // DATABASE computes is the host's: case folding is a Windows rule, and this
+    // suite runs on both. The Windows spellings are pinned where the
+    // canonicaliser is, in path-key.test.ts.
     const db = fresh();
     db.prepare(
       `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
        VALUES ('m1', 'M', '', 'active', 'paused', 60, 4, '/repo', 1, 1)`,
     ).run();
-    const insert = (id: string, key: string) =>
+    const insert = (id: string, path: string) =>
       db
         .prepare(
           `INSERT INTO worktrees (id, repo, path, path_key, branch, base_sha, owner_mission_id, state, dirty, last_seen_at, created_at)
-           VALUES (?, 'C:\\Repo', ?, ?, 'b', 'a', 'm1', 'active', 0, 1, 1)`,
+           VALUES (?, '/repo', ?, claudia_path_key(?), 'b', 'a', 'm1', 'active', 0, 1, 1)`,
         )
-        .run(id, id, key);
-    insert('w1', 'c:/repo/work');
-    expect(() => insert('w2', 'c:/repo/work')).toThrow(/UNIQUE/);
+        .run(id, path, path);
+    insert('w1', '/repo/work');
+    expect(() => insert('w2', '/repo//work/')).toThrow(/UNIQUE/);
     // A removed row frees it again, as before.
     db.prepare("UPDATE worktrees SET state = 'removed' WHERE id = 'w1'").run();
-    expect(() => insert('w3', 'c:/repo/work')).not.toThrow();
+    expect(() => insert('w3', '/repo/work/./')).not.toThrow();
+  });
+
+  it('refuses an insert whose key is not the canonical form of its path', () => {
+    // The half migration 6 could not reach. It stopped `path` and `path_key`
+    // drifting after the row exists; through the deliberately exposed
+    // connection an INSERT could still write them disagreeing from the start,
+    // and the row would then be OWNED at one directory while claiming to be at
+    // another — byPath finding it under a path it is not at, and the real
+    // directory left free for a second live claim.
+    //
+    // The trigger calls the same canonicaliser the repository does, registered
+    // as a SQLite function, so there is no second implementation in SQL to keep
+    // in step.
+    const db = fresh();
+    db.prepare(
+      `INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+       VALUES ('m1', 'M', '', 'active', 'paused', 60, 4, '/repo', 1, 1)`,
+    ).run();
+    const insert = (id: string, path: string, key: string) =>
+      db
+        .prepare(
+          `INSERT INTO worktrees (id, repo, path, path_key, branch, base_sha, owner_mission_id, state, dirty, last_seen_at, created_at)
+           VALUES (?, '/repo', ?, ?, 'b', 'a', 'm1', 'active', 0, 1, 1)`,
+        )
+        .run(id, path, key);
+    expect(() => insert('w1', '/wt/a', '/wt/b')).toThrow(/canonical form/);
+    // Not merely "unequal to the path": an UNCANONICAL key is refused too, or
+    // the row would be unfindable by the only spelling byPath ever asks for.
+    expect(() => insert('w2', '/wt/a/', '/wt/a/')).toThrow(/canonical form/);
+    expect(() => insert('w3', '/wt/a/', '/wt/a')).not.toThrow();
+    expect(db.prepare('SELECT COUNT(*) AS n FROM worktrees').get()?.['n']).toBe(1);
   });
 
   it('settles duplicates the old index allowed, keeping the newest', () => {

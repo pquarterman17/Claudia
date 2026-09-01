@@ -492,4 +492,41 @@ describe('validation composes, because the two entry points are separate', () =>
     const health = assess(observe({ now: Number.NaN, pendingApproval: 'Bash', pendingSince: NOW - 1 }));
     expect(health.kind).not.toBe('healthy');
   });
+
+  it.each([
+    ['last activity', { run: run({ attempt: 1, startedAt: NOW - 60_000 }), lastActivityAt: Number.NaN }],
+    ['end time', { run: run({ attempt: 1, endedAt: Number.NaN }), lastActivityAt: NOW - 60_000 }],
+    ['start time', { run: run({ attempt: 1, startedAt: Number.NaN }), lastActivityAt: undefined }],
+  ])('escalates rather than retrying when it cannot read the %s', (_label, over) => {
+    // The third input to the same arithmetic, and the last one still taken on
+    // trust. `??` falls back on absence, not on nonsense, so a NaN
+    // `lastActivityAt` was selected over a perfectly good `startedAt`; the
+    // retry that came back announced `notBefore: NaN` and cleared the
+    // `now < notBefore` gate, because every comparison with NaN is false.
+    const action = nextAction({ kind: 'silent', reason: 'x' }, due(over));
+    expect(action.kind).toBe('escalate');
+    if (action.kind !== 'escalate') return;
+    expect(action.severity).toBe('blocking');
+    expect(action.key).not.toContain('NaN');
+  });
+
+  it('does not quietly count the backoff from an earlier anchor instead', () => {
+    // The tempting repair — fall through to the next candidate — is not one.
+    // Each is EARLIER than the one that could not be read, so substituting it
+    // shortens the backoff by an unknown amount, which is the retry loop
+    // spending sooner than policy says. `undefined` says so out loud.
+    expect(retryAnchor(due({ lastActivityAt: Number.NaN }))).toBeUndefined();
+  });
+
+  it('still gives up rather than escalating when the attempts are gone', () => {
+    // Order matters: with nothing left to spend there is no backoff to count,
+    // so an unreadable clock in the run's past must not turn a finished task
+    // into a page for a human.
+    const spent = DEFAULT_WATCHDOG.maxAttempts;
+    const action = nextAction(
+      { kind: 'silent', reason: 'x' },
+      due({ run: run({ attempt: spent, startedAt: Number.NaN }), lastActivityAt: Number.NaN }),
+    );
+    expect(action.kind).toBe('give_up');
+  });
 });

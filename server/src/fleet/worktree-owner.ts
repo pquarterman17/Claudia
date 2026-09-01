@@ -1,4 +1,5 @@
-import { isLegalRoute, WORKTREE_TRANSITIONS, worktreePathKey, type WorktreeRecord, type WorktreeState } from '@claudia/shared';
+import { isLegalRoute, WORKTREE_TRANSITIONS, type WorktreeRecord, type WorktreeState } from '@claudia/shared';
+import { worktreePathKey } from '../path-key.js';
 
 /**
  * Whether two paths name the same place.

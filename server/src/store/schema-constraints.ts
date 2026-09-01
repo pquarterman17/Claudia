@@ -1,5 +1,5 @@
-import { worktreePathKey } from '@claudia/shared';
 import type { DatabaseSync } from 'node:sqlite';
+import { worktreePathKey, type PathPlatform } from '../path-key.js';
 
 /**
  * Versions 3 and 4: the constraints the first schema was missing.
@@ -190,8 +190,8 @@ CREATE TABLE worktrees_rebuild (
   id                TEXT    PRIMARY KEY,
   repo              TEXT    NOT NULL,
   path              TEXT    NOT NULL,
-  -- The same directory, spelled one way. Written by the repository from the
-  -- contract's worktreePathKey, so policy and storage cannot drift apart.
+  -- The same directory, spelled one way. Written by the repository from
+  -- worktreePathKey, so policy and storage cannot drift apart.
   path_key          TEXT    NOT NULL,
   branch            TEXT    NOT NULL,
   base_sha          TEXT    NOT NULL,
@@ -215,7 +215,7 @@ ALTER TABLE worktrees_rebuild RENAME TO worktrees;
 /**
  * Fills in the key, and settles any duplication the old index allowed.
  *
- * Done here rather than in SQL because the canonical form is the contract's,
+ * Done here rather than in SQL because the canonical form is `node:path`'s,
  * not something to re-implement in SQLite string functions and keep in step.
  *
  * Rows that collapse onto one key are the old bug's output, not two real
@@ -224,7 +224,7 @@ ALTER TABLE worktrees_rebuild RENAME TO worktrees;
  * unopenable over damage this schema itself permitted — the hazard the
  * clamping decision above was taken to avoid.
  */
-export function canonicaliseWorktreePaths(db: DatabaseSync, platform: 'win32' | 'posix'): void {
+export function canonicaliseWorktreePaths(db: DatabaseSync, platform: PathPlatform): void {
   const rows = db
     .prepare('SELECT id, path, state, created_at FROM worktrees ORDER BY created_at DESC, id DESC')
     .all() as { id: string; path: string; state: string; created_at: number }[];
@@ -258,10 +258,8 @@ export function canonicaliseWorktreePaths(db: DatabaseSync, platform: 'win32' | 
  * to happen — and it is the database that forbids it, which is the point, since
  * the caller doing it is the one holding the raw connection.
  *
- * INSERT is still the repository's to get right: SQLite cannot re-run the
- * contract's canonicaliser, so a trigger cannot check a key it cannot compute.
- * What this closes is drift AFTER the row is written, which is the reachable
- * half.
+ * INSERT is migration 7's half: this trigger only sees UPDATEs. What this
+ * closes is drift AFTER the row is written.
  */
 export const IMMUTABLE_WORKTREE_PATHS = `
 CREATE TRIGGER worktrees_path_is_immutable
@@ -269,5 +267,41 @@ BEFORE UPDATE OF path, path_key ON worktrees
 FOR EACH ROW WHEN NEW.path IS NOT OLD.path OR NEW.path_key IS NOT OLD.path_key
 BEGIN
   SELECT RAISE(ABORT, 'a worktree path cannot be changed; record a new worktree instead');
+END;
+`;
+
+/**
+ * The database derives the key itself, so an insert cannot disagree with it.
+ *
+ * Migration 6 stopped the columns drifting AFTER a row exists. This closes the
+ * other half a review found: through the exposed connection, an INSERT could
+ * still write `path='/a', path_key='/b'`, and the row would then be owned at
+ * one directory while claiming to be at another.
+ *
+ * The trigger calls `claudia_path_key`, which `openFleetDb` registers as a
+ * deterministic SQLite function backed by the SAME canonicaliser the
+ * repository uses. That is the point: one implementation, checked by the
+ * database, rather than a second one written in SQL string functions that
+ * would have to be kept in step with the first.
+ *
+ * The cost is honest and worth stating: a connection that has not registered
+ * the function cannot insert worktrees. That is the sqlite3 CLI and anything
+ * else outside this process, which is exactly the writer this is defending
+ * against.
+ *
+ * Two things a later migration has to know. The `typeof` guard is there so a
+ * missing path is answered by its own NOT NULL constraint rather than by a
+ * message about canonical forms — everything else STRICT will have converted
+ * to text before this runs. And the key a row carries is the canonical form
+ * for the HOST that wrote it, so a table rebuild copying worktrees forward
+ * must drop this trigger for the copy: a file written on Windows and rebuilt
+ * on Linux would otherwise abort the migration on rows that were never wrong.
+ */
+export const DERIVED_WORKTREE_KEYS = `
+CREATE TRIGGER worktrees_path_key_is_derived
+BEFORE INSERT ON worktrees
+FOR EACH ROW WHEN typeof(NEW.path) = 'text' AND NEW.path_key IS NOT claudia_path_key(NEW.path)
+BEGIN
+  SELECT RAISE(ABORT, 'a worktree path_key must be the canonical form of its path');
 END;
 `;

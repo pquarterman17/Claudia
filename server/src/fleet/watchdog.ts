@@ -195,14 +195,24 @@ export type WatchdogAction =
  * A run that ended has an end time. One that is merely silent has not ended,
  * so the anchor is when it last did anything; failing that, when it started.
  * None of these change between ticks, which is the whole requirement.
+ *
+ * `undefined` when the timestamp this run's anchor comes from is unreadable.
+ * Found in review: `??` falls back on absence, not on nonsense, so a
+ * `lastActivityAt` of NaN was SELECTED over a perfectly good `startedAt` — and
+ * every number derived from it was NaN, up to a retry announcing
+ * `notBefore: NaN` that walked straight through the `now < notBefore` gate,
+ * because a comparison with NaN is false. The next candidate down is not a
+ * repair either: it is always EARLIER than the one that could not be read, so
+ * substituting it shortens a backoff by an unknown amount. Neither reading nor
+ * guessing, then; the caller escalates.
  */
-export function retryAnchor(observation: RunObservation): number {
-  return observation.run.endedAt ?? observation.lastActivityAt ?? observation.run.startedAt;
+export function retryAnchor(observation: RunObservation): number | undefined {
+  const anchor = observation.run.endedAt ?? observation.lastActivityAt ?? observation.run.startedAt;
+  return Number.isFinite(anchor) ? anchor : undefined;
 }
 
 /** When the fault this action answers first became visible. */
-function faultAt(health: RunHealth, observation: RunObservation, policy: WatchdogPolicy): number {
-  const anchor = retryAnchor(observation);
+function faultAt(health: RunHealth, anchor: number, policy: WatchdogPolicy): number {
   return health.kind === 'silent' ? anchor + policy.silentAfterMs : anchor;
 }
 
@@ -291,6 +301,21 @@ export function nextAction(
       task: TASK_GIVEN_UP,
     };
   }
+  // Read before anything is computed from it, for the same reason the policy
+  // and the clock are read above: this is the third input to the same
+  // arithmetic, and the only one that was still taken on trust. An action is
+  // the permission to spend an attempt, and a deadline nobody can compute is
+  // not a deadline that has passed.
+  const anchor = retryAnchor(observation);
+  if (anchor === undefined) {
+    return {
+      kind: 'escalate',
+      request: 'unreadable run timestamps',
+      reason: `cannot tell when run ${run.id} stopped being useful, so there is no point to count a backoff from`,
+      severity: 'blocking',
+      key: escalationKey(run.id, 'unreadable-run-anchor'),
+    };
+  }
   // Counted over the TASK, like `spent` above, not over this one run. Found
   // reviewing this file: `next` came from max(run.attempt, attemptsSpent) but
   // the delay came from run.attempt alone, so a task whose OTHER runs had
@@ -299,7 +324,7 @@ export function nextAction(
   // The comment on `spent` gives the reason and it applies just as much here:
   // one run's number is not the task's.
   const afterMs = backoffMs(spent, policy);
-  const notBefore = faultAt(health, observation, policy) + afterMs;
+  const notBefore = faultAt(health, anchor, policy) + afterMs;
   // Withheld until it is actually due, rather than emitted early with a
   // "do not act on this yet" attached.
   //

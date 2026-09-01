@@ -5,6 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { worktreePathKey } from '../path-key.js';
 import { applyMigrations, type Migration } from './migrations.js';
 
 /**
@@ -310,6 +311,13 @@ export function openFleetDb(
       // A second connection (a future reader, or a stale one during restart)
       // should wait briefly rather than fail the command outright.
       db.exec('PRAGMA busy_timeout = 5000');
+      // Registered BEFORE the migrations, because the schema's own triggers
+      // call it. One canonicaliser, used by the repository and enforced by the
+      // database, rather than a second one written in SQL string functions that
+      // would drift from the first. Inside the try, so a build that cannot
+      // register it closes the file instead of leaving it locked by a
+      // connection nobody holds.
+      db.function('claudia_path_key', { deterministic: true }, (value) => worktreePathKey(String(value)));
       applyMigrations(db, migrations);
       return db;
     } catch (err) {

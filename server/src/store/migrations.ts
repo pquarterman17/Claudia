@@ -3,6 +3,7 @@ import { ESCALATION_KEYS, FLEET_CORE } from './schema.js';
 import {
   CANONICAL_WORKTREE_PATHS,
   canonicaliseWorktreePaths,
+  DERIVED_WORKTREE_KEYS,
   DURABLE_ESCALATIONS,
   IMMUTABLE_WORKTREE_PATHS,
   refuseUnknownAgents,
@@ -86,6 +87,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 6,
     name: 'immutable-worktree-paths',
     up: (db) => db.exec(IMMUTABLE_WORKTREE_PATHS),
+  },
+  {
+    version: 7,
+    name: 'derived-worktree-keys',
+    up: (db) => db.exec(DERIVED_WORKTREE_KEYS),
   },
 ];
 

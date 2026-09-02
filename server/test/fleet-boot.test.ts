@@ -23,9 +23,12 @@ afterAll(() => {
 });
 
 let counter = 0;
+/** Where the most recent `crashed()` store lives, so it can be reopened. */
+let storePath = '';
 /** A store with one mission, one task, and one run left mid-flight by a crash. */
 function crashed(over: { sessionId?: string } = {}) {
-  const boot = startFleet(new Set(), join(dir, `db-${counter++}`, 'fleet.db'));
+  storePath = join(dir, `db-${counter++}`, 'fleet.db');
+  const boot = startFleet(new Set(), storePath);
   const store = boot.store;
   if (!store) throw new Error(boot.summary);
   opened.push(store);
@@ -78,6 +81,26 @@ describe('opening the fleet at startup', () => {
   });
 });
 
+describe('a recovery that fails hands back nothing', () => {
+  it('closes the store rather than serving one that was never reconciled', () => {
+    // The sharper half of this file's own argument, and the reason a failed
+    // recovery is not merely reported: an unreconciled file still says
+    // `running` for processes that are gone, so every later decision reads
+    // those rows and the fleet believes it is busy. A missing mission layer is
+    // visible and contained; a fleet that will not dispatch and cannot say why
+    // is neither.
+    const { store } = crashed();
+    // Break the write half of recovery from underneath it, the way a locked or
+    // damaged file would: the reads still work, so recovery gets a plan and
+    // then cannot apply it.
+    store.db.exec('DROP TABLE child_runs');
+
+    const boot = startFleet(new Set(), storePath);
+    expect(boot.store).toBeUndefined();
+    expect(boot.summary).toContain('recovery failed');
+  });
+});
+
 describe('reconciling what a crash left behind', () => {
   it('orphans a run whose session did not survive, and requeues its task', () => {
     const { store, taskId, runId } = crashed();
@@ -119,10 +142,7 @@ describe('reconciling what a crash left behind', () => {
     expect(runDone).toBe(taskQueued);
   });
 
-  it('records that recovery ran, even when it changed nothing', () => {
-    // "recovered 0 runs" after a clean restart is what distinguishes it from a
-    // restart where recovery never happened at all, and nothing else in the
-    // file can tell those apart afterwards.
+  it('records that recovery ran when it had work to do', () => {
     const { store, missionId } = crashed();
     expect(recoverFleet(store, new Set()).ok).toBe(true);
     const events = store.events.sinceForMission(missionId);
@@ -130,6 +150,27 @@ describe('reconciling what a crash left behind', () => {
     const recovered = events.value.filter((event) => event.kind === 'fleet_recovered');
     expect(recovered).toHaveLength(1);
     expect(String(JSON.stringify(recovered[0]?.payload))).toContain('orphaned 1');
+  });
+
+  it('records that recovery ran when it had NOTHING to do', () => {
+    // Found in review, and the case the old code skipped: "recovered 0 runs"
+    // after a clean restart is what distinguishes it from a restart where
+    // recovery never ran at all, and nothing else in the file can tell those
+    // apart afterwards. Skipping the quiet mission made the cheap case the one
+    // with no audit trail — the opposite of what this module documents.
+    const boot = startFleet(new Set(), join(dir, 'clean', 'fleet.db'));
+    const store = boot.store;
+    if (!store) throw new Error(boot.summary);
+    opened.push(store);
+    const created = store.missions.create({ name: 'quiet', body: '', cwd: '/repo' });
+    if (!created.ok) throw new Error(created.message);
+
+    expect(recoverFleet(store, new Set()).ok).toBe(true);
+    const events = store.events.sinceForMission(created.value.id);
+    if (!events.ok) throw new Error(events.message);
+    const recovered = events.value.filter((event) => event.kind === 'fleet_recovered');
+    expect(recovered).toHaveLength(1);
+    expect(String(JSON.stringify(recovered[0]?.payload))).toContain('recovered 0 run');
   });
 
   it('reconciles a mission nobody is watching', () => {

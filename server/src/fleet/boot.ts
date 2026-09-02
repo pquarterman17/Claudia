@@ -42,11 +42,18 @@ export function startFleet(liveSessionIds: ReadonlySet<string>, path?: string): 
   }
   const store = opened.value;
   const recovered = recoverFleet(store, liveSessionIds);
-  return {
-    store,
-    summary: recovered.ok ? recovered.value : `mission layer opened, but recovery failed: ${recovered.message}`,
-    close: () => store.close(),
-  };
+  if (!recovered.ok) {
+    // The store is CLOSED and not handed back. Found in review, and it is the
+    // sharper half of this file's own argument: an unreconciled file still says
+    // `running` for processes that are gone, so every later decision reads
+    // those rows and the fleet believes it is busy. Serving that store is worse
+    // than serving none — the mission layer being absent is visible and
+    // contained, while a fleet that will not dispatch and cannot say why is
+    // neither.
+    store.close();
+    return { summary: `mission layer unavailable: recovery failed: ${recovered.message}`, close: () => {} };
+  }
+  return { store, summary: recovered.value, close: () => store.close() };
 }
 
 /**
@@ -70,12 +77,21 @@ export function recoverFleet(store: FleetStore, liveSessionIds: ReadonlySet<stri
     const runs = store.runs.listByMission(mission.id);
     if (!runs.ok) return runs;
 
+    // Applied for EVERY mission, including the ones with nothing to reconcile.
+    // Found in review: skipping those wrote no event, which contradicted the
+    // contract stated on `applyRecovery` below — "recovered 0 runs" after a
+    // clean restart is what distinguishes it from a restart where recovery
+    // never ran, and nothing else in the file can tell those apart later. The
+    // skip made the cheap case the one with no audit trail.
     const plan = planRecovery(tasks.value, runs.value, liveSessionIds);
-    if (plan.runs.every((r) => r.kind === 'leave') && plan.tasks.length === 0) continue;
-
     const applied = applyRecovery(store, mission.id, plan);
     if (!applied.ok) return applied;
-    accounts.push(`${mission.name}: ${applied.value}`);
+    // The SUMMARY still only names missions that changed: it is one console
+    // line, and listing every quiet mission would bury the one that moved.
+    // What must be complete is the log, not the line.
+    if (plan.runs.some((r) => r.kind !== 'leave') || plan.tasks.length > 0) {
+      accounts.push(`${mission.name}: ${applied.value}`);
+    }
   }
   return { ok: true, value: accounts.length === 0 ? 'fleet recovered, nothing to reconcile' : accounts.join('; ') };
 }

@@ -22,6 +22,10 @@ import {
 
 export type ParseResult = { ok: true; cmd: ClientCommand } | { ok: false; reason: string };
 
+const isMissionWatch = (v: unknown): boolean => v === 'watching' || v === 'paused';
+const isSeq = (v: unknown): boolean => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+const isLabelList = (v: unknown): boolean => Array.isArray(v) && v.every((item) => isLabel(item));
+
 const req = (key: string, test: (v: unknown) => boolean, what: string) => field(key, true, test, what);
 const opt = (key: string, test: (v: unknown) => boolean, what: string) => field(key, false, test, what);
 
@@ -115,6 +119,40 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
     case 'disarm_trigger':
     case 'ping':
       return undefined;
+    // The mission layer. Hand-written like every other case here, for the
+    // reason at the top of this file: a checker derived from the union it
+    // polices lets one mistake cancel the other out.
+    case 'create_mission':
+      return runChecks(type, o, [
+        req('name', isLabel, 'a string'),
+        req('body', isText, 'a string'),
+        req('cwd', isLabel, 'a string'),
+      ]);
+    case 'list_missions':
+      return runChecks(type, o, []);
+    case 'set_mission_watch':
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        req('watch', isMissionWatch, 'watching or paused'),
+      ]);
+    case 'create_task':
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        req('title', isLabel, 'a string'),
+        req('description', isText, 'a string'),
+        req('cwd', isLabel, 'a string'),
+        opt('dependsOn', isLabelList, 'an array of task ids'),
+      ]);
+    case 'list_tasks':
+      return runChecks(type, o, [req('missionId', isLabel, 'a string')]);
+    case 'get_fleet_events':
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        // A cursor, so it has to be a whole number that is not negative — a
+        // fractional or negative one would silently widen the window rather
+        // than fail, which is the shape of bug this validation exists for.
+        opt('afterSeq', isSeq, 'a non-negative whole number'),
+      ]);
     case 'set_permission_mode':
       return runChecks(type, o, [
         req('sessionId', isLabel, 'a string'),

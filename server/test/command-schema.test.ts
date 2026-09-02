@@ -72,13 +72,19 @@ const VALID: Array<[string, Record<string, unknown>]> = [
   ['delete_toolkit_action', { type: 'delete_toolkit_action', id: 'a1' }],
   ['delete_template', { type: 'delete_template', name: 'tmpl' }],
   ['ping', { type: 'ping' }],
+  ['create_mission', { type: 'create_mission', name: 'm', body: '', cwd: '/repo' }],
+  ['list_missions', { type: 'list_missions' }],
+  ['set_mission_watch', { type: 'set_mission_watch', missionId: 'm1', watch: 'paused' }],
+  ['create_task', { type: 'create_task', missionId: 'm1', title: 't', description: '', cwd: '/repo' }],
+  ['list_tasks', { type: 'list_tasks', missionId: 'm1' }],
+  ['get_fleet_events', { type: 'get_fleet_events', missionId: 'm1', afterSeq: 0 }],
 ];
 
 describe('parseCommand: every ClientCommand member', () => {
   // Pinned so a member added to the union without a row above fails here,
-  // not silently — 54 is the count in shared/src/protocol.ts as of this PR.
-  it('covers all 54 members', () => {
-    expect(VALID).toHaveLength(54);
+  // not silently — 60 is the count in shared/src/protocol.ts as of this PR.
+  it('covers all 60 members', () => {
+    expect(VALID).toHaveLength(60);
   });
 
   it.each(VALID)('accepts a valid %s', (_label, cmd) => {

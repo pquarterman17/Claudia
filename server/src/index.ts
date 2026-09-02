@@ -1,3 +1,4 @@
+import { MAX_CHILDREN_CEILING } from '@claudia/shared';
 import { resolvePort } from './resolve-port.js';
 import { createServer, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
@@ -5,6 +6,7 @@ import { WebSocketServer } from 'ws';
 import { MAX_FRAME_BYTES } from './command-fields.js';
 import { commitAndPush } from './commit-action.js';
 import { startFleet } from './fleet/boot.js';
+import { FleetPulser } from './fleet/pulse.js';
 import { Orchestrators } from './orchestrators.js';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
@@ -144,6 +146,26 @@ gateway.attachFleet(fleet.store);
 // client holding it would never be shown the real one.
 fleet.store?.events.onAppended((event) => gateway.broadcast({ type: 'fleet_event', event }));
 
+// The clock the reconciler and the watchdog have been missing. It fires often
+// and decides little: each mission carries its own `pulseSec`, and the pulser
+// skips the ones whose interval has not elapsed. Unref'd, because a fleet with
+// nothing to decide must not be the reason the process refuses to exit.
+//
+// No launcher is passed. Dispatch decisions are recorded as deferred rather
+// than carried out — starting a child means claiming a worktree and going
+// through the session manager, which is its own change. The pulse still
+// applies everything that costs nothing: blocks, unblocks, escalations, and
+// giving up on a task that has run out of attempts.
+const pulser = fleet.store
+  ? new FleetPulser({
+      store: fleet.store,
+      policy: { maxChildren: MAX_CHILDREN_CEILING, maxAttempts: 3 },
+      liveSessionIds: () => new Set(manager.summaries().map((session) => session.id)),
+    })
+  : undefined;
+const pulseTicker = setInterval(() => pulser?.tick(), 15_000);
+pulseTicker.unref?.();
+
 const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: usage.snapshot() }));
 usage.setTier(saved.planTier);
 if (saved.customCeilings) usage.setCustomCeilings(saved.customCeilings);
@@ -220,6 +242,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     clearInterval(ticker);
     clearInterval(gitTicker);
     clearInterval(pruneTicker);
+    clearInterval(pulseTicker);
     usage.stop();
     manager.stopAll();
     // Closed on the way out so the file is not left locked by a connection

@@ -29,18 +29,56 @@ import { assess, nextAction, type RunObservation, type WatchdogAction } from './
  * honest: the pulse computes and records, and what it cannot do it says so
  * about, rather than pretending the decision was carried out.
  */
-export type LaunchChild = (order: { missionId: string; taskId: string; attempt: number; key: string }) => boolean;
+export interface LaunchOrder {
+  missionId: string;
+  taskId: string;
+  attempt: number;
+  key: string;
+}
+
+/**
+ * Asynchronous, and called AFTER the transaction commits — both from review.
+ *
+ * Starting a child is an external, non-transactional act: a worktree appears on
+ * disk and a process starts. Doing that inside the transaction meant a later
+ * write could roll back the run row and the reservation while the process it
+ * described was still alive — an orphan with no durable record, which is worse
+ * than the dispatch never happening. A boolean return could not express the
+ * real launch path either, which is async.
+ */
+export type LaunchChild = (order: LaunchOrder) => Promise<boolean>;
+
+/**
+ * What the watchdog needs to know about a session, as opposed to whether its
+ * id appears in a list.
+ *
+ * Found in review, and it is the difference between a watchdog that works and
+ * one that fires on healthy runs: without `lastActivityAt`, `assess` falls back
+ * to `run.startedAt`, so ANY live run older than `silentAfterMs` reads as
+ * silent and is failed or retried while it is still producing output. Without
+ * the approval fields, a run parked on a human is retried — spending a fresh
+ * turn that parks on the same approval — instead of escalated.
+ */
+export interface SessionFacts {
+  lastActivityAt: number;
+  /** Tool name it is parked on, when it is parked. */
+  pendingApproval?: string;
+  /** When it parked. */
+  pendingSince?: number;
+}
+
+/** Only sessions that are actually alive; a stopped tile is not one. */
+export type ObserveSessions = () => ReadonlyMap<string, SessionFacts>;
 
 export interface PulseDeps {
   store: FleetStore;
   policy: FleetPolicy;
   /** Absent means nothing launches; every dispatch is recorded as deferred. */
   launch?: LaunchChild;
-  /** Live sessions, for the watchdog's orphan check. Read at every tick rather
-   * than captured once: a set frozen at construction would age into a claim
-   * that dead sessions are alive, which is the one fault the watchdog exists
-   * to catch. */
-  liveSessionIds: () => ReadonlySet<string>;
+  /** Read at every tick rather than captured once: a snapshot frozen at
+   * construction would age into a claim that dead sessions are alive, which is
+   * the one fault the watchdog exists to catch. */
+  observeSessions: ObserveSessions;
   now?: () => number;
 }
 
@@ -60,26 +98,26 @@ export interface PulseResult {
  * archived one has nothing to decide. Recovery, by contrast, runs over all of
  * them — reconciling stale rows is repair, not a decision to spend.
  */
-export function pulseFleet(deps: PulseDeps): PulseResult[] {
+export async function pulseFleet(deps: PulseDeps): Promise<PulseResult[]> {
   const missions = deps.store.missions.list('active');
   if (!missions.ok) return [];
   const results: PulseResult[] = [];
   for (const mission of missions.value) {
     if (mission.watch !== 'watching') continue;
-    const result = pulseMission(mission, deps);
+    const result = await pulseMission(mission, deps);
     if (result) results.push(result);
   }
   return results;
 }
 
-export function pulseMission(mission: Mission, deps: PulseDeps): PulseResult | undefined {
+export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<PulseResult | undefined> {
   const { store } = deps;
   const tasks = store.tasks.listByMission(mission.id);
   const runs = store.runs.listByMission(mission.id);
   if (!tasks.ok || !runs.ok) return undefined;
 
   const now = deps.now?.() ?? Date.now();
-  const live = deps.liveSessionIds();
+  const live = deps.observeSessions();
   // The mission's own ceiling and the fleet's, whichever binds first. The
   // reconciler already takes the lower of the two; passing the fleet policy
   // alone would let a mission set to one child dispatch the fleet default.
@@ -87,23 +125,48 @@ export function pulseMission(mission: Mission, deps: PulseDeps): PulseResult | u
 
   const observations = runs.value
     .filter((run) => run.state === 'dispatched' || run.state === 'running')
-    .map<RunObservation>((run) => ({
-      run,
-      sessionAlive: run.sessionId !== undefined && live.has(run.sessionId),
-      attemptsSpent: Math.max(...runs.value.filter((r) => r.taskId === run.taskId).map((r) => r.attempt)),
-      now,
-    }));
+    .map<RunObservation>((run) => {
+      // The session's OWN account of itself, not merely that its id was in a
+      // list. `facts` absent means no live session answers to this id, which is
+      // what `orphaned` means.
+      const facts = run.sessionId === undefined ? undefined : live.get(run.sessionId);
+      return {
+        run,
+        sessionAlive: facts !== undefined,
+        attemptsSpent: Math.max(...runs.value.filter((r) => r.taskId === run.taskId).map((r) => r.attempt)),
+        ...(facts?.lastActivityAt !== undefined ? { lastActivityAt: facts.lastActivityAt } : {}),
+        ...(facts?.pendingApproval !== undefined ? { pendingApproval: facts.pendingApproval } : {}),
+        ...(facts?.pendingSince !== undefined ? { pendingSince: facts.pendingSince } : {}),
+        now,
+      };
+    });
 
   const result: PulseResult = { missionId: mission.id, decisions: decisions.length, launched: 0, deferred: 0, escalated: 0 };
+  // Collected, not executed. Everything inside the transaction is a durable
+  // write that can roll back; a launched process cannot.
+  const orders: LaunchOrder[] = [];
   const applied = transact(store.db, 'apply a fleet pulse', () => {
-    for (const decision of decisions) applyDecision(decision, mission, tasks.value, deps, result);
+    for (const decision of decisions) applyDecision(decision, mission, tasks.value, deps, result, orders);
     for (const observation of observations) {
       const action = nextAction(assess(observation), observation);
-      applyWatchdog(action, mission, observation, deps, result);
+      applyWatchdog(action, mission, observation, deps, result, orders);
     }
     return result;
   });
-  return applied.ok ? applied.value : undefined;
+  if (!applied.ok) return undefined;
+
+  // After the commit, so a process that starts is one the file already
+  // describes. A launch that fails now leaves a task the next pulse will see
+  // again, rather than a child nothing recorded.
+  for (const order of orders) {
+    const started = await deps.launch?.(order);
+    if (started) result.launched += 1;
+    else {
+      result.deferred += 1;
+      note(store, mission.id, order.taskId, 'launch_failed', `attempt ${order.attempt} did not start`);
+    }
+  }
+  return result;
 }
 
 function applyDecision(
@@ -112,6 +175,7 @@ function applyDecision(
   tasks: readonly Task[],
   deps: PulseDeps,
   result: PulseResult,
+  orders: LaunchOrder[],
 ): void {
   const { store } = deps;
   switch (decision.kind) {
@@ -130,14 +194,11 @@ function applyDecision(
       return;
     }
     case 'dispatch': {
-      const launched = deps.launch?.({
-        missionId: mission.id,
-        taskId: decision.taskId,
-        attempt: decision.attempt,
-        key: decision.key,
-      });
-      if (launched) {
-        result.launched += 1;
+      if (deps.launch) {
+        // Queued for after the commit. Starting it here would put an external,
+        // non-transactional act inside a transaction a later write can roll
+        // back, leaving a live child with no durable record of itself.
+        orders.push({ missionId: mission.id, taskId: decision.taskId, attempt: decision.attempt, key: decision.key });
         return;
       }
       // Recorded, not swallowed. A fleet that decided to dispatch and could
@@ -160,6 +221,7 @@ function applyWatchdog(
   observation: RunObservation,
   deps: PulseDeps,
   result: PulseResult,
+  orders: LaunchOrder[],
 ): void {
   const { store } = deps;
   const run = observation.run;
@@ -185,9 +247,14 @@ function applyWatchdog(
         severity: action.severity,
         idempotencyKey: action.key,
       });
-      // A duplicate key is the deduplication working, not a failure: the same
-      // stuck run escalates on every tick and must produce one inbox row.
-      if (filed.ok) result.escalated += 1;
+      // Thrown, not swallowed. Found in review, and my comment here was simply
+      // wrong about the repository: `create` already answers an idempotency hit
+      // by returning the EXISTING row as `ok`, so a failure is a real store
+      // error. Letting it pass committed the rest of the pulse and advanced the
+      // cadence while the blocking escalation — the thing a human is supposed
+      // to answer — had been dropped.
+      if (!filed.ok) throw new Error(filed.message);
+      result.escalated += 1;
       return;
     }
     case 'give_up': {
@@ -205,21 +272,16 @@ function applyWatchdog(
       // it `running` holds a concurrency slot for the life of the mission.
       const ended = store.runs.setState(run.id, action.terminal, { terminalReason: action.reason });
       if (!ended.ok) throw new Error(ended.message);
-      const launched = deps.launch?.({
-        missionId: mission.id,
-        taskId: run.taskId,
-        attempt: action.attempt,
-        key: action.key,
-      });
-      if (launched) {
-        result.launched += 1;
-        return;
-      }
-      // Without a launcher the task still has to leave `running`, or nothing
-      // will ever look at it again — the wedge recovery.ts exists to close.
+      // The task leaves `running` either way, or nothing will ever look at it
+      // again — the wedge recovery.ts exists to close. `path` is the legal
+      // route, so every hop is applied in order.
       for (const status of action.task.path) {
         const moved = store.tasks.setStatus(run.taskId, status);
         if (!moved.ok) throw new Error(moved.message);
+      }
+      if (deps.launch) {
+        orders.push({ missionId: mission.id, taskId: run.taskId, attempt: action.attempt, key: action.key });
+        return;
       }
       result.deferred += 1;
       note(store, mission.id, run.taskId, 'retry_deferred', `${action.reason} (no launcher is wired yet)`);
@@ -262,7 +324,7 @@ export class FleetPulser {
   constructor(private readonly deps: PulseDeps) {}
 
   /** Pulses every watched mission whose own interval has elapsed. */
-  tick(): PulseResult[] {
+  async tick(): Promise<PulseResult[]> {
     const missions = this.deps.store.missions.list('active');
     if (!missions.ok) return [];
     const now = this.deps.now?.() ?? Date.now();
@@ -271,9 +333,15 @@ export class FleetPulser {
       if (mission.watch !== 'watching') continue;
       const last = this.lastPulsedAt.get(mission.id);
       if (last !== undefined && now - last < mission.pulseSec * 1000) continue;
-      this.lastPulsedAt.set(mission.id, now);
-      const result = pulseMission(mission, this.deps);
-      if (result) results.push(result);
+      // Stamped only after a pulse that actually landed. Found in review:
+      // stamping first meant one transient read or transaction failure
+      // suppressed every retry for the mission's whole interval — up to four
+      // hours of a fleet deciding nothing because one write lost a race.
+      const result = await pulseMission(mission, this.deps);
+      if (result) {
+        this.lastPulsedAt.set(mission.id, now);
+        results.push(result);
+      }
     }
     return results;
   }

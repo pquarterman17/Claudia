@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import { MAX_FRAME_BYTES } from './command-fields.js';
 import { commitAndPush } from './commit-action.js';
 import { startFleet } from './fleet/boot.js';
-import { FleetPulser } from './fleet/pulse.js';
+import { FleetPulser, type SessionFacts } from './fleet/pulse.js';
 import { Orchestrators } from './orchestrators.js';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
@@ -156,14 +156,41 @@ fleet.store?.events.onAppended((event) => gateway.broadcast({ type: 'fleet_event
 // through the session manager, which is its own change. The pulse still
 // applies everything that costs nothing: blocks, unblocks, escalations, and
 // giving up on a task that has run out of attempts.
+/**
+ * What the watchdog gets to see, built from the sessions themselves.
+ *
+ * Two things it needs beyond "is this id known". `lastActivityAt`, or `assess`
+ * falls back to the run's START time and calls any live run older than
+ * `silentAfterMs` silent — failing or retrying work that is still producing
+ * output. And the approval fields, or a run parked on a human is retried,
+ * spending a fresh turn that parks on the same approval, instead of escalated.
+ *
+ * `stopped` tiles are excluded. A stopped session still has a tile, so counting
+ * ids alone reported dead processes as alive — which is the opposite of the
+ * fault the watchdog is looking for.
+ */
+function liveSessionFacts(): ReadonlyMap<string, SessionFacts> {
+  const facts = new Map<string, SessionFacts>();
+  for (const session of manager.summaries()) {
+    if (session.state === 'stopped') continue;
+    facts.set(session.id, {
+      lastActivityAt: session.lastActivityAt,
+      ...(session.pendingApproval
+        ? { pendingApproval: session.pendingApproval.toolName, pendingSince: session.pendingApproval.requestedAt }
+        : {}),
+    });
+  }
+  return facts;
+}
+
 const pulser = fleet.store
   ? new FleetPulser({
       store: fleet.store,
       policy: { maxChildren: MAX_CHILDREN_CEILING, maxAttempts: 3 },
-      liveSessionIds: () => new Set(manager.summaries().map((session) => session.id)),
+      observeSessions: liveSessionFacts,
     })
   : undefined;
-const pulseTicker = setInterval(() => pulser?.tick(), 15_000);
+const pulseTicker = setInterval(() => void pulser?.tick(), 15_000);
 pulseTicker.unref?.();
 
 const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: usage.snapshot() }));

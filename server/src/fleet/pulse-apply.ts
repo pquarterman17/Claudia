@@ -1,4 +1,5 @@
-import type { Mission, Task, TaskStatus } from '@claudia/shared';
+import type { AgentKind, Mission, Task, TaskStatus } from '@claudia/shared';
+import { transact } from '../store/db.js';
 import { escalationKey } from './capabilities.js';
 import type { Decision } from './reconcile.js';
 import { assess, nextAction, type RunObservation, type WatchdogPolicy } from './watchdog.js';
@@ -65,10 +66,13 @@ export function applyDecision(
     }
     case 'dispatch': {
       if (deps.launch) {
-        // Queued for after the commit. Starting it here would put an external,
-        // non-transactional act inside a transaction a later write can roll
-        // back, leaving a live child with no durable record of itself.
-        orders.push({ missionId: mission.id, taskId: decision.taskId, attempt: decision.attempt, key: decision.key });
+        // RESERVED before it is queued. Found in review: an order that only
+        // sat in an array left the task `ready` with no run row even after the
+        // launcher returned true, so the next pulse computed the same attempt
+        // and paid for it again — forever. The run row IS the reservation:
+        // the store's UNIQUE (task, attempt) refuses a second one, and the
+        // reconciler counts it as an occupied slot from the moment it lands.
+        orders.push(reserve(decision.taskId, decision.attempt, decision.key, mission, deps));
         return;
       }
       // Recorded, not swallowed. A fleet that decided to dispatch and could
@@ -95,7 +99,6 @@ export function applyDecision(
  */
 export function applyWatchdogOutcomes(
   mission: Mission,
-  tasks: readonly Task[],
   observations: readonly RunObservation[],
   policy: WatchdogPolicy,
   deps: PulseDeps,
@@ -163,7 +166,7 @@ export function applyWatchdogOutcomes(
   }
 
   for (const [taskId, intent] of wanted) {
-    applyTaskIntent(taskId, intent, held.has(taskId), mission, tasks, deps, result, orders);
+    applyTaskIntent(taskId, intent, held.has(taskId), mission, deps, result, orders);
   }
 }
 
@@ -185,7 +188,6 @@ function applyTaskIntent(
   intent: TaskIntent,
   stillHeld: boolean,
   mission: Mission,
-  tasks: readonly Task[],
   deps: PulseDeps,
   result: PulseResult,
   orders: LaunchOrder[],
@@ -198,7 +200,15 @@ function applyTaskIntent(
     note(store, mission.id, taskId, 'run_ended_task_held', `${intent.reason}; another run of this task is still active`);
     return;
   }
-  const from = tasks.find((task) => task.id === taskId)?.status;
+  // Read from the STORE, not from the snapshot this pulse opened with. Found
+  // in review: `applyDecision` runs first inside this same transaction and can
+  // move a task — a `ready` task with an active run goes `blocked` the moment
+  // a dependency reopens — so the array is already out of date by the time the
+  // watchdog's half looks at it. Believing it queued a retry launch against a
+  // row that had just been blocked.
+  const current = store.tasks.get(taskId);
+  if (!current.ok) throw new Error(current.message);
+  const from = current.value?.status;
   const route = routeTo(from, intent.to);
   if (route === undefined) {
     // Left where it is, deliberately. The commonest case is `blocked`, which
@@ -222,11 +232,86 @@ function applyTaskIntent(
   }
   if (intent.attempt === undefined || intent.key === undefined) return;
   if (deps.launch) {
-    orders.push({ missionId: mission.id, taskId, attempt: intent.attempt, key: intent.key });
+    orders.push(reserve(taskId, intent.attempt, intent.key, mission, deps));
     return;
   }
   result.deferred += 1;
   note(store, mission.id, taskId, 'retry_deferred', `${intent.reason} (no launcher is wired yet)`);
+}
+
+/**
+ * The agent a reservation names.
+ *
+ * Neither a mission nor a task carries a preference, so the pulse has to pick
+ * one, and `claude` is the only harness this build launches. Choosing between
+ * the roster — and letting a retry pick the other one, which `ChildRun.agent`
+ * exists for — is the launcher's decision, not this module's.
+ */
+const RESERVED_AGENT: AgentKind = 'claude';
+
+/**
+ * Claims the attempt durably, then hands back the order to launch after commit.
+ *
+ * The run row is the reservation. Writing it inside the transaction is what
+ * makes a repeated pulse safe: the store refuses a second run at the same
+ * (task, attempt), and the reconciler counts the row as an occupied slot the
+ * moment it lands, so nothing recomputes this dispatch. The task moves to
+ * `running` with it, or the reconciler would keep seeing a queued task it has
+ * already paid for.
+ *
+ * A launch that then fails to start is undone by `compensateLaunch` below,
+ * which is the compensating write this ordering requires: the reservation is
+ * durable, so something has to release it.
+ */
+function reserve(taskId: string, attempt: number, key: string, mission: Mission, deps: PulseDeps): LaunchOrder {
+  const { store } = deps;
+  const run = store.runs.create({
+    missionId: mission.id,
+    taskId,
+    agent: RESERVED_AGENT,
+    attempt,
+    state: 'dispatched',
+  });
+  // Thrown, so a reservation that loses its race takes the launch with it. A
+  // duplicate here means another pulse already claimed this attempt, and the
+  // one thing that must not happen is launching anyway.
+  if (!run.ok) throw new Error(run.message);
+  const current = store.tasks.get(taskId);
+  if (!current.ok) throw new Error(current.message);
+  for (const status of routeTo(current.value?.status, 'running') ?? []) {
+    const moved = store.tasks.setStatus(taskId, status);
+    if (!moved.ok) throw new Error(moved.message);
+  }
+  return { missionId: mission.id, taskId, runId: run.value.id, attempt, key };
+}
+
+/**
+ * Releases a reservation whose child never started.
+ *
+ * Called after the commit, so it is its own transaction, and it does NOT throw:
+ * the pulse it belongs to has already landed, and failing to undo one launch
+ * must not discard the rest of it. The task goes back to `ready` so the next
+ * pulse can try again — at the next attempt, since this one is spent, which is
+ * what keeps a launcher that always fails bounded by `maxAttempts` instead of
+ * looping.
+ */
+export function compensateLaunch(deps: PulseDeps, missionId: string, order: LaunchOrder, reason: string): void {
+  const { store } = deps;
+  const undone = transact(store.db, 'release a launch that never started', () => {
+    const ended = store.runs.setState(order.runId, 'failed', { terminalReason: reason });
+    if (!ended.ok) throw new Error(ended.message);
+    const current = store.tasks.get(order.taskId);
+    if (!current.ok) throw new Error(current.message);
+    for (const status of routeTo(current.value?.status, 'ready') ?? []) {
+      const moved = store.tasks.setStatus(order.taskId, status);
+      if (!moved.ok) throw new Error(moved.message);
+    }
+    note(store, missionId, order.taskId, 'launch_failed', `attempt ${order.attempt} did not start: ${reason}`);
+    return true;
+  });
+  if (!undone.ok) {
+    console.error(`[claudia] could not release run ${order.runId} after a failed launch:`, undone.message);
+  }
 }
 
 /**
@@ -238,9 +323,10 @@ function applyTaskIntent(
  * `running`. `undefined` means "leave it alone", which is always safe: the run
  * has been terminalized either way, and the reconciler decides again next pulse.
  */
-function routeTo(from: TaskStatus | undefined, to: 'ready' | 'failed'): readonly TaskStatus[] | undefined {
+function routeTo(from: TaskStatus | undefined, to: 'ready' | 'failed' | 'running'): readonly TaskStatus[] | undefined {
   if (from === undefined) return undefined;
   if (from === to) return [];
+  if (to === 'running') return from === 'ready' ? ['running'] : undefined;
   // `running -> failed` is the one edge into `failed`, and `failed -> ready`
   // the one edge back out: a requeue is two hops, not a jump.
   if (from === 'running') return to === 'failed' ? ['failed'] : ['failed', 'ready'];

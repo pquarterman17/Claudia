@@ -1,7 +1,7 @@
 import type { Mission, Task } from '@claudia/shared';
 import { transact } from '../store/db.js';
 import type { FleetStore } from '../store/index.js';
-import { applyDecision, applyWatchdogOutcomes, note } from './pulse-apply.js';
+import { applyDecision, applyWatchdogOutcomes, compensateLaunch } from './pulse-apply.js';
 import { reconcile, type FleetPolicy } from './reconcile.js';
 import { DEFAULT_WATCHDOG, type RunObservation, type WatchdogPolicy } from './watchdog.js';
 
@@ -32,6 +32,15 @@ import { DEFAULT_WATCHDOG, type RunObservation, type WatchdogPolicy } from './wa
 export interface LaunchOrder {
   missionId: string;
   taskId: string;
+  /**
+   * The run row already written for this attempt, before anything was
+   * launched. Found in review: without it a launcher that succeeded left the
+   * task `ready` and no run at all, so the next pulse computed the same
+   * attempt and paid for it again. The row is the reservation — the store
+   * refuses a second at the same (task, attempt) — and it is what the launcher
+   * attaches its session to, and what releases the claim if it never starts.
+   */
+  runId: string;
   attempt: number;
   key: string;
 }
@@ -156,7 +165,7 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
   const orders: LaunchOrder[] = [];
   const applied = transact(store.db, 'apply a fleet pulse', () => {
     for (const decision of decisions) applyDecision(decision, mission, tasks.value, deps, result, orders);
-    applyWatchdogOutcomes(mission, tasks.value, observations, watchdogPolicy, deps, result, orders);
+    applyWatchdogOutcomes(mission, observations, watchdogPolicy, deps, result, orders);
     return result;
   });
   if (!applied.ok) return undefined;
@@ -185,7 +194,10 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
       continue;
     }
     result.deferred += 1;
-    note(store, mission.id, order.taskId, 'launch_failed', `attempt ${order.attempt} did not start: ${reason}`);
+    // The reservation is durable, so something has to release it. Leaving the
+    // run `dispatched` for a child that never started would hold a concurrency
+    // slot for the life of the mission and keep the task out of the queue.
+    compensateLaunch(deps, mission.id, order, reason);
     reason = 'the launcher declined';
   }
   return result;

@@ -496,8 +496,10 @@ describe('what the third review found', () => {
     expect(result).toBeDefined();
     expect(state(store, run.id)).toBe('failed');
     expect(state(store, second.id)).toBe('failed');
-    // Requeued once, by one of them, rather than once per run.
-    expect(status(store, task.id)).toBe('ready');
+    // Requeued once, by one of them, rather than once per run — and straight
+    // into the reservation written for the retry, which is why it reads
+    // `running` rather than `ready`.
+    expect(status(store, task.id)).toBe('running');
     // And ONE launch, at the attempt after everything the task has spent.
     expect(orders).toEqual([3]);
   });
@@ -519,5 +521,103 @@ describe('what the third review found', () => {
     expect(state(store, alive.id)).toBe('running');
     expect(status(store, task.id)).toBe('running');
     expect(kinds(store, m.id)).toContain('run_ended_task_held');
+  });
+});
+
+describe('what the fourth review found', () => {
+  it('reserves the attempt durably, so a second pulse cannot pay for it twice', async () => {
+    // The defect the launch port shipped with: an order that only sat in an
+    // array left the task `ready` with no run row even after the launcher
+    // returned true, so the next pulse computed the same attempt and launched
+    // it again — and again, forever.
+    const { store, mission: m } = mission();
+    const task = readyTask(store, m.id);
+    const launched: string[] = [];
+    const runIds: string[] = [];
+    const launch: LaunchChild = async (order) => {
+      launched.push(`${order.taskId}:${order.attempt}`);
+      runIds.push(order.runId);
+      return true;
+    };
+
+    await pulseFleet({ store, policy: POLICY, launch, observeSessions: NO_SESSIONS });
+    await pulseFleet({ store, policy: POLICY, launch, observeSessions: NO_SESSIONS });
+
+    // Once, not once per pulse.
+    expect(launched).toEqual([`${task.id}:1`]);
+    // Because the reservation is a real row the reconciler counts as busy.
+    const runs = store.runs.listByMission(m.id);
+    if (!runs.ok) throw new Error(runs.message);
+    expect(runs.value).toHaveLength(1);
+    expect(runs.value[0]?.attempt).toBe(1);
+    expect(runs.value[0]?.state).toBe('dispatched');
+    // And the order names that row, so the launcher has something to attach a
+    // session to and something to release if the child never starts.
+    expect(runIds).toEqual([runs.value[0]?.id]);
+  });
+
+  it('releases the reservation when the launch never starts', async () => {
+    // The compensating write the ordering requires. A reservation is durable,
+    // so a child that never started leaves a run holding a concurrency slot
+    // and a task out of the queue until something puts them back.
+    const { store, mission: m } = mission();
+    const task = readyTask(store, m.id);
+    const launch: LaunchChild = async () => {
+      throw new Error('git worktree add failed');
+    };
+
+    const [result] = await pulseFleet({ store, policy: POLICY, launch, observeSessions: NO_SESSIONS });
+    expect(result?.deferred).toBe(1);
+    const runs = store.runs.listByMission(m.id);
+    if (!runs.ok) throw new Error(runs.message);
+    // Terminalized, so it stops counting as an occupied slot.
+    expect(runs.value[0]?.state).toBe('failed');
+    // And back in the queue, so the next pulse can try — at the NEXT attempt,
+    // which is what keeps a launcher that always fails bounded rather than
+    // looping on the same one.
+    const current = store.tasks.get(task.id);
+    if (!current.ok) throw new Error(current.message);
+    expect(current.value?.status).toBe('ready');
+    expect(kinds(store, m.id)).toContain('launch_failed');
+  });
+
+  it('reads the task after the decisions, not from the snapshot the pulse opened with', async () => {
+    // `applyDecision` runs first inside the same transaction and can move a
+    // task — a `ready` task with an active run goes `blocked` the moment a
+    // dependency reopens. Reading the pre-transaction snapshot afterwards meant
+    // the watchdog saw `ready`, took the empty `ready -> ready` route, and
+    // queued a retry launch against a row that had just been blocked.
+    const { store, mission: m } = mission();
+    const blocker = readyTask(store, m.id);
+    const task = readyTask(store, m.id, { dependsOn: [blocker.id] });
+    // Wedged the way a half-recovered mission is: the task still reads `ready`
+    // while a run against it is live, so this one pulse both blocks it and
+    // retires the run.
+    const run = store.runs.create({ missionId: m.id, taskId: task.id, agent: 'claude', attempt: 1, sessionId: 'gone' });
+    if (!run.ok) throw new Error(run.message);
+    const running = store.runs.setState(run.value.id, 'running');
+    if (!running.ok) throw new Error(running.message);
+
+    const dispatched: string[] = [];
+    const launch: LaunchChild = async (order) => {
+      dispatched.push(order.taskId);
+      return true;
+    };
+    const [result] = await pulseFleet({
+      store,
+      policy: POLICY,
+      launch,
+      observeSessions: NO_SESSIONS,
+      // Past the backoff, or the watchdog defers and the case never arises.
+      now: () => Date.now() + 10 * 60_000,
+    });
+
+    expect(result).toBeDefined();
+    // Blocked by the decision, and left blocked by the watchdog half.
+    const current = store.tasks.get(task.id);
+    if (!current.ok) throw new Error(current.message);
+    expect(current.value?.status).toBe('blocked');
+    // Nothing launched for a task whose dependency is unresolved.
+    expect(dispatched).not.toContain(task.id);
   });
 });

@@ -282,3 +282,101 @@ describe('what the review found', () => {
     expect((await pulser.tick()).map((r) => r.missionId)).toEqual([m.id]);
   });
 });
+
+describe('what the follow-up review found', () => {
+  it('treats a launcher that throws as a launch that did not happen', async () => {
+    // A defect the async port introduced. A real worktree or process startup
+    // can reject, and an uncaught rejection escaped `pulseMission`, skipped
+    // every remaining order, wrote no `launch_failed`, and reached the
+    // production timer as an unhandled rejection — the timer discards the
+    // promise by design.
+    const { store, mission: m } = mission();
+    readyTask(store, m.id);
+    const launch: LaunchChild = async () => {
+      throw new Error('git worktree add failed');
+    };
+
+    const [result] = await pulseFleet({ store, policy: POLICY, launch, observeSessions: NO_SESSIONS });
+    expect(result?.launched).toBe(0);
+    expect(result?.deferred).toBe(1);
+    const logged = store.events.sinceForMission(m.id);
+    if (!logged.ok) throw new Error(logged.message);
+    const failure = logged.value.find((event) => event.kind === 'launch_failed');
+    expect(failure).toBeDefined();
+    // And it says WHY, or the log records a failure nobody can act on.
+    expect(JSON.stringify(failure?.payload)).toContain('git worktree add failed');
+  });
+
+  it('keeps going through the remaining orders after one throws', async () => {
+    const { store, mission: m } = mission();
+    readyTask(store, m.id);
+    readyTask(store, m.id);
+    const seen: string[] = [];
+    const launch: LaunchChild = async (order) => {
+      seen.push(order.taskId);
+      if (seen.length === 1) throw new Error('the first one exploded');
+      return true;
+    };
+
+    const [result] = await pulseFleet({ store, policy: POLICY, launch, observeSessions: NO_SESSIONS });
+    expect(seen).toHaveLength(2);
+    expect(result?.launched).toBe(1);
+    expect(result?.deferred).toBe(1);
+  });
+
+  it('does not launch the same task twice when ticks overlap', async () => {
+    // `setInterval` does not wait for the prior tick, and the cadence is now
+    // stamped only after every launcher has been awaited — so a startup slower
+    // than the tick interval let a second tick read the same ready task and the
+    // same no-run snapshot, and enqueue the same PAID launch again.
+    const { store, mission: m } = mission();
+    readyTask(store, m.id);
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const orders: string[] = [];
+    const launch: LaunchChild = async (order) => {
+      orders.push(order.taskId);
+      await held;
+      return true;
+    };
+    const pulser = new FleetPulser({ store, policy: POLICY, launch, observeSessions: NO_SESSIONS });
+
+    // Both started before either is awaited, which is what a timer does. The
+    // second one's decision is made synchronously, before the launcher is
+    // released, so it is the guard being tested and not the ordering.
+    const first = pulser.tick();
+    const second = pulser.tick();
+    release();
+    const [firstResults, secondResults] = await Promise.all([first, second]);
+
+    expect(orders).toHaveLength(1);
+    expect(secondResults).toEqual([]);
+    expect(firstResults.map((r) => r.missionId)).toEqual([m.id]);
+  });
+
+  it('survives a pulse that throws, and releases its guard', async () => {
+    // `pulseMission` can still reject by routes other than the launcher — the
+    // session observer, or a post-commit write. The production caller is a
+    // timer that discards the promise, so an escaping rejection is both an
+    // unhandled rejection and a tick that abandoned every later mission. It is
+    // caught per mission, left unstamped so the next tick retries, and the
+    // in-flight guard is released or the mission would wedge forever.
+    const { store, mission: m } = mission();
+    readyTask(store, m.id);
+    let calls = 0;
+    const observeSessions = (): ReadonlyMap<string, SessionFacts> => {
+      calls += 1;
+      if (calls === 1) throw new Error('the session manager was mid-restart');
+      return new Map();
+    };
+    const pulser = new FleetPulser({ store, policy: POLICY, observeSessions });
+
+    // Does not reject, and does not stamp the cadence.
+    await expect(pulser.tick()).resolves.toEqual([]);
+    // Due again immediately, which is only possible if the guard was released
+    // and the failed attempt did not consume the interval.
+    expect((await pulser.tick()).map((r) => r.missionId)).toEqual([m.id]);
+  });
+});

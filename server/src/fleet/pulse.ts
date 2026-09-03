@@ -158,13 +158,29 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
   // After the commit, so a process that starts is one the file already
   // describes. A launch that fails now leaves a task the next pulse will see
   // again, rather than a child nothing recorded.
+  let reason = 'the launcher declined';
   for (const order of orders) {
-    const started = await deps.launch?.(order);
-    if (started) result.launched += 1;
-    else {
-      result.deferred += 1;
-      note(store, mission.id, order.taskId, 'launch_failed', `attempt ${order.attempt} did not start`);
+    // Each order caught on its own. Found in review, and a defect the async
+    // port introduced: a real worktree or process startup can REJECT, and an
+    // uncaught rejection escaped `pulseMission`, skipped every remaining
+    // order, wrote no `launch_failed`, and surfaced as an unhandled rejection
+    // because the production timer discards this promise by design. A launcher
+    // that throws is a launch that did not happen, which is the case already
+    // handled one line down.
+    let started = false;
+    try {
+      started = (await deps.launch?.(order)) === true;
+    } catch (err) {
+      started = false;
+      reason = err instanceof Error ? err.message : String(err);
     }
+    if (started) {
+      result.launched += 1;
+      continue;
+    }
+    result.deferred += 1;
+    note(store, mission.id, order.taskId, 'launch_failed', `attempt ${order.attempt} did not start: ${reason}`);
+    reason = 'the launcher declined';
   }
   return result;
 }
@@ -320,6 +336,8 @@ function note(store: FleetStore, missionId: string, taskId: string, kind: string
  */
 export class FleetPulser {
   private readonly lastPulsedAt = new Map<string, number>();
+  /** Missions with a pulse still awaiting its launchers. */
+  private readonly inFlight = new Set<string>();
 
   constructor(private readonly deps: PulseDeps) {}
 
@@ -331,13 +349,33 @@ export class FleetPulser {
     const results: PulseResult[] = [];
     for (const mission of missions.value) {
       if (mission.watch !== 'watching') continue;
+      // Never two pulses of one mission at once. Found in review, and it is
+      // the cost of the previous round's fix: `setInterval` does not wait for
+      // the prior tick, and the cadence is now stamped only AFTER every
+      // launcher has been awaited — so a startup slower than the tick interval
+      // left a second tick reading the same ready task and the same
+      // no-run snapshot, and enqueueing the same paid launch again. Released
+      // in `finally`, or one thrown pulse would wedge the mission forever.
+      if (this.inFlight.has(mission.id)) continue;
       const last = this.lastPulsedAt.get(mission.id);
       if (last !== undefined && now - last < mission.pulseSec * 1000) continue;
+      this.inFlight.add(mission.id);
+      let result: PulseResult | undefined;
+      try {
+        result = await pulseMission(mission, this.deps);
+      } catch (err) {
+        // One mission's failure is not the fleet's. The production caller is a
+        // timer that discards this promise, so a rejection escaping here is an
+        // unhandled rejection AND a tick that silently abandoned every mission
+        // after this one. Left unstamped, so the next tick tries again.
+        console.error(`[claudia] pulse failed for mission ${mission.id}:`, err);
+      } finally {
+        this.inFlight.delete(mission.id);
+      }
       // Stamped only after a pulse that actually landed. Found in review:
       // stamping first meant one transient read or transaction failure
       // suppressed every retry for the mission's whole interval — up to four
       // hours of a fleet deciding nothing because one write lost a race.
-      const result = await pulseMission(mission, this.deps);
       if (result) {
         this.lastPulsedAt.set(mission.id, now);
         results.push(result);

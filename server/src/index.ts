@@ -1,4 +1,4 @@
-import { MAX_CHILDREN_CEILING } from '@claudia/shared';
+import { MAX_CHILDREN_CEILING, type SessionState } from '@claudia/shared';
 import { resolvePort } from './resolve-port.js';
 import { createServer, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
@@ -165,14 +165,25 @@ fleet.store?.events.onAppended((event) => gateway.broadcast({ type: 'fleet_event
  * output. And the approval fields, or a run parked on a human is retried,
  * spending a fresh turn that parks on the same approval, instead of escalated.
  *
- * `stopped` tiles are excluded. A stopped session still has a tile, so counting
- * ids alone reported dead processes as alive — which is the opposite of the
- * fault the watchdog is looking for.
+ * Built from an ALLOWLIST of live states rather than by excluding the dead
+ * ones. `stopped` was excluded first, and review caught the other half:
+ * `Session.fail()` retains a tile in state `error` after its driver has
+ * terminated, so a dead process was still reported alive and its run waited
+ * out the whole silence threshold instead of being recognised as an orphan
+ * immediately. Naming what IS alive means the next terminal state added to the
+ * union cannot quietly join the living.
  */
+const LIVE_SESSION_STATES: ReadonlySet<SessionState> = new Set([
+  'starting',
+  'working',
+  'awaiting_approval',
+  'idle',
+]);
+
 function liveSessionFacts(): ReadonlyMap<string, SessionFacts> {
   const facts = new Map<string, SessionFacts>();
   for (const session of manager.summaries()) {
-    if (session.state === 'stopped') continue;
+    if (!LIVE_SESSION_STATES.has(session.state)) continue;
     facts.set(session.id, {
       lastActivityAt: session.lastActivityAt,
       ...(session.pendingApproval

@@ -1,9 +1,9 @@
 import type { Mission, Task } from '@claudia/shared';
 import { transact } from '../store/db.js';
 import type { FleetStore } from '../store/index.js';
-import { escalationKey } from './capabilities.js';
-import { reconcile, type Decision, type FleetPolicy } from './reconcile.js';
-import { assess, nextAction, type RunObservation, type WatchdogAction } from './watchdog.js';
+import { applyDecision, applyWatchdogOutcomes, note } from './pulse-apply.js';
+import { reconcile, type FleetPolicy } from './reconcile.js';
+import { DEFAULT_WATCHDOG, type RunObservation, type WatchdogPolicy } from './watchdog.js';
 
 /**
  * One tick of a mission: what the reconciler decides, what the watchdog finds,
@@ -122,6 +122,15 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
   // reconciler already takes the lower of the two; passing the fleet policy
   // alone would let a mission set to one child dispatch the fleet default.
   const decisions = reconcile({ mission, tasks: tasks.value, runs: runs.value, policy: deps.policy });
+  // ONE bound on attempts, shared by the half that decides and the half that
+  // spends. Found in review: `reconcile` was handed `deps.policy.maxAttempts`
+  // while the watchdog silently fell back to `DEFAULT_WATCHDOG`'s 3 — so a
+  // fleet limited to one attempt still got a second one from the watchdog, and
+  // a fleet allowed more than three gave up early. The component authorised to
+  // spend must not carry a looser bound than the one that decides. An
+  // unreadable bound is not defaulted here either: `nextAction` escalates on a
+  // policy it cannot use, which is the right answer to a missing limit.
+  const watchdogPolicy: WatchdogPolicy = { ...DEFAULT_WATCHDOG, maxAttempts: deps.policy.maxAttempts };
 
   const observations = runs.value
     .filter((run) => run.state === 'dispatched' || run.state === 'running')
@@ -147,10 +156,7 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
   const orders: LaunchOrder[] = [];
   const applied = transact(store.db, 'apply a fleet pulse', () => {
     for (const decision of decisions) applyDecision(decision, mission, tasks.value, deps, result, orders);
-    for (const observation of observations) {
-      const action = nextAction(assess(observation), observation);
-      applyWatchdog(action, mission, observation, deps, result, orders);
-    }
+    applyWatchdogOutcomes(mission, tasks.value, observations, watchdogPolicy, deps, result, orders);
     return result;
   });
   if (!applied.ok) return undefined;
@@ -183,142 +189,6 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
     reason = 'the launcher declined';
   }
   return result;
-}
-
-function applyDecision(
-  decision: Decision,
-  mission: Mission,
-  tasks: readonly Task[],
-  deps: PulseDeps,
-  result: PulseResult,
-  orders: LaunchOrder[],
-): void {
-  const { store } = deps;
-  switch (decision.kind) {
-    case 'block':
-    case 'unblock': {
-      // A pure task-state change: nothing is spent, so it is safe to apply
-      // without a launcher. `blocked` and `ready` are the two states the
-      // reconciler itself reads on the next pulse, which is what makes an
-      // unapplied block repeat forever.
-      const to = decision.kind === 'block' ? 'blocked' : 'ready';
-      const current = tasks.find((task) => task.id === decision.taskId);
-      if (current?.status === to) return;
-      const moved = store.tasks.setStatus(decision.taskId, to);
-      if (!moved.ok) throw new Error(moved.message);
-      note(store, mission.id, decision.taskId, `task_${decision.kind}ed`, decision.reason);
-      return;
-    }
-    case 'dispatch': {
-      if (deps.launch) {
-        // Queued for after the commit. Starting it here would put an external,
-        // non-transactional act inside a transaction a later write can roll
-        // back, leaving a live child with no durable record of itself.
-        orders.push({ missionId: mission.id, taskId: decision.taskId, attempt: decision.attempt, key: decision.key });
-        return;
-      }
-      // Recorded, not swallowed. A fleet that decided to dispatch and could
-      // not is a different thing from a fleet with nothing to do, and the
-      // difference is only visible if it is written down.
-      result.deferred += 1;
-      note(store, mission.id, decision.taskId, 'dispatch_deferred', `${decision.reason} (no launcher is wired yet)`);
-      return;
-    }
-    case 'hold':
-      // Explanation only. Writing a row per tick for "nothing to do" would
-      // bury the log in the one state that carries no information.
-      return;
-  }
-}
-
-function applyWatchdog(
-  action: WatchdogAction,
-  mission: Mission,
-  observation: RunObservation,
-  deps: PulseDeps,
-  result: PulseResult,
-  orders: LaunchOrder[],
-): void {
-  const { store } = deps;
-  const run = observation.run;
-  switch (action.kind) {
-    case 'wait':
-    case 'backoff':
-      // `backoff` is a fault whose retry is not due yet. Nothing to write: the
-      // next pulse recomputes it from the same fixed anchor, so a row now would
-      // be one per tick for a decision that has not changed.
-      return;
-    case 'escalate': {
-      const filed = store.escalations.create({
-        missionId: mission.id,
-        taskId: run.taskId,
-        runId: run.id,
-        // `system`, not `child`: this is the watchdog's own finding about a
-        // run, not something the run asked for. A `child` source is untrusted
-        // input by definition, and mislabelling it here would let a stuck run
-        // look like it had requested its own escalation.
-        source: 'system',
-        request: action.request,
-        reason: action.reason,
-        severity: action.severity,
-        idempotencyKey: action.key,
-      });
-      // Thrown, not swallowed. Found in review, and my comment here was simply
-      // wrong about the repository: `create` already answers an idempotency hit
-      // by returning the EXISTING row as `ok`, so a failure is a real store
-      // error. Letting it pass committed the rest of the pulse and advanced the
-      // cadence while the blocking escalation — the thing a human is supposed
-      // to answer — had been dropped.
-      if (!filed.ok) throw new Error(filed.message);
-      result.escalated += 1;
-      return;
-    }
-    case 'give_up': {
-      const ended = store.runs.setState(run.id, action.terminal, { terminalReason: action.reason });
-      if (!ended.ok) throw new Error(ended.message);
-      for (const status of action.task.path) {
-        const moved = store.tasks.setStatus(run.taskId, status);
-        if (!moved.ok) throw new Error(moved.message);
-      }
-      note(store, mission.id, run.taskId, 'task_given_up', action.reason);
-      return;
-    }
-    case 'retry': {
-      // The old run is finished either way: it is not coming back, and leaving
-      // it `running` holds a concurrency slot for the life of the mission.
-      const ended = store.runs.setState(run.id, action.terminal, { terminalReason: action.reason });
-      if (!ended.ok) throw new Error(ended.message);
-      // The task leaves `running` either way, or nothing will ever look at it
-      // again — the wedge recovery.ts exists to close. `path` is the legal
-      // route, so every hop is applied in order.
-      for (const status of action.task.path) {
-        const moved = store.tasks.setStatus(run.taskId, status);
-        if (!moved.ok) throw new Error(moved.message);
-      }
-      if (deps.launch) {
-        orders.push({ missionId: mission.id, taskId: run.taskId, attempt: action.attempt, key: action.key });
-        return;
-      }
-      result.deferred += 1;
-      note(store, mission.id, run.taskId, 'retry_deferred', `${action.reason} (no launcher is wired yet)`);
-      return;
-    }
-  }
-}
-
-/** One line in the mission's timeline, keyed so a repeated tick cannot duplicate it. */
-function note(store: FleetStore, missionId: string, taskId: string, kind: string, reason: string): void {
-  const appended = store.events.append({
-    missionId,
-    taskId,
-    actor: 'system',
-    kind,
-    payload: { reason },
-    idempotencyKey: escalationKey(`${missionId}:${taskId}`, `${kind}:${reason}`),
-  });
-  // A duplicate key means this exact note is already in the log, which is the
-  // idempotency doing its job rather than a failure worth aborting the pulse.
-  if (!appended.ok && !/idempot|unique/i.test(appended.message)) throw new Error(appended.message);
 }
 
 /**

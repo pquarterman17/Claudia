@@ -380,3 +380,144 @@ describe('what the follow-up review found', () => {
     expect((await pulser.tick()).map((r) => r.missionId)).toEqual([m.id]);
   });
 });
+
+describe('what the third review found', () => {
+  /** A task already dispatched, with an active run against it. */
+  function working(store: FleetStore, missionId: string, over: { sessionId?: string; attempt?: number } = {}) {
+    const task = readyTask(store, missionId);
+    const moved = store.tasks.setStatus(task.id, 'running');
+    if (!moved.ok) throw new Error(moved.message);
+    return { task: moved.value, run: activeRun(store, missionId, task.id, over) };
+  }
+
+  function activeRun(
+    store: FleetStore,
+    missionId: string,
+    taskId: string,
+    over: { sessionId?: string; attempt?: number } = {},
+  ) {
+    const run = store.runs.create({
+      missionId,
+      taskId,
+      agent: 'claude',
+      attempt: over.attempt ?? 1,
+      sessionId: over.sessionId ?? 's1',
+    });
+    if (!run.ok) throw new Error(run.message);
+    const running = store.runs.setState(run.value.id, 'running');
+    if (!running.ok) throw new Error(running.message);
+    return running.value;
+  }
+
+  const state = (store: FleetStore, runId: string): string | undefined => {
+    const run = store.runs.get(runId);
+    if (!run.ok) throw new Error(run.message);
+    return run.value?.state;
+  };
+  const status = (store: FleetStore, taskId: string): string | undefined => {
+    const task = store.tasks.get(taskId);
+    if (!task.ok) throw new Error(task.message);
+    return task.value?.status;
+  };
+
+  /** One attempt allowed, so the watchdog gives up rather than waiting out a backoff. */
+  const ONE_ATTEMPT = { maxChildren: 4, maxAttempts: 1 };
+
+  it('bounds the watchdog by the fleet policy, not by its own default', async () => {
+    // `reconcile` was handed `deps.policy.maxAttempts` while the watchdog fell
+    // back to DEFAULT_WATCHDOG's 3. A fleet limited to one attempt therefore
+    // still got a second one from the component actually authorised to spend
+    // it — and a fleet allowed more than three gave up early.
+    const { store, mission: m } = mission();
+    const { task, run } = working(store, m.id);
+
+    const [result] = await pulseFleet({ store, policy: ONE_ATTEMPT, observeSessions: NO_SESSIONS });
+    expect(result).toBeDefined();
+    // One attempt spent, one allowed: there is nothing left to retry with.
+    expect(state(store, run.id)).toBe('failed');
+    expect(status(store, task.id)).toBe('failed');
+    expect(kinds(store, m.id)).toContain('task_given_up');
+  });
+
+  it('survives an orphaned run whose task went blocked underneath it', async () => {
+    // `running -> blocked` is a legal transition while a run is still active —
+    // a dependency reopened while it worked. `blocked -> failed` is not a
+    // transition at all, so the fixed running-only route had its write refused,
+    // rolled the whole pulse back, and wedged the very run it meant to clean up.
+    const { store, mission: m } = mission();
+    // The LAST attempt the default bound allows, so the watchdog gives up
+    // under either policy: this case must fail for its own reason and not
+    // because the bound was wrong.
+    const { task, run } = working(store, m.id, { attempt: 3 });
+    const blocked = store.tasks.setStatus(task.id, 'blocked');
+    expect(blocked.ok, blocked.ok ? '' : blocked.message).toBe(true);
+
+    const [result] = await pulseFleet({ store, policy: POLICY, observeSessions: NO_SESSIONS });
+    // The pulse LANDED, which is the whole point: previously it rolled back.
+    expect(result).toBeDefined();
+    // The dead run is terminalized, so it stops holding a concurrency slot.
+    expect(state(store, run.id)).toBe('failed');
+    // And the task keeps the state its dependency put it in. The reconciler
+    // unblocks it when that resolves, under the same attempt bound.
+    expect(status(store, task.id)).toBe('blocked');
+    expect(kinds(store, m.id)).toContain('task_left_as_is');
+  });
+
+  it('requeues a task once when two of its runs are orphaned, not once per run', async () => {
+    // The reconciler treats duplicate active runs as a persisted state it must
+    // survive. Applying a full task transition per run meant the first moved
+    // the task `running -> failed -> ready` and the second tried the same route
+    // from `ready`, which has no edge to `failed`: the write was refused, the
+    // transaction rolled back, and NEITHER run was terminalized.
+    const { store, mission: m } = mission();
+    const { task, run } = working(store, m.id, { attempt: 1 });
+    // Attempt 2, because the store puts a UNIQUE constraint on
+    // (task, attempt): a duplicate active run is two ATTEMPTS both left live,
+    // which is exactly how a half-recovered mission ends up wedged. Two spent
+    // of three allowed, so both are retryable rather than given up.
+    const second = activeRun(store, m.id, task.id, { sessionId: 's2', attempt: 2 });
+    // Past the backoff the retry is gated on, or the pulse writes nothing and
+    // the case never arises.
+    const later = Date.now() + 10 * 60_000;
+
+    const orders: number[] = [];
+    const launch: LaunchChild = async (order) => {
+      orders.push(order.attempt);
+      return true;
+    };
+    const [result] = await pulseFleet({
+      store,
+      policy: POLICY,
+      launch,
+      observeSessions: NO_SESSIONS,
+      now: () => later,
+    });
+
+    expect(result).toBeDefined();
+    expect(state(store, run.id)).toBe('failed');
+    expect(state(store, second.id)).toBe('failed');
+    // Requeued once, by one of them, rather than once per run.
+    expect(status(store, task.id)).toBe('ready');
+    // And ONE launch, at the attempt after everything the task has spent.
+    expect(orders).toEqual([3]);
+  });
+
+  it('does not take the task away from a run that is still healthy', async () => {
+    // The other half of the duplicate case, and the more damaging one: failing
+    // the orphan moved the task out from under its live sibling, which would
+    // then finish into a task somebody else already owns.
+    const { store, mission: m } = mission();
+    const { task, run } = working(store, m.id, { sessionId: 'gone', attempt: 2 });
+    const alive = activeRun(store, m.id, task.id, { sessionId: 'here', attempt: 3 });
+    const observeSessions = (): ReadonlyMap<string, SessionFacts> =>
+      new Map([['here', { lastActivityAt: Date.now() }]]);
+
+    const [result] = await pulseFleet({ store, policy: POLICY, observeSessions });
+    expect(result).toBeDefined();
+    expect(state(store, run.id)).toBe('failed');
+    // Untouched, both of them.
+    expect(state(store, alive.id)).toBe('running');
+    expect(status(store, task.id)).toBe('running');
+    expect(kinds(store, m.id)).toContain('run_ended_task_held');
+  });
+});

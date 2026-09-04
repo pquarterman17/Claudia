@@ -194,6 +194,15 @@ export class ChildRunRepo {
    * a live run was quietly reassigned, and both are states the rest of the
    * fleet reasons by assuming cannot happen. Re-attaching the SAME id is a
    * no-op, so a retried launch that already succeeded is harmless.
+   *
+   * And REFUSED once the reservation has been retired. Found in review: the
+   * starting grace can expire while startup is still in flight, so a later
+   * pulse fails this run and reserves its replacement — and the slow launcher
+   * then arrives with an id for a row nothing counts as active and the watchdog
+   * never assesses. Answering `ok` there told the launcher it had succeeded
+   * when it had lost its slot, so the child it started would never be stopped.
+   * The refusal is how it finds out, and it has to be decided inside this
+   * transaction because the retirement races it.
    */
   attachSession(id: string, sessionId: string): StoreResult<ChildRun> {
     return transact(this.db, 'attach a session to the child run', () => {
@@ -203,6 +212,9 @@ export class ChildRunRepo {
       if (current.sessionId === sessionId) return current;
       if (current.sessionId !== undefined) {
         refuse(`Child run ${id} already belongs to session ${current.sessionId}.`);
+      }
+      if (current.state !== 'dispatched' && current.state !== 'running') {
+        refuse(`Child run ${id} is ${current.state} and is no longer waiting for a session.`);
       }
       if (!sessionId) refuse('A session id is required to attach one.');
       this.db.prepare('UPDATE child_runs SET session_id = ? WHERE id = ?').run(sessionId, id);

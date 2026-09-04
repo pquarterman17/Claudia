@@ -799,6 +799,27 @@ describe('a run that has been reserved but not yet launched', () => {
     expect(after.value?.sessionId).toBe('sess-42');
   });
 
+  it('refuses a session once the reservation has been retired', async () => {
+    // Found in review. The grace can expire while startup is still in flight:
+    // a later pulse retires the run and reserves its replacement, and then the
+    // slow launcher finally comes back with an id. Checking only for an
+    // existing session id let it attach to the failed row — a session nothing
+    // counts as active and the watchdog never assesses, with the launcher told
+    // it succeeded. It has to learn it lost the reservation, or the child it
+    // started is never stopped.
+    const { store, mission: m } = mission();
+    const { run } = reserved(store, m.id);
+    const retired = store.runs.setState(run.id, 'failed', { terminalReason: 'took too long to start' });
+    if (!retired.ok) throw new Error(retired.message);
+
+    const late = store.runs.attachSession(run.id, 'late-session');
+    expect(late.ok).toBe(false);
+    const after = store.runs.get(run.id);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value?.sessionId).toBeUndefined();
+    expect(after.value?.state).toBe('failed');
+  });
+
   it('counts as alive once its session is attached', async () => {
     const { store, mission: m } = mission();
     const { run } = reserved(store, m.id);

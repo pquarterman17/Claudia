@@ -1,11 +1,8 @@
 import { createReadStream } from 'node:fs';
-import { open, readdir, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { open } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
+import { decodeProject, PROJECTS_DIR, recentTranscripts } from './transcript-files.js';
 import { UsageStore } from './usage-store.js';
-
-const PROJECTS_DIR = join(process.env['CLAUDE_CONFIG_DIR'] ?? join(homedir(), '.claude'), 'projects');
 
 /**
  * Whether the range being read ends on a line break.
@@ -24,9 +21,6 @@ async function endsOnNewline(path: string, size: number): Promise<boolean> {
     await handle.close();
   }
 }
-
-/** Only files touched within this horizon are worth reading at all. */
-const HORIZON_MS = 8 * 24 * 60 * 60 * 1000;
 
 /**
  * Reads token usage out of Claude Code's own session logs.
@@ -65,7 +59,7 @@ export class UsageReader {
     if (this.scanning) return;
     this.scanning = true;
     try {
-      for (const file of await this.recentFiles(now)) {
+      for (const file of await recentTranscripts(this.projectsDir, now)) {
         await this.readIncrementally(file.path, file.size);
       }
       this.store.prune(now);
@@ -73,38 +67,6 @@ export class UsageReader {
     } finally {
       this.scanning = false;
     }
-  }
-
-  private async recentFiles(now: number): Promise<Array<{ path: string; size: number }>> {
-    const out: Array<{ path: string; size: number }> = [];
-    let projects: string[];
-    try {
-      projects = await readdir(this.projectsDir);
-    } catch {
-      return out; // no Claude Code history on this machine yet
-    }
-    for (const project of projects) {
-      const dir = join(this.projectsDir, project);
-      let entries: string[];
-      try {
-        entries = await readdir(dir);
-      } catch {
-        continue;
-      }
-      for (const entry of entries) {
-        if (!entry.endsWith('.jsonl')) continue;
-        const path = join(dir, entry);
-        try {
-          const info = await stat(path);
-          // Skip cold files outright — most of the 736 MB is history we never need.
-          if (now - info.mtimeMs > HORIZON_MS) continue;
-          out.push({ path, size: info.size });
-        } catch {
-          /* vanished mid-scan */
-        }
-      }
-    }
-    return out;
   }
 
   /**
@@ -181,16 +143,4 @@ export class UsageReader {
       cacheCreationTokens: num(usage['cache_creation_input_tokens']),
     });
   }
-}
-
-/**
- * Claude Code encodes a project's path into the directory name by replacing
- * separators with dashes, which is lossy — so show the tail, which is the part
- * a human recognises.
- */
-export function decodeProject(path: string): string {
-  const parts = path.split(/[\\/]/);
-  const dir = parts[parts.length - 2] ?? 'unknown';
-  const segments = dir.split('-').filter(Boolean);
-  return segments.slice(-2).join('/') || dir;
 }

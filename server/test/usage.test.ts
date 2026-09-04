@@ -7,7 +7,7 @@ import {
   remainingLevel,
   remainingPct,
 } from '../src/plan-limits.js';
-import { decodeProject } from '../src/usage-reader.js';
+import { decodeProject } from '../src/transcript-files.js';
 import { UsageStore } from '../src/usage-store.js';
 
 const HOUR = 60 * 60 * 1000;

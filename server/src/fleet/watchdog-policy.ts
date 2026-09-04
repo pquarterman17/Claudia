@@ -13,6 +13,17 @@ export interface WatchdogPolicy {
   silentAfterMs: number;
   /** A pending approval older than this will not be answered by anyone. */
   approvalStuckAfterMs: number;
+  /**
+   * How long a reserved run may have no session before it counts as orphaned.
+   *
+   * The reservation is written before the launcher runs, so between the commit
+   * and the session starting there is a run the watchdog can see and no session
+   * to match it to — which is its definition of an orphan. Generous, because
+   * the work in that window is a `git worktree add` on a repository that may be
+   * large plus a process start, and retiring a child that was still coming up
+   * costs the attempt AND launches a duplicate.
+   */
+  startingGraceMs: number;
   maxAttempts: number;
   /** First retry delay; doubles per attempt up to retryMaxMs. */
   retryBaseMs: number;
@@ -26,6 +37,9 @@ export const DEFAULT_WATCHDOG: WatchdogPolicy = {
   // Shorter, because a parked approval is not work in progress — nothing is
   // happening and nothing will until a human acts.
   approvalStuckAfterMs: 5 * 60_000,
+  // Three times the first retry backoff, so the grace outlasts the gate that
+  // would otherwise retire the run at 30 seconds.
+  startingGraceMs: 90_000,
   maxAttempts: 3,
   retryBaseMs: 30_000,
   retryMaxMs: 10 * 60_000,
@@ -40,10 +54,9 @@ export const DEFAULT_WATCHDOG: WatchdogPolicy = {
  * is not a delay, and a cap below the base is not a cap.
  */
 export function usablePolicy(policy: WatchdogPolicy): boolean {
-  const { silentAfterMs, approvalStuckAfterMs, retryBaseMs, retryMaxMs, maxAttempts } = policy;
-  if (![silentAfterMs, approvalStuckAfterMs, retryBaseMs, retryMaxMs].every((ms) => Number.isFinite(ms) && ms > 0)) {
-    return false;
-  }
+  const { silentAfterMs, approvalStuckAfterMs, retryBaseMs, retryMaxMs, startingGraceMs, maxAttempts } = policy;
+  const durations = [silentAfterMs, approvalStuckAfterMs, retryBaseMs, retryMaxMs, startingGraceMs];
+  if (!durations.every((ms) => Number.isFinite(ms) && ms > 0)) return false;
   if (retryMaxMs < retryBaseMs) return false;
   return Number.isSafeInteger(maxAttempts) && maxAttempts > 0;
 }

@@ -181,6 +181,47 @@ export class ChildRunRepo {
     });
   }
 
+  /**
+   * Records which session a reserved run actually got.
+   *
+   * The run row is written BEFORE the session exists — that is what makes it a
+   * reservation, and what stops a repeated pulse paying for the same attempt
+   * twice. So the id has to arrive afterwards, and until it does the watchdog
+   * sees a run whose session is missing, which is its definition of an orphan.
+   *
+   * Write-once. A run is one attempt at one task by one session: a second id
+   * would mean either the launcher started two children for one reservation or
+   * a live run was quietly reassigned, and both are states the rest of the
+   * fleet reasons by assuming cannot happen. Re-attaching the SAME id is a
+   * no-op, so a retried launch that already succeeded is harmless.
+   *
+   * And REFUSED once the reservation has been retired. Found in review: the
+   * starting grace can expire while startup is still in flight, so a later
+   * pulse fails this run and reserves its replacement — and the slow launcher
+   * then arrives with an id for a row nothing counts as active and the watchdog
+   * never assesses. Answering `ok` there told the launcher it had succeeded
+   * when it had lost its slot, so the child it started would never be stopped.
+   * The refusal is how it finds out, and it has to be decided inside this
+   * transaction because the retirement races it.
+   */
+  attachSession(id: string, sessionId: string): StoreResult<ChildRun> {
+    return transact(this.db, 'attach a session to the child run', () => {
+      const row = this.db.prepare(`SELECT ${RUN_COLUMNS} FROM child_runs WHERE id = ?`).get(id) as Row | undefined;
+      if (!row) refuse(`No child run with id ${id}.`);
+      const current = toRun(row);
+      if (current.sessionId === sessionId) return current;
+      if (current.sessionId !== undefined) {
+        refuse(`Child run ${id} already belongs to session ${current.sessionId}.`);
+      }
+      if (current.state !== 'dispatched' && current.state !== 'running') {
+        refuse(`Child run ${id} is ${current.state} and is no longer waiting for a session.`);
+      }
+      if (!sessionId) refuse('A session id is required to attach one.');
+      this.db.prepare('UPDATE child_runs SET session_id = ? WHERE id = ?').run(sessionId, id);
+      return { ...current, sessionId };
+    });
+  }
+
   private nextAttempt(taskId: string): number {
     const row = this.db.prepare('SELECT MAX(attempt) AS highest FROM child_runs WHERE task_id = ?').get(taskId) as
       | Row

@@ -697,3 +697,146 @@ describe('what the fifth review found', () => {
     expect(launched).toEqual([]);
   });
 });
+
+describe('a run that has been reserved but not yet launched', () => {
+  /** Exactly what `applyDecision` writes for a dispatch: a claimed attempt with
+   * no session, because the session does not exist until the launcher runs. */
+  function reserved(store: FleetStore, missionId: string) {
+    const task = readyTask(store, missionId);
+    const moved = store.tasks.setStatus(task.id, 'running');
+    if (!moved.ok) throw new Error(moved.message);
+    const run = store.runs.create({ missionId, taskId: task.id, agent: 'claude', attempt: 1, state: 'dispatched' });
+    if (!run.ok) throw new Error(run.message);
+    return { task, run: run.value };
+  }
+
+  it('is not retired as an orphan while it is still starting', async () => {
+    // The hole the reservation left. A reserved run is `dispatched` with no
+    // session id, so `sessionAlive` is false and `assess` calls it orphaned.
+    // The fuse is the retry backoff rather than the next tick — 30 seconds from
+    // `startedAt` — which is well inside what a `git worktree add` on a large
+    // repository plus a session start can take. So the launcher would have its
+    // run retired and a second attempt launched while the first was still
+    // coming up.
+    const { store, mission: m } = mission();
+    const { run } = reserved(store, m.id);
+
+    // Past the 30s retry backoff, inside the starting grace. Without the grace
+    // this run is already `failed` here.
+    await pulseFleet({
+      store,
+      policy: POLICY,
+      observeSessions: NO_SESSIONS,
+      now: () => Date.now() + 45_000,
+    });
+
+    const after = store.runs.get(run.id);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value?.state).toBe('dispatched');
+  });
+
+  it('does not shelter a run whose session actually died', async () => {
+    // The boundary the grace could have blurred. Never having had a session and
+    // having lost one are different states, and only the first is a child still
+    // coming up — so the grace keys on the id being ABSENT, not on the session
+    // being unfindable.
+    const { store, mission: m } = mission();
+    const task = readyTask(store, m.id);
+    const moved = store.tasks.setStatus(task.id, 'running');
+    if (!moved.ok) throw new Error(moved.message);
+    const run = store.runs.create({
+      missionId: m.id,
+      taskId: task.id,
+      agent: 'claude',
+      attempt: 3,
+      sessionId: 'died',
+      state: 'dispatched',
+    });
+    if (!run.ok) throw new Error(run.message);
+
+    // Inside the starting grace, but this run HAS an id and nothing answers it.
+    await pulseFleet({
+      store,
+      policy: POLICY,
+      observeSessions: NO_SESSIONS,
+      now: () => Date.now() + 45_000,
+    });
+
+    const after = store.runs.get(run.value.id);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value?.state).toBe('failed');
+  });
+
+  it('is retired once it has had long enough to start and still has no session', async () => {
+    // The grace is a window, not an exemption: a launcher that never attaches a
+    // session has failed, and the slot has to come back.
+    const { store, mission: m } = mission();
+    const { run } = reserved(store, m.id);
+
+    await pulseFleet({
+      store,
+      policy: POLICY,
+      observeSessions: NO_SESSIONS,
+      now: () => Date.now() + 10 * 60_000,
+    });
+
+    const after = store.runs.get(run.id);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value?.state).toBe('failed');
+  });
+
+  it('can be told which session it got', async () => {
+    // The reservation is written before the session exists, so something has to
+    // fill it in afterwards. Without this the id could never be recorded and
+    // the run stayed invisible to the watchdog for its whole life.
+    const { store, mission: m } = mission();
+    const { run } = reserved(store, m.id);
+
+    const attached = store.runs.attachSession(run.id, 'sess-42');
+    expect(attached.ok, attached.ok ? '' : attached.message).toBe(true);
+    const after = store.runs.get(run.id);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value?.sessionId).toBe('sess-42');
+  });
+
+  it('refuses a session once the reservation has been retired', async () => {
+    // Found in review. The grace can expire while startup is still in flight:
+    // a later pulse retires the run and reserves its replacement, and then the
+    // slow launcher finally comes back with an id. Checking only for an
+    // existing session id let it attach to the failed row — a session nothing
+    // counts as active and the watchdog never assesses, with the launcher told
+    // it succeeded. It has to learn it lost the reservation, or the child it
+    // started is never stopped.
+    const { store, mission: m } = mission();
+    const { run } = reserved(store, m.id);
+    const retired = store.runs.setState(run.id, 'failed', { terminalReason: 'took too long to start' });
+    if (!retired.ok) throw new Error(retired.message);
+
+    const late = store.runs.attachSession(run.id, 'late-session');
+    expect(late.ok).toBe(false);
+    const after = store.runs.get(run.id);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value?.sessionId).toBeUndefined();
+    expect(after.value?.state).toBe('failed');
+  });
+
+  it('counts as alive once its session is attached', async () => {
+    const { store, mission: m } = mission();
+    const { run } = reserved(store, m.id);
+    const attached = store.runs.attachSession(run.id, 'sess-42');
+    if (!attached.ok) throw new Error(attached.message);
+
+    // Well past the starting grace, so only the live session keeps it.
+    const later = Date.now() + 10 * 60_000;
+    await pulseFleet({
+      store,
+      policy: POLICY,
+      observeSessions: () => new Map([['sess-42', { lastActivityAt: later }]]),
+      now: () => later,
+    });
+
+    const after = store.runs.get(run.id);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value?.state).toBe('dispatched');
+  });
+});

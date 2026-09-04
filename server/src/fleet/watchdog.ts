@@ -39,6 +39,8 @@ export interface RunObservation {
 export type RunHealth =
   | { kind: 'healthy' }
   | { kind: 'finished' }
+  /** Reserved, and not yet answered by a session. Not a fault until it ages. */
+  | { kind: 'starting' }
   | { kind: 'orphaned'; reason: string }
   /** `tool` is the STABLE identity of what it is stuck on. `reason` contains
    * an elapsed time and therefore changes every tick, so anything derived
@@ -69,6 +71,17 @@ export function assess(observation: RunObservation, policy: WatchdogPolicy = DEF
     return { kind: 'finished' };
   }
   if (!observation.sessionAlive) {
+    // A run that has NEVER had a session is a different thing from one whose
+    // session is gone, and only the second is an orphan. The first is a
+    // reservation whose launcher has not attached an id yet — the row is
+    // written before the child is started, deliberately, so that a repeated
+    // pulse cannot pay for the same attempt twice. Retiring it during that
+    // window costs the attempt and launches a duplicate of a child that was
+    // still coming up. `startedAt` is the anchor because it is when the
+    // reservation was made.
+    if (run.sessionId === undefined && run.state === 'dispatched' && now - run.startedAt < policy.startingGraceMs) {
+      return { kind: 'starting' };
+    }
     return { kind: 'orphaned', reason: 'the record says running but the session is gone' };
   }
   // Everything past here is arithmetic on the clock. Found in review: an
@@ -238,7 +251,11 @@ export function nextAction(
   policy: WatchdogPolicy = DEFAULT_WATCHDOG,
 ): WatchdogAction {
   const { run } = observation;
-  if (health.kind === 'healthy' || health.kind === 'finished') return { kind: 'wait' };
+  // `starting` waits like the others: there is nothing to do about a child that
+  // is still coming up, and the grace expiring turns it into a plain orphan.
+  if (health.kind === 'healthy' || health.kind === 'finished' || health.kind === 'starting') {
+    return { kind: 'wait' };
+  }
 
   // Revalidated HERE, not only in `assess`. Found in review: the two are
   // separate entry points and a caller composes them, so validating in one

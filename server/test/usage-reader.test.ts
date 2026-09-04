@@ -56,6 +56,37 @@ describe('reading a log that is still being appended to', () => {
     expect(totals(reader)).toBe(500);
   });
 
+  it('resumes correctly when the split lands inside a multi-byte character', async () => {
+    // Found in review, and a defect the previous fix introduced: the resume
+    // offset was derived by re-encoding the DECODED fragment. A read that ends
+    // partway through a UTF-8 character has that trailing fragment replaced by
+    // U+FFFD, which re-encodes to a different length than the bytes actually
+    // read — so the arithmetic produced an offset that was wrong, and could go
+    // NEGATIVE, after which `createReadStream` threw and the file could never
+    // be scanned again.
+    const { root, path } = projects();
+    const whole = Buffer.from(
+      `${JSON.stringify({
+        type: 'assistant',
+        timestamp: new Date().toISOString(),
+        note: '🚀🚀🚀',
+        message: { model: 'claude-opus-5', usage: { input_tokens: 1, output_tokens: 321 } },
+      })}\n`,
+      'utf8',
+    );
+    // Cut one byte into a four-byte emoji, so the tail is an incomplete character.
+    const split = whole.indexOf(Buffer.from('🚀', 'utf8')) + 1;
+
+    appendFileSync(path, whole.subarray(0, split));
+    const reader = new UsageReader(root);
+    await reader.scan();
+    expect(totals(reader)).toBe(0);
+
+    appendFileSync(path, whole.subarray(split));
+    await reader.scan();
+    expect(totals(reader)).toBe(321);
+  });
+
   it('counts each record once across many scans', async () => {
     const { root, path } = projects();
     const reader = new UsageReader(root);

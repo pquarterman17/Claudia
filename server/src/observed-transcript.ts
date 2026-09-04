@@ -57,16 +57,13 @@ export function readMirror(text: string, pending: Map<string, PendingTool> = new
   const slice: MirrorSlice = { transcript: [], feed: [], patches: [] };
   for (const line of text.split('\n')) {
     if (!line) continue;
-    let record: Record<string, unknown>;
-    try {
-      record = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      // A line this caller believed complete but is not valid JSON. Skipping it
-      // is right: the alternative is abandoning the rest of a conversation over
-      // one bad row, which `events.ts` already made the opposite call about and
-      // says why.
-      continue;
-    }
+    // Parsed AND shape-checked. Found in review: `JSON.parse` succeeding says
+    // nothing about the type, and `null`, a number and a string are all valid
+    // JSON — reading a property off the first threw, which abandoned the rest
+    // of the conversation over exactly the kind of row the next line promises
+    // to skip.
+    const record = asRecord(parse(line));
+    if (!record) continue;
     if (!CONVERSATION.has(String(record['type']))) continue;
     // Sub-agent traffic. Excluded rather than interleaved: it belongs under the
     // Task step that spawned it, and flattening it into the main feed makes a
@@ -103,7 +100,8 @@ function ingest(
   if (!Array.isArray(content)) return;
 
   for (const [index, raw] of content.entries()) {
-    const block = raw as Record<string, unknown>;
+    const block = asRecord(raw);
+    if (!block) continue;
     const id = `${uuid}:${index}`;
     switch (String(block['type'])) {
       case 'text': {
@@ -172,13 +170,36 @@ function flatten(content: unknown): string {
   if (!Array.isArray(content)) return '';
   return content
     .map((raw) => {
-      const block = raw as Record<string, unknown>;
+      const block = asRecord(raw);
+      if (!block) return '';
       if (block['type'] === 'text') return String(block['text'] ?? '');
       if (block['type'] === 'tool_reference') return `(result of ${String(block['tool_name'] ?? 'a tool')})`;
       return '';
     })
     .filter(Boolean)
     .join('\n');
+}
+
+/**
+ * A parsed line, or `undefined` when it is not JSON at all.
+ *
+ * Skipping is right rather than throwing: the alternative is abandoning the
+ * rest of a conversation over one bad row, which `events.ts` already made the
+ * opposite call about and says why.
+ */
+function parse(line: string): unknown {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Narrows to a plain object, which is what every access here assumes. */
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function clamp(value: string, limit: number): string {

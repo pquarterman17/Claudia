@@ -124,6 +124,32 @@ describe('reconstructing a conversation from the log', () => {
     expect(slice.transcript.map((i) => i.text)).toEqual(['before', 'after']);
   });
 
+  it('survives a line that parses to something other than an object', () => {
+    // Found in review: `JSON.parse` succeeding says nothing about the shape.
+    // `null`, a number and a string are all valid JSON, and reading a property
+    // off the first one threw — abandoning the rest of the conversation over a
+    // row this file already promises to skip.
+    const slice = readMirror(
+      [userText('before', 1), 'null', '42', '"a bare string"', '[]', userText('after', 2)].join('\n'),
+    );
+    expect(slice.transcript.map((i) => i.text)).toEqual(['before', 'after']);
+  });
+
+  it('survives a null block inside an otherwise valid message', () => {
+    const slice = readMirror(
+      [
+        assistantBlocks([null, { type: 'text', text: 'still here' }], 1),
+        line({
+          type: 'user',
+          uuid: 'r7',
+          timestamp: at(2),
+          message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'k', content: [null, { type: 'text', text: 'kept' }] }] },
+        }),
+      ].join('\n'),
+    );
+    expect(slice.transcript.map((i) => i.text)).toEqual(['still here', 'kept']);
+  });
+
   it('keeps a result whose content is only a reference to another tool', () => {
     // Found by running this parser over a real transcript rather than over
     // these fixtures: 42 of 1,854 results are a bare `tool_reference` standing

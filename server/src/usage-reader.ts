@@ -1,26 +1,9 @@
 import { createReadStream } from 'node:fs';
-import { open } from 'node:fs/promises';
-import { createInterface } from 'node:readline';
 import { decodeProject, PROJECTS_DIR, recentTranscripts } from './transcript-files.js';
 import { UsageStore } from './usage-store.js';
 
-/**
- * Whether the range being read ends on a line break.
- *
- * One byte, read separately, because it is the only thing that distinguishes a
- * complete final line from a fragment of one — and `readline` cannot say, since
- * it strips the separator and reports both the same way. Getting this wrong is
- * not a rounding error: see `readIncrementally`.
- */
-async function endsOnNewline(path: string, size: number): Promise<boolean> {
-  const handle = await open(path, 'r');
-  try {
-    const { buffer, bytesRead } = await handle.read(Buffer.alloc(1), 0, 1, size - 1);
-    return bytesRead === 1 && buffer[0] === 0x0a;
-  } finally {
-    await handle.close();
-  }
-}
+const NEWLINE = 0x0a;
+const EMPTY: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 
 /**
  * Reads token usage out of Claude Code's own session logs.
@@ -74,16 +57,18 @@ export class UsageReader {
    *
    * The offset used to be advanced to the file size before reading. That is
    * wrong for exactly the files this class exists to follow: a session still
-   * running is appending, so its last line is usually half-written. `readline`
-   * still emits that fragment, `JSON.parse` rejects it, and the next scan then
-   * resumed from the middle of it — so the rest arrived as a fragment too and
-   * the record was lost for good, not deferred. The old comment here claimed
-   * the next scan re-read it; the offset had already moved past it.
+   * running is appending, so its last line is usually half-written. The
+   * fragment failed to parse and the next scan resumed from the middle of it,
+   * so the rest arrived as a fragment too and the record was lost for good.
    *
-   * So the last line is held back until one byte at the end of the range says
-   * whether it was terminated, and the offset advances only over what was
-   * actually consumed. Undercounted tokens were the visible symptom; the same
-   * mechanism drops whole messages for anything else reading these files.
+   * The split is found in RAW BYTES rather than by measuring decoded text.
+   * Found in review, and the second defect in the same three lines: a read that
+   * ends partway through a multi-byte character has that trailing fragment
+   * replaced by U+FFFD, which re-encodes to a different length than was read —
+   * so `size - Buffer.byteLength(fragment)` was not the start of the fragment,
+   * and on a four-byte character it went negative and `createReadStream` threw.
+   * A file that hit that could never be scanned again. Counting the bytes of
+   * the lines actually consumed cannot drift, because it never converts back.
    */
   private async readIncrementally(path: string, size: number): Promise<void> {
     const previous = this.offsets.get(path) ?? 0;
@@ -92,26 +77,25 @@ export class UsageReader {
     if (size === start) return;
 
     const project = decodeProject(path);
-    const stream = createReadStream(path, { start, end: size - 1, encoding: 'utf8' });
-    const lines = createInterface({ input: stream, crlfDelay: Infinity });
-    // One line of lookahead: whichever line turns out to be last is the only
-    // one whose completeness is in question, and it is not known to BE last
-    // until the iterator ends.
-    let held: string | undefined;
-    for await (const line of lines) {
-      if (held !== undefined) this.consider(held, project);
-      held = line;
+    // No encoding, so chunks arrive as Buffers and every position below is a
+    // byte position. Still streamed: what is held is one unfinished line, not
+    // the delta.
+    const stream = createReadStream(path, { start, end: size - 1 });
+    let consumed = start;
+    let rest: Buffer<ArrayBufferLike> = EMPTY;
+    for await (const chunk of stream) {
+      const buffer: Buffer<ArrayBufferLike> = rest.length === 0 ? (chunk as Buffer) : Buffer.concat([rest, chunk as Buffer]);
+      let from = 0;
+      for (let brk = buffer.indexOf(NEWLINE, from); brk !== -1; brk = buffer.indexOf(NEWLINE, from)) {
+        this.consider(buffer.subarray(from, brk).toString('utf8'), project);
+        consumed += brk - from + 1;
+        from = brk + 1;
+      }
+      rest = buffer.subarray(from);
     }
-    if (held === undefined) return;
-
-    if (await endsOnNewline(path, size)) {
-      this.consider(held, project);
-      this.offsets.set(path, size);
-      return;
-    }
-    // Rewound to the start of the fragment, so the next scan reads the whole
-    // line once it has been written.
-    this.offsets.set(path, size - Buffer.byteLength(held, 'utf8'));
+    // `rest` is an unterminated line, so its bytes are deliberately not counted:
+    // the next scan reads it whole once it has been written.
+    this.offsets.set(path, consumed);
   }
 
   /** Cheap pre-filter: JSON.parse on every line of 81 MB would dominate. */

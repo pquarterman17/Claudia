@@ -85,7 +85,7 @@ Which maps onto `TranscriptItem` with nothing left over:
 
 - `user` with a bare-string or `text` content → `kind: 'user'`
 - `assistant` `text` → `'assistant'`
-- `assistant` `thinking` → `'thinking'`
+- `assistant` `thinking` → `'thinking'` — **but see caution 4: it is empty in practice**
 - `assistant` `tool_use` → `'tool_use'`, `toolName` from `block.name`
 - `user` `tool_result` → `'tool_result'`
 
@@ -99,7 +99,8 @@ And onto `FeedStep` with enough to build a real one, not a placeholder:
   is for.
 - `cwd`, `gitBranch`, `permissionMode` and `version` ride on every message record.
 
-Three cautions found in the same pass:
+Three cautions found reading the file, and two more found running the parser
+over it:
 
 1. **Several record types carry no `timestamp` at all.** `atis-latch`, `mode` and
    `last-prompt` have only `sessionId` and `type`. A reader that assumes a
@@ -111,6 +112,24 @@ Three cautions found in the same pass:
    `isTypedPrompt`.
 3. **The CLI-internal types are 4,225 of the 9,616 lines** — nearly half. The
    allowlist is what keeps the parse cheap.
+
+The last two surfaced only when the finished parser was run over that same
+transcript. The fixtures could not have shown either, which is worth recording
+as evidence that a fixture pass is not sufficient on its own here:
+
+4. **A mirror cannot show thinking.** All 889 `thinking` blocks carry a
+   `signature` and an EMPTY `thinking` string — the reasoning is not retained in
+   the log. The block type is present, so a parser looks correct and a fixture
+   passes; the real file yields nothing. This kills a feature the mapping above
+   implies. Emitting an empty item would render a blank turn, so the parser drops
+   it deliberately, and **the UI must not offer a thinking view**: on real data it
+   would always be empty.
+5. **42 of 1,854 tool results carry no text**, only a
+   `{ type: 'tool_reference', tool_name }` standing in for output recorded
+   elsewhere. A mapper handling only `text` flattens them to nothing, the item is
+   dropped as empty, and the conversation silently skips a turn. Naming the tool
+   is not the output, but it is the difference between a visible gap and an
+   invisible one.
 
 ## The bug this must fix first
 
@@ -142,6 +161,9 @@ existing usage numbers as a side effect.
 
 **This should land as its own commit before any mirror code**, so the fix is
 reviewable on its own and does not arrive buried in a feature.
+
+*Landed as `a9e1703`.* The split-record test was verified against the old
+behaviour first: the record did not arrive late, it vanished entirely.
 
 ## Design
 
@@ -245,6 +267,12 @@ State this in the PR body, because it is the question a reviewer will ask:
 Steps 1–3 are worth landing whether or not 4–5 ever do: the bug is real today, and
 a tested transcript parser is the piece that makes anything else in this area
 cheap.
+
+**Steps 1–3 are done**, in PR #44 — `a9e1703` (offset fix), `07fb4bd`
+(discovery helper), `f4acfcc` (parser). Against the real transcript the parser
+produces 4,596 items and 2,740 steps, with tool calls and results matching
+exactly but for the one still in flight. Cautions 4 and 5 above came out of that
+run and are the reason step 5 needs re-scoping before it starts.
 
 ## Costs to weigh before starting
 

@@ -1,7 +1,7 @@
 import type { AgentKind, Mission, Task, TaskStatus } from '@claudia/shared';
 import { transact } from '../store/db.js';
 import { escalationKey } from './capabilities.js';
-import type { Decision } from './reconcile.js';
+import { childCeiling, isActiveRun, type Decision } from './reconcile.js';
 import { assess, nextAction, type RunObservation, type WatchdogPolicy } from './watchdog.js';
 import type { LaunchOrder, PulseDeps, PulseResult } from './pulse.js';
 
@@ -231,12 +231,42 @@ function applyTaskIntent(
     return;
   }
   if (intent.attempt === undefined || intent.key === undefined) return;
-  if (deps.launch) {
+  if (deps.launch && hasFreeSlot(mission, deps)) {
     orders.push(reserve(taskId, intent.attempt, intent.key, mission, deps));
     return;
   }
   result.deferred += 1;
-  note(store, mission.id, taskId, 'retry_deferred', `${intent.reason} (no launcher is wired yet)`);
+  const why = deps.launch ? 'no free child slot; the reconciler will dispatch it when one opens' : 'no launcher is wired yet';
+  note(store, mission.id, taskId, 'retry_deferred', `${intent.reason} (${why})`);
+}
+
+/**
+ * Whether the mission may start another child right now.
+ *
+ * The same admission check `reconcile` makes, from the same `childCeiling`, and
+ * the reason it has to be made here too: this path reserves and launches
+ * directly, so without it a retry was authorised by nothing. Found in review,
+ * reproduced at `maxChildren: 0` — one orphaned run was retired and instantly
+ * replaced, giving a mission that may run no children exactly one. The same
+ * shape means a ceiling lowered under a fleet already above it never drains:
+ * every run that dies is replaced one for one.
+ *
+ * Counted from the STORE, not from the snapshot this pulse opened with. The
+ * runs this transaction has already terminalized are gone from it and the ones
+ * it has already reserved are in it, which is what makes the count the state a
+ * new child would actually join. An unreadable ceiling is not a licence to
+ * spend, so it answers no.
+ *
+ * The task has already been routed back to `ready` by the time this says no, so
+ * refusing here defers the retry rather than dropping it: the reconciler
+ * dispatches it on a later pulse, under this same ceiling.
+ */
+function hasFreeSlot(mission: Mission, deps: PulseDeps): boolean {
+  const ceiling = childCeiling(mission, deps.policy);
+  if (ceiling === undefined) return false;
+  const runs = deps.store.runs.listByMission(mission.id);
+  if (!runs.ok) throw new Error(runs.message);
+  return runs.value.filter((run) => isActiveRun(run.state)).length < ceiling;
 }
 
 /**

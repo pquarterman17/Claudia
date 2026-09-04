@@ -621,3 +621,79 @@ describe('what the fourth review found', () => {
     expect(dispatched).not.toContain(task.id);
   });
 });
+
+describe('what the fifth review found', () => {
+  it('does not launch a watchdog retry at a zero child ceiling', async () => {
+    const { store, mission: m } = mission();
+    const task = readyTask(store, m.id);
+    const moved = store.tasks.setStatus(task.id, 'running');
+    if (!moved.ok) throw new Error(moved.message);
+    const run = store.runs.create({ missionId: m.id, taskId: task.id, agent: 'claude', attempt: 1, sessionId: 'gone' });
+    if (!run.ok) throw new Error(run.message);
+    const running = store.runs.setState(run.value.id, 'running');
+    if (!running.ok) throw new Error(running.message);
+
+    const launched: string[] = [];
+    const launch: LaunchChild = async (order) => {
+      launched.push(order.taskId);
+      return true;
+    };
+    await pulseFleet({
+      store,
+      policy: { maxChildren: 0, maxAttempts: 3 },
+      launch,
+      observeSessions: NO_SESSIONS,
+      now: () => Date.now() + 10 * 60_000,
+    });
+
+    expect(launched).toEqual([]);
+    // Deferred, not dropped: the task is back in the queue for the reconciler
+    // to dispatch under the same ceiling once one opens.
+    const current = store.tasks.get(task.id);
+    if (!current.ok) throw new Error(current.message);
+    expect(current.value?.status).toBe('ready');
+    expect(kinds(store, m.id)).toContain('retry_deferred');
+  });
+
+  it('drains rather than replaces when the ceiling is lowered under a busy fleet', async () => {
+    // The other half, and the one an operator actually hits: three runs going,
+    // the ceiling cut to one. Replacing each run that dies one for one means
+    // the fleet never comes down to the new limit.
+    const { store, mission: m } = mission();
+    const live = new Map<string, SessionFacts>();
+    const runs: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const task = readyTask(store, m.id);
+      const moved = store.tasks.setStatus(task.id, 'running');
+      if (!moved.ok) throw new Error(moved.message);
+      const sessionId = `s${i}`;
+      const run = store.runs.create({ missionId: m.id, taskId: task.id, agent: 'claude', attempt: 1, sessionId });
+      if (!run.ok) throw new Error(run.message);
+      const running = store.runs.setState(run.value.id, 'running');
+      if (!running.ok) throw new Error(running.message);
+      runs.push(run.value.id);
+      // Two of the three are healthy; the first is orphaned.
+      if (i > 0) live.set(sessionId, { lastActivityAt: Date.now() });
+    }
+
+    const launched: string[] = [];
+    const launch: LaunchChild = async (order) => {
+      launched.push(order.taskId);
+      return true;
+    };
+    await pulseFleet({
+      store,
+      policy: { maxChildren: 1, maxAttempts: 3 },
+      launch,
+      observeSessions: () => live,
+      now: () => Date.now() + 10 * 60_000,
+    });
+
+    // The orphan is retired, and nothing takes its place: two survivors already
+    // exceed the new ceiling of one.
+    const dead = store.runs.get(runs[0] ?? '');
+    if (!dead.ok) throw new Error(dead.message);
+    expect(dead.value?.state).toBe('failed');
+    expect(launched).toEqual([]);
+  });
+});

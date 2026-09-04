@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { MAX_FRAME_BYTES } from './command-fields.js';
 import { commitAndPush } from './commit-action.js';
+import { startFleet } from './fleet/boot.js';
 import { Orchestrators } from './orchestrators.js';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
@@ -126,6 +127,17 @@ const manager = new SessionManager({
 
 const orchestrators = new Orchestrators(manager, (event) => gateway.broadcast(event));
 
+// After the manager, because reconciliation is a comparison against the
+// sessions that actually exist: a run row saying `running` is adopted when its
+// session is still there and orphaned when it is not. On a cold start there are
+// none, and orphaning every stale run is the right answer — the alternative is
+// a file that believes it is busy and will not dispatch again.
+//
+// Opened here rather than lazily on first use so that the reconciliation
+// happens exactly once, before anything reads the rows it fixes.
+const fleet = startFleet(new Set(manager.summaries().map((session) => session.id)));
+console.log(`[claudia] ${fleet.summary}`);
+
 const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: usage.snapshot() }));
 usage.setTier(saved.planTier);
 if (saved.customCeilings) usage.setCustomCeilings(saved.customCeilings);
@@ -204,6 +216,9 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     clearInterval(pruneTicker);
     usage.stop();
     manager.stopAll();
+    // Closed on the way out so the file is not left locked by a connection
+    // nobody holds — the next start has to be able to take the write lock.
+    fleet.close();
     httpServer.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();
   });

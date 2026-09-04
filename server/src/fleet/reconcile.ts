@@ -55,6 +55,34 @@ export type Decision =
   | { kind: 'unblock'; taskId: string; reason: string }
   | { kind: 'hold'; reason: string };
 
+/**
+ * How many children this mission may have running at once, or `undefined` when
+ * that cannot be read.
+ *
+ * Exported because the reconciler is no longer the only caller. Found in
+ * review: the watchdog's retry path reserves and launches directly, so it
+ * bypassed the gate below entirely — a mission at a ceiling of zero still got a
+ * replacement child, and lowering the ceiling under a fleet that was already
+ * over it never drained, because every run that died was replaced one for one.
+ * A limit enforced in one of the two places that spend is not a limit, so both
+ * read it from here.
+ *
+ * The LOWER of what the human set on this mission and what the server-wide
+ * policy allows, so neither ceiling can be exceeded by raising the other. A
+ * whole non-negative number or nothing: `Math.min(NaN, 2)` is NaN, and a
+ * fractional or negative ceiling reads as nonsense in the one line a person
+ * looks at to find out why nothing is happening.
+ */
+export function childCeiling(mission: Mission, policy: FleetPolicy): number | undefined {
+  const ceiling = Math.min(mission.maxChildren, policy.maxChildren);
+  return Number.isSafeInteger(ceiling) && ceiling >= 0 ? ceiling : undefined;
+}
+
+/** Whether a run is still occupying a slot. */
+export function isActiveRun(state: string): boolean {
+  return ACTIVE_RUN_STATES.has(state);
+}
+
 /** A run that is still occupying a slot. */
 const ACTIVE_RUN_STATES = new Set(['dispatched', 'running']);
 
@@ -162,8 +190,8 @@ export function reconcile(input: ReconcileInput): Decision[] {
   // comment about: visible in the UI, settable by a human, enforcing nothing.
   // Taking the minimum means neither ceiling can be exceeded by raising the
   // other.
-  const ceiling = Math.min(mission.maxChildren, policy.maxChildren);
-  const capacity = ceiling - activeRuns.length;
+  const ceiling = childCeiling(mission, policy);
+  const capacity = (ceiling ?? Number.NaN) - activeRuns.length;
   // A ceiling nobody can read is not a licence to dispatch, and it is not a
   // licence to go quiet either. Found reviewing the commit that introduced this
   // line: `Math.min(NaN, 2)` is NaN, `NaN <= 0` is false, and
@@ -177,7 +205,7 @@ export function reconcile(input: ReconcileInput): Decision[] {
   // waiting on a free slot", "0 of -1 children busy" — which is nonsense in the
   // one line a person reads to find out why nothing is happening. Zero is left
   // alone: "0 of 0 children busy" is coherent, and says what it means.
-  if (!Number.isSafeInteger(ceiling) || ceiling < 0) {
+  if (ceiling === undefined) {
     decisions.push({ kind: 'hold', reason: 'cannot read how many children this mission may run' });
     return decisions;
   }

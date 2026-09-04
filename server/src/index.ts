@@ -1,3 +1,4 @@
+import { MAX_CHILDREN_CEILING, type SessionState } from '@claudia/shared';
 import { resolvePort } from './resolve-port.js';
 import { createServer, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
@@ -5,6 +6,7 @@ import { WebSocketServer } from 'ws';
 import { MAX_FRAME_BYTES } from './command-fields.js';
 import { commitAndPush } from './commit-action.js';
 import { startFleet } from './fleet/boot.js';
+import { FleetPulser, type SessionFacts } from './fleet/pulse.js';
 import { Orchestrators } from './orchestrators.js';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
@@ -144,6 +146,64 @@ gateway.attachFleet(fleet.store);
 // client holding it would never be shown the real one.
 fleet.store?.events.onAppended((event) => gateway.broadcast({ type: 'fleet_event', event }));
 
+// The clock the reconciler and the watchdog have been missing. It fires often
+// and decides little: each mission carries its own `pulseSec`, and the pulser
+// skips the ones whose interval has not elapsed. Unref'd, because a fleet with
+// nothing to decide must not be the reason the process refuses to exit.
+//
+// No launcher is passed. Dispatch decisions are recorded as deferred rather
+// than carried out — starting a child means claiming a worktree and going
+// through the session manager, which is its own change. The pulse still
+// applies everything that costs nothing: blocks, unblocks, escalations, and
+// giving up on a task that has run out of attempts.
+/**
+ * What the watchdog gets to see, built from the sessions themselves.
+ *
+ * Two things it needs beyond "is this id known". `lastActivityAt`, or `assess`
+ * falls back to the run's START time and calls any live run older than
+ * `silentAfterMs` silent — failing or retrying work that is still producing
+ * output. And the approval fields, or a run parked on a human is retried,
+ * spending a fresh turn that parks on the same approval, instead of escalated.
+ *
+ * Built from an ALLOWLIST of live states rather than by excluding the dead
+ * ones. `stopped` was excluded first, and review caught the other half:
+ * `Session.fail()` retains a tile in state `error` after its driver has
+ * terminated, so a dead process was still reported alive and its run waited
+ * out the whole silence threshold instead of being recognised as an orphan
+ * immediately. Naming what IS alive means the next terminal state added to the
+ * union cannot quietly join the living.
+ */
+const LIVE_SESSION_STATES: ReadonlySet<SessionState> = new Set([
+  'starting',
+  'working',
+  'awaiting_approval',
+  'idle',
+]);
+
+function liveSessionFacts(): ReadonlyMap<string, SessionFacts> {
+  const facts = new Map<string, SessionFacts>();
+  for (const session of manager.summaries()) {
+    if (!LIVE_SESSION_STATES.has(session.state)) continue;
+    facts.set(session.id, {
+      lastActivityAt: session.lastActivityAt,
+      ...(session.pendingApproval
+        ? { pendingApproval: session.pendingApproval.toolName, pendingSince: session.pendingApproval.requestedAt }
+        : {}),
+    });
+  }
+  return facts;
+}
+
+const pulser = fleet.store
+  ? new FleetPulser({
+      store: fleet.store,
+      policy: { maxChildren: MAX_CHILDREN_CEILING, maxAttempts: 3 },
+      observeSessions: liveSessionFacts,
+    })
+  : undefined;
+const pulseTicker = setInterval(() => void pulser?.tick(), 15_000);
+pulseTicker.unref?.();
+
 const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: usage.snapshot() }));
 usage.setTier(saved.planTier);
 if (saved.customCeilings) usage.setCustomCeilings(saved.customCeilings);
@@ -220,6 +280,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     clearInterval(ticker);
     clearInterval(gitTicker);
     clearInterval(pruneTicker);
+    clearInterval(pulseTicker);
     usage.stop();
     manager.stopAll();
     // Closed on the way out so the file is not left locked by a connection

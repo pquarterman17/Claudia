@@ -3,6 +3,9 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { runBulkOp } from './bulk-ops.js';
 import { parseCommand } from './command-schema.js';
 import { buildHello, ownedSessionIds } from './hello-event.js';
+import { handleFleetCommand, isFleetCommand } from './fleet/commands.js';
+import { handleSessionQueryCommand } from './session-queries.js';
+import type { FleetStore } from './store/index.js';
 import type { Orchestrators } from './orchestrators.js';
 import { setHookMonitor } from './hook-commands.js';
 import { handleSavedSessionCommand } from './saved-session-commands.js';
@@ -31,6 +34,7 @@ export class Gateway {
   private monitor!: HookMonitor;
   private monitoring = false;
   private orchestrators!: Orchestrators;
+  private fleet: FleetStore | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   /** Last time each socket proved a live page was behind it. */
   private lastSeen = new WeakMap<WebSocket, number>();
@@ -204,10 +208,29 @@ export class Gateway {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event));
   }
 
+  /**
+   * The mission store, when this run has one.
+   *
+   * Set separately from `attach` rather than added as a seventh positional
+   * argument, because it is the one dependency that is legitimately absent:
+   * the database may fail to open and the server carries on without it.
+   */
+  attachFleet(store: FleetStore | undefined): void {
+    this.fleet = store;
+  }
+
   private dispatch(cmd: ClientCommand, socket: WebSocket): void {
+    // Answered to the asking socket, not broadcast: these are replies to a
+    // question one client asked. The live `fleet_event` stream is the part
+    // everyone hears, and that is published from the store's commit hook.
+    if (isFleetCommand(cmd)) {
+      for (const event of handleFleetCommand(cmd, this.fleet)) this.sendTo(socket, event);
+      return;
+    }
     // One-session setting changes and preference writes each share one shape,
     // and each lives in its own module.
     if (handleSessionSettingCommand(cmd, this.manager)) return;
+    if (handleSessionQueryCommand(cmd, { manager: this.manager, reply: (e) => this.sendTo(socket, e) })) return;
     if (handleSavedSessionCommand(cmd, { manager: this.manager, settings: this.settings, reply: (e) => this.sendTo(socket, e) })) return;
     if (this.orchestrators.handle(cmd)) return;
     if (
@@ -304,35 +327,6 @@ export class Gateway {
         return;
       case 'refresh_context':
         this.manager.get(cmd.sessionId)?.refreshContext();
-        return;
-      case 'get_models':
-        this.manager
-          .get(cmd.sessionId)
-          ?.models()
-          .then((models) => this.sendTo(socket, { type: 'models', sessionId: cmd.sessionId, models }));
-        return;
-      case 'get_commands':
-        this.manager
-          .get(cmd.sessionId)
-          ?.commands()
-          .then((commands) => this.sendTo(socket, { type: 'session_commands', sessionId: cmd.sessionId, commands }));
-        return;
-      case 'get_mcp_status':
-        this.manager.get(cmd.sessionId)?.mcpStatus().then((servers) => this.sendTo(socket, { type: 'mcp_status', sessionId: cmd.sessionId, servers }));
-        return;
-      case 'reconnect_mcp':
-        this.manager.get(cmd.sessionId)?.reconnectMcp(cmd.serverName)?.catch(() => undefined).then(() => this.dispatch({ type: 'get_mcp_status', sessionId: cmd.sessionId }, socket));
-        return;
-      case 'toggle_mcp':
-        this.manager.get(cmd.sessionId)?.toggleMcp(cmd.serverName, cmd.enabled)?.catch(() => undefined).then(() => this.dispatch({ type: 'get_mcp_status', sessionId: cmd.sessionId }, socket));
-        return;
-      case 'get_effective_settings':
-        void this.manager
-          .get(cmd.sessionId)
-          ?.effectiveSettings()
-          .then((settings) => {
-            if (settings) this.sendTo(socket, { type: 'effective_settings', sessionId: cmd.sessionId, settings });
-          });
         return;
       case 'stop_task':
         void this.manager.get(cmd.sessionId)?.stopTask(cmd.taskId)?.catch(() => undefined);

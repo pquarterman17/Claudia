@@ -137,6 +137,12 @@ const orchestrators = new Orchestrators(manager, (event) => gateway.broadcast(ev
 // happens exactly once, before anything reads the rows it fixes.
 const fleet = startFleet(new Set(manager.summaries().map((session) => session.id)));
 console.log(`[claudia] ${fleet.summary}`);
+gateway.attachFleet(fleet.store);
+// Published AFTER the transaction commits, which is what `onAppended`
+// subscribes to. A sequence number announced from inside a transaction that
+// then rolls back is a number the log will hand to a different event, and a
+// client holding it would never be shown the real one.
+fleet.store?.events.onAppended((event) => gateway.broadcast({ type: 'fleet_event', event }));
 
 const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: usage.snapshot() }));
 usage.setTier(saved.planTier);

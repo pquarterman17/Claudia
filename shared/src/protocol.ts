@@ -15,6 +15,10 @@ import type {
   PermissionLaunchMode, PromptImage, SavedSession, SessionSummary, SessionTemplate,
   CrewStatus,
   DebateStatus,
+  FleetEvent,
+  Mission,
+  MissionWatch,
+  Task,
   DebateSubject,
   FileMatch,
   ObservedSession,
@@ -86,6 +90,25 @@ export type ServerEvent =
   /** Something worth telling the user that is NOT a failure — what was written
    * to their settings, and where the backup went. */
   | { type: 'notice'; message: string }
+  | { type: 'missions'; missions: Mission[] }
+  | { type: 'tasks'; missionId: string; tasks: Task[] }
+  /** A page of history, in reply to `get_fleet_events`. */
+  | { type: 'fleet_events'; missionId: string; events: FleetEvent[] }
+  /**
+   * One event, as it is appended.
+   *
+   * Broadcast AFTER its transaction commits, never during: a sequence number
+   * announced by a transaction that then rolls back is a number the log will
+   * hand to a different event, and a client holding it would never be shown
+   * the real one. `onCommit` in the store is what makes that ordering true.
+   */
+  | { type: 'fleet_event'; event: FleetEvent }
+  /**
+   * The mission layer is not available this run — the database would not open.
+   * Sent instead of failing every command separately, so the UI can say so once
+   * rather than a client inferring it from a string of refusals.
+   */
+  | { type: 'fleet_unavailable'; reason: string }
   | { type: 'server_error'; message: string };
 
 // ---------- client → server ----------
@@ -216,6 +239,22 @@ export type ClientCommand =
   | { type: 'delete_toolkit_action'; id: string }
   | { type: 'delete_template'; name: string }
   /** Liveness beat from a page that is actually running. See CLIENT_PING_MS. */
+  /**
+   * The mission layer's commands.
+   *
+   * Deliberately small: create, read, and the watch switch. Everything that
+   * SPENDS anything — dispatching a run, retrying, accepting work — belongs to
+   * the dispatcher and the watchdog, which decide by policy rather than by a
+   * socket asking. A client can describe work and ask what happened; it cannot
+   * reach past that and start something.
+   */
+  | { type: 'create_mission'; name: string; body: string; cwd: string }
+  | { type: 'list_missions' }
+  | { type: 'set_mission_watch'; missionId: string; watch: MissionWatch }
+  | { type: 'create_task'; missionId: string; title: string; description: string; cwd: string; dependsOn?: string[] }
+  | { type: 'list_tasks'; missionId: string }
+  /** `afterSeq` is the client's high-water mark; 0 asks for the whole log. */
+  | { type: 'get_fleet_events'; missionId: string; afterSeq?: number }
   | { type: 'ping' };
 
 /**

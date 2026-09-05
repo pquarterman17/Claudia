@@ -1,0 +1,95 @@
+# Cuts a GitHub release from a tag, and refuses to cut a bad one.
+#
+# A tag is cheap to push and expensive to take back: the moment one exists,
+# somebody can clone it. So this proves the tree before it publishes anything —
+# the same gate ci.yml runs, on the tagged commit rather than on whatever was
+# on main when the tag was made — and it checks that the three things that are
+# supposed to agree about a version actually do.
+#
+# Source only, by design. There is no signed installer, no npm publish and no
+# container image here; GitHub attaches the source archives to every release on
+# its own. Adding an artifact means adding a supply chain to secure, and this
+# repository is `npm ci && npm start`.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  # So a failed release can be re-run against the same tag without deleting and
+  # re-pushing it, which would move a ref people may already have fetched.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to release, e.g. v0.2.0'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    # The full gate, on the tagged tree. Deliberately not `needs`-free: nothing
+    # below runs unless this passes on every platform and runtime CI covers.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npx tsc -b shared server web
+      - run: npm run typecheck:tests
+      - run: npm test
+      - run: npm run build
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      # The one job that writes, and the only reason this workflow needs more
+      # than read: creating the release. `npm ci` does not run here.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          # The tag object itself, so the version check reads a real tag rather
+          # than a detached commit that happens to be at one.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # Three things claim to know the version: the tag, package.json, and the
+      # CHANGELOG. A release where they disagree is one where nobody can tell
+      # what was actually shipped, so disagreement stops here rather than
+      # becoming a published artifact.
+      - name: Check the tag, the manifest and the changelog agree
+        id: notes
+        # Through the environment, never interpolated into the script. On a
+        # `workflow_dispatch` the tag is whatever the caller typed, and
+        # `${{ }}` inside a `run:` is substituted as TEXT before the shell sees
+        # it — so a tag containing a backtick or `$(...)` would execute on the
+        # runner. `$TAG` is a shell variable, which is data.
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: node scripts/release-notes.mjs "$TAG"
+      - name: Publish the release
+        # Same rule for the notes path, even though this one comes from our own
+        # script: the fix is a property of the step, not of how much the value
+        # happens to be trusted today.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          NOTES: ${{ steps.notes.outputs.file }}
+        # `gh` ships on the runner, so this needs no third-party action — one
+        # less thing with a token in its hands. `--verify-tag` refuses to
+        # invent a tag that does not already exist.
+        run: gh release create "$TAG" --title "$TAG" --notes-file "$NOTES" --verify-tag

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { startFleet } from '../src/fleet/boot.js';
 import { branchFor, briefFor, createLauncher } from '../src/fleet/launcher.js';
-import type { LaunchOrder } from '../src/fleet/pulse.js';
+import { pulseFleet, type LaunchOrder } from '../src/fleet/pulse.js';
 import type { FleetStore } from '../src/store/index.js';
 import { worktreePath } from '../src/worktree.js';
 
@@ -32,8 +32,8 @@ const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', args, { cwd, encoding: 'utf8', windowsHide: true }).trim();
 
 let counter = 0;
-/** A repository with one commit, and a fleet store beside it. */
-function fixture() {
+/** A repository with one commit, a fleet store, a mission and a ready task. */
+function bare() {
   const id = counter++;
   const repo = join(dir, `repo-${id}`);
   execFileSync('git', ['init', '-q', '-b', 'main', repo], { windowsHide: true });
@@ -58,9 +58,24 @@ function fixture() {
     acceptance: 'No references to the old name remain.',
   });
   if (!task.ok) throw new Error(task.message);
+  return { repo, store, task: task.value, missionId: mission.value.id };
+}
+
+/**
+ * `bare()` plus a reservation, which is what the pulse would have written.
+ *
+ * The two are separate because the difference is load-bearing: attempts are
+ * counted over every run a task has ever had, finished ones included, so a
+ * fixture that pre-spends attempt 1 makes the first real dispatch attempt 2.
+ * The chain tests need a genuinely fresh task; the unit tests need an order to
+ * hand the launcher directly.
+ */
+function fixture() {
+  const { repo, store, task, missionId } = bare();
+  const mission = { value: { id: missionId } };
   const run = store.runs.create({
     missionId: mission.value.id,
-    taskId: task.value.id,
+    taskId: task.id,
     agent: 'claude',
     attempt: 1,
     state: 'dispatched',
@@ -69,12 +84,12 @@ function fixture() {
 
   const order: LaunchOrder = {
     missionId: mission.value.id,
-    taskId: task.value.id,
+    taskId: task.id,
     runId: run.value.id,
     attempt: 1,
     key: 'dispatch:1',
   };
-  return { repo, store, task: task.value, order, missionId: mission.value.id };
+  return { repo, store, task, order, missionId: mission.value.id };
 }
 
 /** A session manager that records what it was asked to do. */
@@ -194,5 +209,122 @@ describe('starting a child for a dispatched task', () => {
     const { task } = fixture();
     expect(branchFor(task)).toBe(branchFor(task));
     expect(branchFor(task)).toMatch(/^claudia\/rename-the-thing-[0-9a-f]{8}$/);
+  });
+});
+
+describe('the whole chain, from a decision to a running child', () => {
+  /**
+   * Everything real except the SDK: a real git repository, a real store, the
+   * real reconciler, the real pulse, and the real launcher. Only starting a
+   * Claude session is faked.
+   *
+   * This is the test the unit tests could not be. Each half was proved against
+   * its own fixture, and the halves were written weeks apart — the reservation
+   * in one PR, the launcher in another — so what had never been exercised was
+   * the join: a decision becoming a reserved row becoming a worktree becoming
+   * a session id back on that same row.
+   */
+  it('dispatches a ready task and comes back with a supervised run', async () => {
+    const { repo, store, task, missionId } = bare();
+    // The pulse only acts on a mission somebody is watching.
+    const watched = store.missions.setWatch(missionId, 'watching');
+    if (!watched.ok) throw new Error(watched.message);
+    const ready = store.tasks.setStatus(task.id, 'ready');
+    if (!ready.ok) throw new Error(ready.message);
+
+    const manager = fakeManager();
+    const [result] = await pulseFleet({
+      store,
+      policy: { maxChildren: 2, maxAttempts: 3 },
+      launch: createLauncher({ store, ...manager }),
+      observeSessions: () => new Map(),
+    });
+
+    expect(result?.launched).toBe(1);
+    expect(result?.deferred).toBe(0);
+
+    // One run, reserved by the pulse and completed by the launcher.
+    const after = store.runs.listByMission(missionId);
+    if (!after.ok) throw new Error(after.message);
+    const live = after.value.filter((r) => r.state === 'running');
+    expect(live).toHaveLength(1);
+    expect(live[0]?.sessionId).toBe('sess-1');
+    expect(live[0]?.attempt).toBe(1);
+
+    // The task is running, not still queued.
+    const moved = store.tasks.get(task.id);
+    if (!moved.ok) throw new Error(moved.message);
+    expect(moved.value?.status).toBe('running');
+
+    // A real worktree, owned by this task.
+    const path = worktreePath(repo, branchFor(task));
+    expect(existsSync(path)).toBe(true);
+    const held = store.worktrees.byPath(path);
+    if (!held.ok) throw new Error(held.message);
+    expect(held.value?.ownerTaskId).toBe(task.id);
+    expect(manager.started[0]?.cwd).toBe(path);
+  });
+
+  it('does not dispatch the same task twice across two pulses', async () => {
+    // The duplicate-spend hazard the reservation exists for, end to end rather
+    // than against a stubbed launcher.
+    const { store, task, missionId } = bare();
+    const watched = store.missions.setWatch(missionId, 'watching');
+    if (!watched.ok) throw new Error(watched.message);
+    const ready = store.tasks.setStatus(task.id, 'ready');
+    if (!ready.ok) throw new Error(ready.message);
+
+    const manager = fakeManager();
+    const deps = {
+      store,
+      policy: { maxChildren: 2, maxAttempts: 3 },
+      launch: createLauncher({ store, ...manager }),
+      // The child it just started is alive, so the watchdog leaves it be.
+      observeSessions: () => new Map([['sess-1', { lastActivityAt: Date.now() }]]),
+    };
+    await pulseFleet(deps);
+    await pulseFleet(deps);
+
+    expect(manager.started).toHaveLength(1);
+  });
+});
+
+describe('a fleet child outlives the browser', () => {
+  it('is listed as active so the idle reaper leaves it alone', async () => {
+    // Found by running the fleet for real. A mission dispatched a task, the
+    // child started, the driver disconnected, and thirty seconds later the
+    // browser-idle reaper stopped the very work the fleet had just paid to
+    // begin — because it exempts orchestrator sessions and knew nothing about
+    // fleet ones. Unattended is what a fleet IS.
+    const { store, task, missionId } = bare();
+    const watched = store.missions.setWatch(missionId, 'watching');
+    if (!watched.ok) throw new Error(watched.message);
+    const ready = store.tasks.setStatus(task.id, 'ready');
+    if (!ready.ok) throw new Error(ready.message);
+
+    const manager = fakeManager();
+    await pulseFleet({
+      store,
+      policy: { maxChildren: 2, maxAttempts: 3 },
+      launch: createLauncher({ store, ...manager }),
+      observeSessions: () => new Map(),
+    });
+
+    const active = store.runs.listActive();
+    if (!active.ok) throw new Error(active.message);
+    expect(active.value.map((r) => r.sessionId)).toEqual(['sess-1']);
+  });
+
+  it('stops counting a run once it has finished', async () => {
+    const { store, order } = fixture();
+    const before = store.runs.listActive();
+    if (!before.ok) throw new Error(before.message);
+    expect(before.value).toHaveLength(1);
+
+    const ended = store.runs.setState(order.runId, 'stopped', { terminalReason: 'done' });
+    if (!ended.ok) throw new Error(ended.message);
+    const after = store.runs.listActive();
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value).toEqual([]);
   });
 });

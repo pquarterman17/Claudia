@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import type { AgentKind, PermissionLaunchMode, Task } from '@claudia/shared';
 import type { FleetStore } from '../store/index.js';
 import { gitLine } from './git-facts.js';
@@ -120,7 +120,7 @@ interface Claim {
  * directory was never handed back.
  */
 async function claimFor(order: LaunchOrder, task: Task, deps: LauncherDeps): Promise<Claim> {
-  const repo = task.cwd;
+  const repo = canonicalRepo(task.cwd);
   const branch = branchFor(task);
   const path = worktreePath(repo, branch);
 
@@ -160,6 +160,39 @@ async function claimFor(order: LaunchOrder, task: Task, deps: LauncherDeps): Pro
     if (!moved.ok) throw new Error(moved.message);
   }
   return { path, worktreeId: id };
+}
+
+/**
+ * The directory the task names, spelled the way git will answer.
+ *
+ * `claimWorktree` decides identity by comparing the repository git reports for
+ * a worktree against the one on the record, and git RESOLVES the path before
+ * answering. So a task whose cwd reaches the repository any other way created
+ * its worktree once and could then never adopt it again: the record kept the
+ * task's spelling, git kept the real one, and every retry was refused.
+ *
+ * Found on the Windows runner, where TEMP is an 8.3 short path
+ * (`C:\Users\RUNNER~1\...`) and git answers with `runneradmin`; reproduced on
+ * every platform with a symlink, which is the same fault. `samePath` cannot
+ * close it — folding case and separators is string work, and only the
+ * filesystem knows that two spellings name one directory.
+ *
+ * It also settles WHERE the worktree goes, which matters more: `worktreePath`
+ * hangs a `-worktrees` directory off the repository's own name, so two
+ * spellings of one checkout were getting two worktree trees and two live
+ * claims — the collision `worktreePathKey` exists to prevent, arriving one
+ * layer above it.
+ *
+ * Falls back to the given spelling when the path cannot be resolved, which
+ * leaves the claim exactly as strict as it was: an unreadable path is not a
+ * reason to guess, and `claimWorktree` refuses on mismatch anyway.
+ */
+function canonicalRepo(cwd: string): string {
+  try {
+    return realpathSync.native(cwd);
+  } catch {
+    return cwd;
+  }
 }
 
 /**

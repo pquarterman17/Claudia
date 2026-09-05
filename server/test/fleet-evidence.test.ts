@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -23,7 +23,12 @@ import { worktreePath } from '../src/worktree.js';
  * not empty, and a head that provably descends from the base it was given.
  */
 
-const dir = mkdtempSync(join(tmpdir(), 'claudia-evidence-'));
+// Resolved, because the launcher canonicalises the repository it is given —
+// git answers with the real path, so the claim has to compare against one —
+// and the end-to-end case below computes the worktree's path itself. On the
+// Windows runner TEMP is an 8.3 short path, and the two spellings would not
+// meet.
+const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'claudia-evidence-')));
 const opened: FleetStore[] = [];
 afterAll(() => {
   for (const store of opened) store.close();

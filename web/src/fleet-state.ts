@@ -22,6 +22,22 @@ export interface FleetState {
   /** Recent history by mission id, oldest first. */
   events: ReadonlyMap<string, FleetEvent[]>;
   /**
+   * What the last page of history said about itself, by mission id.
+   *
+   * `elided` because a timeline that quietly begins in the middle is worse
+   * than a short one: it reads as the whole history and is not. Named for the
+   * same field on `mirror_opened`, which solved this for a transcript.
+   *
+   * `more` because a page that is not the end has to say so, or the client
+   * stops one page short and believes it is caught up — which is the bug this
+   * whole shape exists to close.
+   *
+   * `through` because the next page is asked for from the WINDOW's end, not
+   * from the last event received. In a sparse log those differ, and a client
+   * continuing from its last event advances one sequence per round trip.
+   */
+  pages: ReadonlyMap<string, { elided: number; more: boolean; through: number }>;
+  /**
    * Decisions a mission is waiting on, by mission id.
    *
    * Pending ones, which is what an inbox is. The watchdog files one when a run
@@ -44,6 +60,7 @@ export const NO_FLEET: FleetState = {
   missions: [],
   tasks: new Map(),
   events: new Map(),
+  pages: new Map(),
   escalations: new Map(),
 };
 
@@ -68,8 +85,27 @@ export function foldFleet(state: FleetState, event: ServerEvent): FleetState | u
       return { ...state, tasks: replace(state.tasks, event.missionId, event.tasks) };
     case 'escalations':
       return { ...state, escalations: replace(state.escalations, event.missionId, event.escalations) };
-    case 'fleet_events':
-      return { ...state, events: replace(state.events, event.missionId, merge(known(state, event.missionId), event.events)) };
+    case 'fleet_events': {
+      // `reset` means the client's cursor could not be replayed, so what it
+      // holds never led to this page. Merging would splice one history onto
+      // another and produce a timeline that looks continuous and is not.
+      const before = event.reset === undefined ? known(state, event.missionId) : [];
+      const kept = merge(before, event.events);
+      // Counted, not assumed: the server says how many it skipped BEFORE the
+      // page, and the client's own cap can drop more off the front on top of
+      // that. A viewer told "12 earlier events" when 212 are missing has been
+      // given a number that is worse than none.
+      const dropped = event.elided + Math.max(0, before.length + event.events.length - kept.length);
+      return {
+        ...state,
+        events: replace(state.events, event.missionId, kept),
+        pages: replace(state.pages, event.missionId, {
+          elided: dropped,
+          more: event.more,
+          through: event.throughSeq,
+        }),
+      };
+    }
     case 'fleet_event':
       return { ...state, events: replace(state.events, event.event.missionId, merge(known(state, event.event.missionId), [event.event])) };
     case 'fleet_unavailable':
@@ -112,3 +148,22 @@ const FLEET_EVENTS = new Set<ServerEvent['type']>([
   'fleet_event',
   'fleet_unavailable',
 ]);
+
+/**
+ * Where to ask for the next page, or nothing when the client is caught up.
+ *
+ * A function rather than a flag read at the call site, because the component
+ * has to react to it and a boolean cannot express "again, from further on".
+ * The sequence advances every round — the server guarantees it, and
+ * `fleet-timeline-paging.test.ts` asserts it — so a component keyed on this
+ * value re-fires each round and stops when it becomes `undefined`.
+ *
+ * Keyed on a BOOLEAN this stalled after one page: `more` stayed true from one
+ * page to the next, React saw no change in the dependency, and the client
+ * stopped a page short believing it was caught up. Which is the bug the whole
+ * paging change exists to close, reproduced one layer up.
+ */
+export function nextPageFrom(fleet: FleetState, missionId: string): number | undefined {
+  const page = fleet.pages.get(missionId);
+  return page?.more === true ? page.through : undefined;
+}

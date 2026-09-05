@@ -101,8 +101,45 @@ export type ServerEvent =
   | { type: 'notice'; message: string }
   | { type: 'missions'; missions: Mission[] }
   | { type: 'tasks'; missionId: string; tasks: Task[] }
-  /** A page of history, in reply to `get_fleet_events`. */
-  | { type: 'fleet_events'; missionId: string; events: FleetEvent[] }
+  /**
+   * A page of history, in reply to `get_fleet_events`.
+   *
+   * A page, and it says so — which the first version did not. It answered with
+   * a bare array capped at the store's default 500, ascending from the oldest,
+   * and the client kept the newest 200 of whatever arrived. A mission with
+   * 1,200 events therefore rendered events 301–500 as if they were current and
+   * said nothing about the 700 after them. `more` and `elided` are how a page
+   * admits to being one.
+   */
+  | {
+      type: 'fleet_events';
+      missionId: string;
+      events: FleetEvent[];
+      /** Events BEFORE this batch that were not sent, as `mirror_opened` reports. */
+      elided: number;
+      /** Events AFTER it. Ask again with `throughSeq`. */
+      more: boolean;
+      /**
+       * The sequence this page is authoritative up to — ask for the next one
+       * from HERE, not from the last event received.
+       *
+       * They are different numbers whenever the window was sparse, and the
+       * difference is not cosmetic. A mission's sequences skip every number
+       * another mission used, so a 500-wide window can contain none of this
+       * mission's events at all. A client continuing from its last event would
+       * then advance by one sequence per round trip and need six hundred of
+       * them to cross a gap this says nothing is in.
+       */
+      throughSeq: number;
+      /**
+       * Set when the client must DISCARD what it holds before applying this.
+       *
+       * Its cursor could not be replayed — pruned out from under it, or ahead
+       * of a log that was rebuilt — so merging would splice a fresh page onto
+       * a history that never led to it. The string is why, for the human.
+       */
+      reset?: string;
+    }
   /** The decisions a mission is waiting on, newest first. */
   | { type: 'escalations'; missionId: string; escalations: Escalation[] }
   /**

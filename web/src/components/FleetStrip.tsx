@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AGENT_KINDS, type AgentKind, type Mission } from '@claudia/shared';
 import type { FleetLimits } from '@claudia/shared';
-import type { FleetState } from '../fleet-state';
+import { nextPageFrom, type FleetState } from '../fleet-state';
 import { send } from '../store';
 import { FleetLimitsControl } from './FleetLimits';
 import { MissionEscalations } from './MissionEscalations';
@@ -52,6 +52,19 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
     send({ type: 'list_escalations', missionId: open });
   }, [open, latest]);
 
+  // A page that said it was not the end. The DEPENDENCY is the sequence to ask
+  // from, not a boolean: `more` stays true from one page to the next, so an
+  // effect keyed on it sees no change and fires once — leaving the client a
+  // page short and believing it is caught up, which is the bug this whole
+  // change exists to close. The sequence advances every round, so this fires
+  // every round and stops when it becomes undefined.
+  const nextFrom = open === undefined ? undefined : nextPageFrom(fleet, open);
+  useEffect(() => {
+    if (open !== undefined && nextFrom !== undefined) {
+      send({ type: 'get_fleet_events', missionId: open, afterSeq: nextFrom });
+    }
+  }, [open, nextFrom]);
+
   const expand = (mission: Mission): void => {
     const next = open === mission.id ? undefined : mission.id;
     setOpen(next);
@@ -60,7 +73,10 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
     if (next !== undefined) {
       send({ type: 'list_tasks', missionId: mission.id });
       send({ type: 'list_escalations', missionId: mission.id });
-      send({ type: 'get_fleet_events', missionId: mission.id, afterSeq: 0 });
+      // From what this client has already rendered, not from zero. A cursor of
+      // zero asks for a fresh tail every time, which re-sends a page the board
+      // is already holding; a real cursor asks only for the gap.
+      send({ type: 'get_fleet_events', missionId: mission.id, afterSeq: caughtUpTo(fleet, mission.id) });
     }
   };
 
@@ -143,6 +159,7 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
                     cwd={mission.cwd}
                     tasks={fleet.tasks.get(mission.id)}
                     events={fleet.events.get(mission.id)}
+                    elided={fleet.pages.get(mission.id)?.elided ?? 0}
                   />
                 )}
               </div>
@@ -196,6 +213,17 @@ function NewMission({ onDone }: { onDone: () => void }) {
       </button>
     </div>
   );
+}
+
+/**
+ * The sequence this client is caught up TO, which the server told it.
+ *
+ * Not the last event it holds. Those differ whenever the page's window was
+ * sparse, and continuing from the last event would re-walk a gap the server
+ * has already said is empty — one sequence per round trip.
+ */
+function caughtUpTo(fleet: FleetState, missionId: string): number {
+  return fleet.pages.get(missionId)?.through ?? 0;
 }
 
 const ghost: React.CSSProperties = {

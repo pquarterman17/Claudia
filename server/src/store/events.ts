@@ -222,6 +222,56 @@ export class FleetEventLog {
     });
   }
 
+  /**
+   * The newest events for one mission, oldest-first, and how many precede them.
+   *
+   * Selected in the MISSION's own event space, not in sequence space, and that
+   * distinction is the whole reason this exists rather than a `replay` window
+   * ending at the newest sequence. A mission's sequences are sparse — every
+   * event another mission wrote takes a number this one skips — so a window
+   * 500 wide can hold five of this mission's events. A tail computed that way
+   * silently drops the rest and reports nothing missing, which is a smaller
+   * copy of the bug this whole change is about.
+   *
+   * `ORDER BY seq DESC LIMIT n` then reversed: the database picks the newest n
+   * rows THIS mission has, whatever numbers they carry.
+   */
+  tailForMission(missionId: string, limit: number = DEFAULT_PAGE): StoreResult<{ events: FleetEvent[]; older: number }> {
+    return attempt('read the end of a mission log', () => {
+      const rows = this.db
+        .prepare(`SELECT ${COLUMNS} FROM fleet_events WHERE mission_id = ? ORDER BY seq DESC LIMIT ?`)
+        .all(missionId, page(limit)) as Row[];
+      const events = rows.map(toEvent).reverse();
+      const total = this.db
+        .prepare('SELECT COUNT(*) AS n FROM fleet_events WHERE mission_id = ?')
+        .get(missionId) as Row | undefined;
+      return { events, older: Math.max(0, seqOf(total?.['n']) - events.length) };
+    });
+  }
+
+  /**
+   * The oldest and newest sequence ONE mission's log still holds.
+   *
+   * Per mission, not global, and that is the whole point of it existing.
+   * `planResync` compares the client's cursor against these bounds, and
+   * `resync.ts` says so in as many words: bounds must be "that stream's own
+   * oldest and newest, not the whole log's, or pruning inside the window goes
+   * unnoticed". A mission's sequences are sparse — every event another mission
+   * wrote occupies a number this one skips — so the global high-water mark
+   * would put a client's cursor beyond a log that has nothing after it.
+   *
+   * `{ oldestSeq: 0, newestSeq: 0 }` for a mission with no events, which
+   * `planResync` reads as up-to-date for a client that also has nothing.
+   */
+  boundsForMission(missionId: string): StoreResult<{ oldestSeq: number; newestSeq: number }> {
+    return attempt('read a mission log’s bounds', () => {
+      const row = this.db
+        .prepare('SELECT MIN(seq) AS oldest, MAX(seq) AS newest FROM fleet_events WHERE mission_id = ?')
+        .get(missionId) as Row | undefined;
+      return { oldestSeq: seqOf(row?.['oldest']), newestSeq: seqOf(row?.['newest']) };
+    });
+  }
+
   /** The high-water mark a client resyncs from. 0 when the log is empty. */
   latestSeq(): StoreResult<number> {
     return attempt('read the latest fleet sequence', () => {
@@ -230,6 +280,11 @@ export class FleetEventLog {
       return typeof value === 'number' || typeof value === 'bigint' ? Number(value) : 0;
     });
   }
+}
+
+/** A sequence off an aggregate, or 0 when the aggregate had no rows to take. */
+function seqOf(value: unknown): number {
+  return typeof value === 'number' || typeof value === 'bigint' ? Number(value) : 0;
 }
 
 /**

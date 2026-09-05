@@ -34,11 +34,14 @@ export function MissionTasks({
   cwd,
   tasks,
   events,
+  elided,
 }: {
   missionId: string;
   cwd: string;
   tasks: Task[] | undefined;
   events: FleetEvent[] | undefined;
+  /** History the client was not sent, or dropped off the front of its own cap. */
+  elided: number;
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -129,6 +132,7 @@ export function MissionTasks({
         <details>
           <summary style={{ fontSize: 10.5, color: '#595d6c', cursor: 'pointer' }}>
             history — {events.length} event{events.length === 1 ? '' : 's'}
+            {elided > 0 && <span style={{ color: '#e0a34f' }}> · {elided} earlier not shown</span>}
           </summary>
           <ul style={{ listStyle: 'none', margin: '6px 0 0', padding: 0, display: 'grid', gap: 2 }}>
             {/* Newest first for reading, though the log itself is ordered by

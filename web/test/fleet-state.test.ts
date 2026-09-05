@@ -1,6 +1,6 @@
 import type { Escalation, FleetEvent, Mission, ServerEvent, Task } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
-import { foldFleet, NO_FLEET, type FleetState } from '../src/fleet-state';
+import { foldFleet, nextPageFrom, NO_FLEET, type FleetState } from '../src/fleet-state';
 
 /**
  * The mission layer as the client sees it.
@@ -95,7 +95,7 @@ describe('one timeline out of two sources', () => {
   it('appends a live event to the page it already has', () => {
     const state = fold(
       NO_FLEET,
-      { type: 'fleet_events', missionId: 'm1', events: [fleetEvent(1), fleetEvent(2)] },
+      { type: 'fleet_events', missionId: 'm1', events: [fleetEvent(1), fleetEvent(2)], elided: 0, more: false, throughSeq: 0 },
       { type: 'fleet_event', event: fleetEvent(3) },
     );
     expect(state.events.get('m1')?.map((e) => e.seq)).toEqual([1, 2, 3]);
@@ -107,7 +107,7 @@ describe('one timeline out of two sources', () => {
     const state = fold(
       NO_FLEET,
       { type: 'fleet_event', event: fleetEvent(3) },
-      { type: 'fleet_events', missionId: 'm1', events: [fleetEvent(1), fleetEvent(2), fleetEvent(3)] },
+      { type: 'fleet_events', missionId: 'm1', events: [fleetEvent(1), fleetEvent(2), fleetEvent(3)], elided: 0, more: false, throughSeq: 0 },
     );
     expect(state.events.get('m1')?.map((e) => e.seq)).toEqual([1, 2, 3]);
   });
@@ -124,7 +124,7 @@ describe('one timeline out of two sources', () => {
   it('keeps a live event under its own mission, not the one last asked about', () => {
     const state = fold(
       NO_FLEET,
-      { type: 'fleet_events', missionId: 'm1', events: [fleetEvent(1)] },
+      { type: 'fleet_events', missionId: 'm1', events: [fleetEvent(1)], elided: 0, more: false, throughSeq: 0 },
       { type: 'fleet_event', event: fleetEvent(9, 'm2') },
     );
     expect(state.events.get('m1')?.map((e) => e.seq)).toEqual([1]);
@@ -133,10 +133,89 @@ describe('one timeline out of two sources', () => {
 
   it('keeps the newest history when a log outgrows the cap', () => {
     const many = Array.from({ length: 260 }, (_, i) => fleetEvent(i + 1));
-    const state = fold(NO_FLEET, { type: 'fleet_events', missionId: 'm1', events: many });
+    const state = fold(NO_FLEET, { type: 'fleet_events', missionId: 'm1', events: many, elided: 0, more: false, throughSeq: 0 });
     const kept = state.events.get('m1') ?? [];
     expect(kept).toHaveLength(200);
     expect(kept[kept.length - 1]?.seq).toBe(260);
+  });
+});
+
+describe('a page that admits to being one', () => {
+  const page = (over: Partial<{ events: FleetEvent[]; elided: number; more: boolean; throughSeq: number; reset: string }> = {}) =>
+    ({
+      type: 'fleet_events' as const,
+      missionId: 'm1',
+      events: [fleetEvent(1)],
+      elided: 0,
+      more: false,
+      throughSeq: 1,
+      ...over,
+    });
+
+  it('remembers how many it was not sent', () => {
+    const state = fold(NO_FLEET, page({ elided: 700 }));
+    expect(state.pages.get('m1')?.elided).toBe(700);
+  });
+
+  it('remembers where to ask from next, which is the window and not the last event', () => {
+    // The two differ whenever the window was sparse. Continuing from the last
+    // event would re-walk a gap the server already said was empty, one
+    // sequence per round trip.
+    const state = fold(NO_FLEET, page({ events: [fleetEvent(2)], more: true, throughSeq: 501 }));
+    expect(state.pages.get('m1')?.through).toBe(501);
+    expect(state.pages.get('m1')?.more).toBe(true);
+  });
+
+  it('adds what its own cap dropped to what the server skipped', () => {
+    // A viewer told "12 earlier events" when 212 are missing has been given a
+    // number worse than none.
+    const many = Array.from({ length: 260 }, (_, i) => fleetEvent(i + 1));
+    const state = fold(NO_FLEET, page({ events: many, elided: 700, throughSeq: 260 }));
+    expect(state.events.get('m1')).toHaveLength(200);
+    expect(state.pages.get('m1')?.elided).toBe(760);
+  });
+
+  it('discards what it holds when told its cursor could not be replayed', () => {
+    // Merging would splice a fresh page onto a history that never led to it,
+    // producing a timeline that looks continuous and is not.
+    const before = fold(NO_FLEET, page({ events: [fleetEvent(1), fleetEvent(2)], throughSeq: 2 }));
+    const after = fold(before, page({ events: [fleetEvent(90)], throughSeq: 90, reset: 'the client is ahead of the log' }));
+    expect(after.events.get('m1')?.map((e) => e.seq)).toEqual([90]);
+  });
+
+  it('merges when there is no reset, which is the ordinary case', () => {
+    const before = fold(NO_FLEET, page({ events: [fleetEvent(1)], throughSeq: 1 }));
+    const after = fold(before, page({ events: [fleetEvent(2)], throughSeq: 2 }));
+    expect(after.events.get('m1')?.map((e) => e.seq)).toEqual([1, 2]);
+  });
+});
+
+describe('deciding whether to ask for another page', () => {
+  const page = (over: { more: boolean; throughSeq: number }) =>
+    ({ type: 'fleet_events' as const, missionId: 'm1', events: [], elided: 0, ...over });
+
+  it('asks again from the window the server named', () => {
+    const state = fold(NO_FLEET, page({ more: true, throughSeq: 501 }));
+    expect(nextPageFrom(state, 'm1')).toBe(501);
+  });
+
+  it('stops when the server stops saying there is more', () => {
+    const state = fold(NO_FLEET, page({ more: false, throughSeq: 1200 }));
+    expect(nextPageFrom(state, 'm1')).toBeUndefined();
+  });
+
+  it('asks for nothing about a mission it has never read', () => {
+    expect(nextPageFrom(NO_FLEET, 'm1')).toBeUndefined();
+  });
+
+  it('changes between two pages that both say there is more', () => {
+    // The reason this is a SEQUENCE and not a boolean. The component keys an
+    // effect on it, and a flag that stays true from one page to the next never
+    // changes — so the effect fires once and the client stops a page short
+    // believing it is caught up, which is the bug this whole change closes.
+    const first = fold(NO_FLEET, page({ more: true, throughSeq: 501 }));
+    const second = fold(first, page({ more: true, throughSeq: 1001 }));
+    expect(nextPageFrom(first, 'm1')).not.toBe(nextPageFrom(second, 'm1'));
   });
 });
 

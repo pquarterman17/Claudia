@@ -1,4 +1,6 @@
-import type { ClientCommand, EscalationResolution, ServerEvent } from '@claudia/shared';
+import type { ClientCommand, EscalationResolution, FleetEvent, ServerEvent } from '@claudia/shared';
+import { DEFAULT_PAGE } from '../store/events.js';
+import { planResync, replayIsUsable } from './resync.js';
 import type { FleetStore } from '../store/index.js';
 
 /**
@@ -84,11 +86,8 @@ export function handleFleetCommand(cmd: ClientCommand, store: FleetStore | undef
     }
     case 'list_tasks':
       return listTasks(store, cmd.missionId);
-    case 'get_fleet_events': {
-      const events = store.events.sinceForMission(cmd.missionId, cmd.afterSeq ?? 0);
-      if (!events.ok) return [notice(events.message)];
-      return [{ type: 'fleet_events', missionId: cmd.missionId, events: events.value }];
-    }
+    case 'get_fleet_events':
+      return pageOfHistory(store, cmd.missionId, cmd.afterSeq ?? 0);
     case 'list_escalations':
       // Pending unless asked otherwise. The inbox is the point; the settled
       // ones are an audit trail somebody goes looking for.
@@ -120,6 +119,89 @@ export function handleFleetCommand(cmd: ClientCommand, store: FleetStore | undef
 function listMissions(store: FleetStore): ServerEvent[] {
   const missions = store.missions.list();
   return missions.ok ? [{ type: 'missions', missions: missions.value }] : [notice(missions.message)];
+}
+
+/**
+ * One page of a mission's timeline, planned rather than guessed at.
+ *
+ * The version this replaces called `sinceForMission(id, afterSeq)` and sent
+ * whatever came back. That reader defaults to 500 rows ORDERED ASCENDING, so a
+ * client asking from zero against a 1,200-event log was handed events 1–500 —
+ * the OLDEST page — and told nothing. The board kept the newest 200 of those
+ * and rendered events 301–500 as the current state of a mission whose real
+ * history ran to 1,200. Three defensible decisions composing into a lie.
+ *
+ * `resync.ts` was written to prevent exactly this and was imported by nothing;
+ * its own comment describes the 700-event hole as "the exact silent gap the
+ * whole resync design exists to prevent". So: `planResync` decides, `replay`
+ * reads a window whose limit is DERIVED from that window rather than kept
+ * equal to it by hand, and `replayIsUsable` checks what actually came back.
+ *
+ * A cursor of 0 is a client with nothing, and what a timeline wants then is
+ * the NEWEST page, not the oldest — so that case is served from the end and
+ * says how many it skipped. Everything else is a catch-up and goes through the
+ * planner.
+ */
+function pageOfHistory(store: FleetStore, missionId: string, afterSeq: number): ServerEvent[] {
+  const bounds = store.events.boundsForMission(missionId);
+  if (!bounds.ok) return [notice(bounds.message)];
+  const { oldestSeq, newestSeq } = bounds.value;
+  if (newestSeq === 0) return [page(missionId, [], 0, false, 0)];
+
+  if (afterSeq <= 0) return tail(store, missionId, newestSeq);
+
+  const plan = planResync({ lastSeq: afterSeq }, { oldestSeq, newestSeq, maxBatch: DEFAULT_PAGE });
+  if (plan.kind === 'up_to_date') return [page(missionId, [], 0, false, newestSeq)];
+  // Not a failure path. The client's cursor cannot be replayed, so the honest
+  // answer is the newest page plus an instruction to drop what it holds —
+  // splicing this onto a history that never led to it is the silent-corruption
+  // case the planner exists to refuse.
+  if (plan.kind === 'snapshot') return tail(store, missionId, newestSeq, plan.reason);
+
+  const events = store.events.replay({ fromSeq: plan.fromSeq, toSeq: plan.toSeq, missionId });
+  if (!events.ok) return [notice(events.message)];
+  // A FILTERED stream: this mission's sequences are sparse by construction, so
+  // ordering and range are checkable and completeness is not.
+  if (!replayIsUsable(events.value.map((e) => e.seq), plan.fromSeq, plan.toSeq, 'filtered')) {
+    return tail(store, missionId, newestSeq, 'the log moved while it was being read');
+  }
+  // Through the WINDOW's end, not the last event in it. See `throughSeq`.
+  return [page(missionId, events.value, 0, plan.more, plan.toSeq)];
+}
+
+/**
+ * The newest page, for a client with no usable cursor.
+ *
+ * Read by the store in the MISSION's own event space rather than by a sequence
+ * window ending at the newest. Found by a test written for the sparse case: a
+ * mission holding seq 1–5 and 606–610, with another mission's 600 events
+ * between, has a 500-wide window reaching back only to 111 — so the window
+ * returned five of its ten events and reported none missing. A smaller copy of
+ * the very bug this change is about.
+ */
+function tail(store: FleetStore, missionId: string, newestSeq: number, reset?: string): ServerEvent[] {
+  const end = store.events.tailForMission(missionId);
+  if (!end.ok) return [notice(end.message)];
+  return [page(missionId, end.value.events, end.value.older, false, newestSeq, reset)];
+}
+
+function page(
+  missionId: string,
+  events: FleetEvent[],
+  elided: number,
+  more: boolean,
+  throughSeq: number,
+  reset?: string,
+): ServerEvent {
+  return {
+    type: 'fleet_events',
+    missionId,
+    events,
+    elided,
+    more,
+    throughSeq,
+    ...(reset !== undefined ? { reset } : {}),
+  };
 }
 
 function listEscalations(store: FleetStore, missionId: string, resolution: EscalationResolution): ServerEvent[] {

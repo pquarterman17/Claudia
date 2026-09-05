@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { FleetEvent, Task, TaskStatus } from '@claudia/shared';
 import { send } from '../store';
+import { judgementFor, type Judgement } from '../judged';
 import { HUMAN_MOVES, MOVE_LABEL } from '../task-moves';
 
 /**
@@ -77,6 +78,7 @@ export function MissionTasks({
                 {task.status}
               </span>
               <span style={{ fontSize: 12, color: '#c8cadb', flex: 1, minWidth: 160 }}>{task.title}</span>
+              {task.status === 'reported' && <Judged judgement={judgementFor(events, task.id)} />}
               {HUMAN_MOVES[task.status].map((to) => (
                 <button
                   key={to}
@@ -142,6 +144,35 @@ export function MissionTasks({
         </details>
       )}
     </div>
+  );
+}
+
+/**
+ * What the server found in the worktree, next to the button that accepts it.
+ *
+ * The evidence is observed server-side and never taken from the child's own
+ * account of itself — that separation is the reason `reported` and `accepted`
+ * are different states at all. Nothing here decides anything: the policy ships
+ * with `autoAcceptWhenGreen` off, on the argument that "nobody looked" is not
+ * an auditable decision, so this exists to make sure somebody looked.
+ */
+function Judged({ judgement }: { judgement: Judgement | undefined }) {
+  if (!judgement) {
+    // Judged on the pulse after the claim lands, so a gap of a few seconds is
+    // normal and saying "no evidence" would be wrong.
+    return <span style={{ fontSize: 10, color: '#4a4d5e' }}>checking…</span>;
+  }
+  const colour = judgement.verdict === 'accept' ? '#5fbf7f' : judgement.verdict === 'reject' ? '#e07070' : '#e0a34f';
+  const facts = [
+    judgement.filesChanged === undefined ? undefined : `${judgement.filesChanged} file${judgement.filesChanged === 1 ? '' : 's'}`,
+    judgement.descendsFromBase === false ? 'not on its base' : undefined,
+    judgement.missing.length > 0 ? `no ${judgement.missing.join(', ')}` : undefined,
+  ].filter((fact): fact is string => fact !== undefined);
+  return (
+    <span style={{ fontSize: 10, color: colour }} title={judgement.reason}>
+      {judgement.verdict === 'accept' ? 'evidence ok' : judgement.verdict === 'reject' ? 'evidence bad' : 'check it'}
+      {facts.length > 0 && <span style={{ color: '#75798c' }}> · {facts.join(' · ')}</span>}
+    </span>
   );
 }
 

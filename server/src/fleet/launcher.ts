@@ -1,13 +1,10 @@
-import { execFile } from 'node:child_process';
 import { statSync } from 'node:fs';
-import { promisify } from 'node:util';
 import type { AgentKind, PermissionLaunchMode, Task } from '@claudia/shared';
 import type { FleetStore } from '../store/index.js';
+import { gitLine } from './git-facts.js';
 import { ensureWorktree, worktreePath } from '../worktree.js';
 import type { LaunchChild, LaunchOrder } from './pulse.js';
 import { claimWorktree, type ObservedWorktree } from './worktree-owner.js';
-
-const run = promisify(execFile);
 
 /**
  * Where a dispatch decision finally becomes a running agent.
@@ -195,15 +192,4 @@ async function observe(path: string): Promise<ObservedWorktree> {
 async function optional<K extends string>(key: K, value: Promise<string | undefined>): Promise<Record<K, string> | object> {
   const resolved = await value;
   return resolved ? ({ [key]: resolved } as Record<K, string>) : {};
-}
-
-/** One line of git output, or `undefined` when the command could not answer. */
-async function gitLine(cwd: string, args: string[], opts: { allowEmpty?: boolean } = {}): Promise<string | undefined> {
-  try {
-    const { stdout } = await run('git', args, { cwd, timeout: 10_000, windowsHide: true });
-    const line = stdout.trim();
-    return line || (opts.allowEmpty ? '' : undefined);
-  } catch {
-    return undefined;
-  }
 }

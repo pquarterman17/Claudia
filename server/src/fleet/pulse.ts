@@ -1,6 +1,7 @@
 import type { AgentKind, ChildRun, Mission, SessionState, Task } from '@claudia/shared';
 import { transact } from '../store/db.js';
 import type { FleetStore } from '../store/index.js';
+import { judgeReported } from './evidence.js';
 import { applyDecision, applyWatchdogOutcomes } from './pulse-apply.js';
 import { compensateLaunch } from './pulse-reserve.js';
 import { recovered, skipFleet, skipMission } from './pulse-report.js';
@@ -268,6 +269,16 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
     // slot for the life of the mission and keep the task out of the queue.
     compensateLaunch(deps, mission.id, order, reason);
     reason = 'the launcher declined';
+  }
+
+  // After the commit for the same reason the launches are: reading a worktree
+  // is git, and git is I/O that has no business inside a transaction. Its own
+  // failures are its own — a claim that could not be checked is still a claim,
+  // and losing the whole pulse over it would be worse than an unjudged report.
+  try {
+    await judgeReported(deps, mission);
+  } catch (err) {
+    console.error(`[claudia] could not judge reported runs for mission ${mission.id}:`, err);
   }
   recovered(mission.id);
   return result;

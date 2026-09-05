@@ -1,4 +1,4 @@
-import { TASK_TRANSITIONS, type TaskStatus } from '@claudia/shared';
+import type { TaskStatus } from '@claudia/shared';
 
 /**
  * The moves a person is offered, which is not every move the machine allows.

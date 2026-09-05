@@ -4,7 +4,6 @@ import type {
   ModelChoice,
   ModelUsage,
   NeedsAction,
-  PendingQuestion,
   PermissionLaunchMode,
   PromptImage,
   SessionState,

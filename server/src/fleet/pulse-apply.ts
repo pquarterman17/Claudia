@@ -1,10 +1,9 @@
-import type { Mission, Task, TaskStatus } from '@claudia/shared';
-import { transact } from '../store/db.js';
+import type { Mission, Task } from '@claudia/shared';
 import { note } from './pulse-report.js';
-import { compensateLaunch, hasFreeSlot, reserve } from './pulse-reserve.js';
+import { hasFreeSlot, reserve } from './pulse-reserve.js';
 import { routeTo, type Decision } from './reconcile.js';
 import { nextAction } from './watchdog-action.js';
-import { DEFAULT_WATCHDOG, type WatchdogPolicy } from './watchdog-policy.js';
+import type { WatchdogPolicy } from './watchdog-policy.js';
 import { assess, type RunObservation } from './watchdog.js';
 import type { LaunchOrder, PulseDeps, PulseResult } from './pulse.js';
 

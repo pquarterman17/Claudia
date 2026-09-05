@@ -112,7 +112,7 @@ class Store {
     templates: [],
     toolkit: [],
     observed: [],
-    mirrors: {},
+    mirrors: new Map(),
     monitoring: false,
     debates: [],
     crews: [],

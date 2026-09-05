@@ -25,7 +25,7 @@ export function ObservedStrip({
   observed: ObservedSession[];
   monitoring: boolean;
   now: number;
-  mirrors: Record<string, MirrorView>;
+  mirrors: ReadonlyMap<string, MirrorView>;
 }) {
   // Which tiles are expanded. Local, because it is a view preference and
   // nothing on the server needs to know — but the SUBSCRIPTION does follow it,
@@ -86,7 +86,7 @@ export function ObservedStrip({
               key={session.id}
               session={session}
               now={now}
-              mirror={mirrors[session.id]}
+              mirror={mirrors.get(session.id)}
               open={open.has(session.id)}
               onToggle={() => toggle(session.id)}
             />

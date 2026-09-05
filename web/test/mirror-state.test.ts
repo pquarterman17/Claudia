@@ -30,74 +30,79 @@ const opened = (sessionId: string): ServerEvent => ({
 
 describe('folding mirror events', () => {
   it('ignores events that are not a mirror', () => {
-    expect(foldMirror({}, { type: 'server_error', message: 'unrelated' })).toBeUndefined();
+    expect(foldMirror(new Map(), { type: 'server_error', message: 'unrelated' })).toBeUndefined();
   });
 
   it('opens with the backlog, and says how much was cut', () => {
-    const next = foldMirror({}, opened('s'));
-    expect(next?.['s']?.elided).toBe(3);
-    expect(next?.['s']?.transcript).toHaveLength(1);
+    const next = foldMirror(new Map(), opened('s'));
+    expect(next?.get('s')?.elided).toBe(3);
+    expect(next?.get('s')?.transcript).toHaveLength(1);
   });
 
   it('appends steps and items to an open mirror', () => {
-    const open = foldMirror({}, opened('s')) as Mirrors;
+    const open = foldMirror(new Map(), opened('s')) as Mirrors;
     const withStep = foldMirror(open, { type: 'mirror_step', sessionId: 's', step: step('s2') }) as Mirrors;
     const withItem = foldMirror(withStep, { type: 'mirror_item', sessionId: 's', item: item('more') }) as Mirrors;
-    expect(withItem['s']?.feed.map((s) => s.id)).toEqual(['s1', 's2']);
-    expect(withItem['s']?.transcript.map((i) => i.text)).toEqual(['hello', 'more']);
+    expect(withItem.get('s')?.feed.map((s) => s.id)).toEqual(['s1', 's2']);
+    expect(withItem.get('s')?.transcript.map((i) => i.text)).toEqual(['hello', 'more']);
   });
 
   it('revises a step already sent', () => {
-    const open = foldMirror({}, opened('s')) as Mirrors;
+    const open = foldMirror(new Map(), opened('s')) as Mirrors;
     const patched = foldMirror(open, {
       type: 'mirror_patch',
       sessionId: 's',
       stepId: 's1',
       patch: { status: 'ok', durMs: 12 },
     }) as Mirrors;
-    expect(patched['s']?.feed[0]?.status).toBe('ok');
-    expect(patched['s']?.feed[0]?.durMs).toBe(12);
+    expect(patched.get('s')?.feed[0]?.status).toBe('ok');
+    expect(patched.get('s')?.feed[0]?.durMs).toBe(12);
   });
 
   it('drops events for a mirror that was closed', () => {
     // The race closing always has: the server read and sent before it saw the
     // close. Re-creating the entry here would start a conversation midway.
-    const after = foldMirror({}, { type: 'mirror_step', sessionId: 'gone', step: step('s9') });
-    expect(after).toEqual({});
+    const after = foldMirror(new Map(), { type: 'mirror_step', sessionId: 'gone', step: step('s9') });
+    expect(after?.size).toBe(0);
   });
 
   it('records why there is nothing to read', () => {
-    const next = foldMirror({}, {
+    const next = foldMirror(new Map(), {
       type: 'mirror_unavailable',
       sessionId: 's',
       reason: 'no transcript for that session on this machine',
     });
-    expect(next?.['s']?.reason).toContain('no transcript');
-    expect(next?.['s']?.transcript).toEqual([]);
+    expect(next?.get('s')?.reason).toContain('no transcript');
+    expect(next?.get('s')?.transcript).toEqual([]);
   });
 });
 
-describe('a session id is not a safe object key by default', () => {
-  // CodeQL flagged this, correctly: the id arrives over the socket and becomes
-  // a property name. `__proto__` reaches the prototype and poisons every object
-  // inheriting from it. The store guarded its own switch, but this fold is
-  // exported, so the check has to live with the write.
-  it.each(['__proto__', 'constructor', 'prototype', ''])('refuses %j as a key', (hostile) => {
-    const before: Mirrors = {};
-    const after = foldMirror(before, {
+describe('a hostile session id cannot poison anything', () => {
+  // CodeQL flagged five remote-property-injection alerts when this state was a
+  // plain object: the id arrives over the socket and became a property name.
+  // The answer is the data structure, not a filter — a Map has no prototype to
+  // reach, so these names are simply keys and the question stops being asked.
+  it.each(['__proto__', 'constructor', 'prototype'])('stores %j as an ordinary key', (hostile) => {
+    const after = foldMirror(new Map(), {
       type: 'mirror_opened',
       sessionId: hostile,
-      transcript: [],
+      transcript: [item('hello')],
       feed: [],
       elided: 0,
     });
-    expect(after).toEqual({});
+    expect(after?.get(hostile)?.transcript).toHaveLength(1);
+    // And nothing leaked into the prototype chain.
     expect(Object.getPrototypeOf({})).toBe(Object.prototype);
-    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+    expect(({} as Record<string, unknown>)['transcript']).toBeUndefined();
+  });
+
+  it('ignores an empty id, which is not a session', () => {
+    const after = foldMirror(new Map(), opened(''));
+    expect(after?.size).toBe(0);
   });
 
   it('still folds a normal id', () => {
-    const after = foldMirror({}, opened('sess-1'));
-    expect(Object.keys(after ?? {})).toEqual(['sess-1']);
+    const after = foldMirror(new Map(), opened('sess-1'));
+    expect([...(after?.keys() ?? [])]).toEqual(['sess-1']);
   });
 });

@@ -1,12 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { judgeReported } from '../src/fleet/evidence.js';
 import { startFleet } from '../src/fleet/boot.js';
-import type { SessionFacts } from '../src/fleet/pulse.js';
+import { branchFor, createLauncher } from '../src/fleet/launcher.js';
+import { pulseFleet, type SessionFacts } from '../src/fleet/pulse.js';
 import type { FleetStore } from '../src/store/index.js';
+import { worktreePath } from '../src/worktree.js';
 
 /**
  * Checking a claim against a worktree, rather than against the child's word.
@@ -21,7 +23,12 @@ import type { FleetStore } from '../src/store/index.js';
  * not empty, and a head that provably descends from the base it was given.
  */
 
-const dir = mkdtempSync(join(tmpdir(), 'claudia-evidence-'));
+// Resolved, because the launcher canonicalises the repository it is given —
+// git answers with the real path, so the claim has to compare against one —
+// and the end-to-end case below computes the worktree's path itself. On the
+// Windows runner TEMP is an 8.3 short path, and the two spellings would not
+// meet.
+const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'claudia-evidence-')));
 const opened: FleetStore[] = [];
 afterAll(() => {
   for (const store of opened) store.close();
@@ -35,7 +42,10 @@ let counter = 0;
 /** A real repository, because the whole point is that git is asked. */
 function repo(): string {
   const path = join(dir, `repo-${counter++}`);
-  execFileSync('mkdir', ['-p', path]);
+  // Node's own, not `mkdir -p`: the shell command does not exist on the
+  // Windows runner this suite also has to pass on, and a test that can only
+  // set itself up on one platform is a test that only runs on one platform.
+  mkdirSync(path, { recursive: true });
   git(path, 'init', '-q', '-b', 'main');
   git(path, 'config', 'user.email', 'test@example.com');
   git(path, 'config', 'user.name', 'Test');
@@ -193,5 +203,107 @@ describe('judging a reported run', () => {
     const payload = judged(store, mission.id);
     expect(payload?.['verdict']).toBe('needs_human');
     expect(payload?.['missing']).toContain('branch');
+  });
+});
+
+describe('from the launch to the evidence, with nothing faked but the SDK', () => {
+  /**
+   * The join that was missing, and that every test here used to hide.
+   *
+   * The fixture above builds the run-to-worktree link by hand, which is
+   * exactly what production did NOT do: `claimFor` made the directory, wrote
+   * the worktree row, and returned only a path — so `run.worktreeId` was
+   * undefined for every child the fleet ever started. `gatherEvidence` reads
+   * that one field, so every real judgement came back `needs_human` with every
+   * fact missing, and the feature was inert outside this file.
+   *
+   * So this drives the whole chain instead: a real repository, the real pulse,
+   * the real launcher, a real `git worktree add`, a real commit made in the
+   * worktree the child was handed, and the real watchdog moving the run to
+   * `reported`. Only starting a session is faked.
+   */
+  it('judges the worktree the child was actually launched into', async () => {
+    const repoPath = repo();
+    const boot = startFleet(new Set(), join(dir, `db-${counter++}`, 'fleet.db'));
+    if (!boot.store) throw new Error(boot.summary);
+    const store = boot.store;
+    opened.push(store);
+
+    const mission = store.missions.create({ name: 'm', body: '', cwd: repoPath });
+    if (!mission.ok) throw new Error(mission.message);
+    const watched = store.missions.setWatch(mission.value.id, 'watching');
+    if (!watched.ok) throw new Error(watched.message);
+    const task = store.tasks.create({
+      missionId: mission.value.id,
+      title: 'Add the greeting',
+      description: 'Add it.',
+      cwd: repoPath,
+    });
+    if (!task.ok) throw new Error(task.message);
+    const ready = store.tasks.setStatus(task.value.id, 'ready');
+    if (!ready.ok) throw new Error(ready.message);
+
+    const started: string[] = [];
+    const policy = { maxChildren: 2, maxAttempts: 3 };
+    const launch = createLauncher({
+      store,
+      startSession: (spec: { cwd: string }): string => {
+        started.push(spec.cwd);
+        return `sess-${started.length}`;
+      },
+      stopSession: (): void => {},
+    });
+
+    // A simulated clock, so "the child worked for a while and finished" is a
+    // number rather than a sleep.
+    const base = Date.now();
+    const [dispatched] = await pulseFleet({ store, policy, launch, observeSessions: () => new Map(), now: () => base });
+    expect(dispatched?.launched).toBe(1);
+
+    // The child does its work — in the worktree it was handed, which is the
+    // whole question this test exists to answer.
+    const work = worktreePath(repoPath, branchFor(task.value));
+    expect(started).toEqual([work]);
+    writeFileSync(join(work, 'hello.txt'), 'hello\n', 'utf8');
+    git(work, 'add', 'hello.txt');
+    git(work, 'commit', '-q', '-m', 'the work');
+
+    // ...and then finishes its turn, which is what moves the run to `reported`.
+    const facts = new Map<string, SessionFacts>([['sess-1', { lastActivityAt: base + 60_000, state: 'idle' }]]);
+    const [reported] = await pulseFleet({
+      store,
+      policy,
+      launch,
+      observeSessions: () => facts,
+      now: () => base + 600_000,
+    });
+    expect(reported?.reported).toBe(1);
+
+    const runs = store.runs.listByMission(mission.value.id);
+    if (!runs.ok) throw new Error(runs.message);
+    const run = runs.value[0];
+    expect(run?.state).toBe('reported');
+
+    // The link itself: the run row names the worktree row the launcher claimed
+    // for it, rather than nothing at all.
+    const held = store.worktrees.byPath(work);
+    if (!held.ok) throw new Error(held.message);
+    expect(held.value?.id).toBeDefined();
+    expect(run?.worktreeId).toBe(held.value?.id);
+
+    // And so the judgement the pulse makes on its way through — after its own
+    // commit, because reading a worktree is git — has something to read. A
+    // second pass finds the work already done.
+    expect(await judgeReported(deps(store), watched.value)).toBe(0);
+    const payload = judged(store, mission.value.id);
+    expect(payload).toBeDefined();
+    const evidence = payload?.['evidence'] as Record<string, unknown>;
+    expect(evidence['branch']).toBe(branchFor(task.value));
+    expect(evidence['headSha']).toBe(git(work, 'rev-parse', 'HEAD'));
+    expect(evidence['filesChanged']).toBe(1);
+    expect(evidence['descendsFromBase']).toBe(true);
+    // Still a human's decision — nothing ran the tests — but now it is one
+    // made in front of the facts instead of in front of an empty record.
+    expect(payload?.['missing']).not.toContain('branch');
   });
 });

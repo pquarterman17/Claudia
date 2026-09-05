@@ -1,6 +1,6 @@
 import type { AgentKind } from '@claudia/shared';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -22,7 +22,18 @@ import { worktreePath } from '../src/worktree.js';
  * part with no business running in a test.
  */
 
-const dir = mkdtempSync(join(tmpdir(), 'claudia-launcher-'));
+/**
+ * Resolved, not just what `mkdtemp` answered.
+ *
+ * The Windows runner's TEMP is an 8.3 short path — `C:\Users\RUNNER~1\...` —
+ * and git answers `rev-parse --git-common-dir` with the long spelling of the
+ * same directory. Ownership is decided by comparing those two, so a fixture
+ * that speaks the short one is testing path spelling rather than what it
+ * meant to test. The launcher canonicalises for the same reason; this keeps
+ * the fixture's own arithmetic (`worktreePath`, `byPath`) speaking the same
+ * language it does. The case where they DIFFER has its own test below.
+ */
+const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'claudia-launcher-')));
 const opened: FleetStore[] = [];
 afterAll(() => {
   for (const store of opened) store.close();
@@ -129,10 +140,14 @@ describe('starting a child for a dispatched task', () => {
     expect(held.value?.ownerTaskId).toBe(task.id);
     expect(held.value?.baseSha).toBe(git(repo, 'rev-parse', 'HEAD'));
 
-    // And the reservation now knows which session it got.
+    // And the reservation now knows which session it got — and which worktree
+    // it is working in, which for a long time it did not: the launcher made
+    // the row and dropped its id, so the acceptance judgement had no directory
+    // to read for any child the fleet ever started.
     const run = store.runs.get(order.runId);
     if (!run.ok) throw new Error(run.message);
     expect(run.value?.sessionId).toBe('sess-1');
+    expect(run.value?.worktreeId).toBe(held.value?.id);
     expect(run.value?.state).toBe('running');
 
     // The child was started in the worktree, not in the repository itself.
@@ -161,6 +176,92 @@ describe('starting a child for a dispatched task', () => {
     await expect(launch({ ...order, runId: codex.value.id, agent: codex.value.agent, attempt: 2 })).resolves.toBe(true);
 
     expect(manager.started[0]?.agent).toBe('codex');
+  });
+
+  it('records the same worktree when a second attempt adopts it', async () => {
+    // The reuse half of the claim, which returns an id read back from the
+    // store rather than one it just inserted. A retry works in the branch its
+    // predecessor left — that is why `branchFor` is derived — so its run row
+    // has to name the same worktree, or the evidence for attempt two would be
+    // gathered from nowhere.
+    const { repo, store, task, order } = fixture();
+    const manager = fakeManager();
+    const launch = createLauncher({ store, ...manager });
+    await expect(launch(order)).resolves.toBe(true);
+
+    const retired = store.runs.setState(order.runId, 'stopped', { terminalReason: 'went quiet' });
+    if (!retired.ok) throw new Error(retired.message);
+    const again = store.runs.create({
+      missionId: order.missionId,
+      taskId: order.taskId,
+      agent: 'claude',
+      attempt: 2,
+      state: 'dispatched',
+    });
+    if (!again.ok) throw new Error(again.message);
+    await expect(launch({ ...order, runId: again.value.id, attempt: 2 })).resolves.toBe(true);
+
+    const held = store.worktrees.byPath(worktreePath(repo, branchFor(task)));
+    if (!held.ok) throw new Error(held.message);
+    const second = store.runs.get(again.value.id);
+    if (!second.ok) throw new Error(second.message);
+    expect(second.value?.worktreeId).toBe(held.value?.id);
+  });
+
+  it('claims one worktree however the repository is spelled', async () => {
+    // Found on the Windows runner by the retry test above: TEMP there is an
+    // 8.3 short path and git answers with the long one, so the claim compared
+    // `C:/Users/runneradmin/...` against `C:\Users\RUNNER~1\...` and refused.
+    // `samePath` cannot close that — folding case and separators is string
+    // work, and only the filesystem knows the two name one directory.
+    //
+    // Reproduced here with a symlink, which is the same fault and can be made
+    // on every platform: git resolves the path before answering. Left
+    // unfixed, a task whose cwd is spelled any other way — a linked code
+    // directory, macOS's `/tmp` — creates a worktree once and can never adopt
+    // it again, so every retry refuses. And its two spellings would have got
+    // two worktree trees over one checkout, which is the collision the
+    // ownership key exists to prevent.
+    const { repo, store, missionId } = bare();
+    const alias = join(dir, `alias-${counter++}`);
+    symlinkSync(repo, alias, 'junction');
+
+    const task = store.tasks.create({ missionId, title: 'Through the link', description: '', cwd: alias });
+    if (!task.ok) throw new Error(task.message);
+    const first = store.runs.create({ missionId, taskId: task.value.id, agent: 'claude', attempt: 1, state: 'dispatched' });
+    if (!first.ok) throw new Error(first.message);
+    const order: LaunchOrder = {
+      missionId,
+      taskId: task.value.id,
+      runId: first.value.id,
+      agent: 'claude',
+      attempt: 1,
+      key: 'dispatch:1',
+    };
+
+    const launch = createLauncher({ store, ...fakeManager() });
+    await expect(launch(order)).resolves.toBe(true);
+
+    const retired = store.runs.setState(first.value.id, 'stopped', { terminalReason: 'went quiet' });
+    if (!retired.ok) throw new Error(retired.message);
+    const again = store.runs.create({
+      missionId,
+      taskId: task.value.id,
+      agent: 'claude',
+      attempt: 2,
+      state: 'dispatched',
+    });
+    if (!again.ok) throw new Error(again.message);
+    await expect(launch({ ...order, runId: again.value.id, attempt: 2 })).resolves.toBe(true);
+
+    // One worktree, beside the real repository rather than beside the link,
+    // and both attempts recorded against it.
+    const held = store.worktrees.byPath(worktreePath(repo, branchFor(task.value)));
+    if (!held.ok) throw new Error(held.message);
+    expect(held.value?.id).toBeDefined();
+    const second = store.runs.get(again.value.id);
+    if (!second.ok) throw new Error(second.message);
+    expect(second.value?.worktreeId).toBe(held.value?.id);
   });
 
   it('refuses to take a worktree another task owns', async () => {

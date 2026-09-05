@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import type { AgentKind, PermissionLaunchMode, Task } from '@claudia/shared';
 import type { FleetStore } from '../store/index.js';
 import { gitLine } from './git-facts.js';
@@ -59,9 +59,9 @@ export function createLauncher(deps: LauncherDeps): LaunchChild {
     if (!task.ok) throw new Error(task.message);
     if (!task.value) throw new Error(`there is no task ${order.taskId} to run`);
 
-    const path = await claimFor(order, task.value, deps);
+    const claim = await claimFor(order, task.value, deps);
     const sessionId = deps.startSession({
-      cwd: path,
+      cwd: claim.path,
       // The reservation's answer, not a constant and not the mission's current
       // one: the run row is the record of what this attempt was authorised to
       // start, and it is what the watchdog and any retry will read back.
@@ -80,6 +80,17 @@ export function createLauncher(deps: LauncherDeps): LaunchChild {
       deps.stopSession(sessionId);
       throw new Error(`started a child but lost the reservation: ${attached.message}`);
     }
+    // The other half of the same record, and it was never written. The
+    // directory was made and the worktree row inserted, and then the id was
+    // dropped on the floor — so `run.worktreeId` was undefined for every child
+    // the fleet ever started, and `gatherEvidence` reads exactly that field.
+    // Nothing could be observed about any finished run, and the acceptance
+    // judgement it feeds returned `needs_human` with every fact missing.
+    const owned = deps.store.runs.attachWorktree(order.runId, claim.worktreeId);
+    if (!owned.ok) {
+      deps.stopSession(sessionId);
+      throw new Error(`started a child but could not record its worktree: ${owned.message}`);
+    }
     const running = deps.store.runs.setState(order.runId, 'running');
     if (!running.ok) {
       deps.stopSession(sessionId);
@@ -89,16 +100,27 @@ export function createLauncher(deps: LauncherDeps): LaunchChild {
   };
 }
 
+/** The worktree a run was given: where it works, and which row says so. */
+interface Claim {
+  path: string;
+  worktreeId: string;
+}
+
 /**
- * Acquires the worktree this task will work in, and answers with its path.
+ * Acquires the worktree this task will work in, and answers with its identity.
  *
  * The decision is `claimWorktree`'s, which is biased towards refusing: a wrong
  * `create` costs a directory, and a wrong reuse drops somebody's uncommitted
  * work into another agent's edit stream, which nothing afterwards can detect.
  * This carries out the verdict; it does not second-guess it.
+ *
+ * The ID, not just the path. Returning the path alone is what broke the
+ * evidence: the caller could start a child in the right directory and still
+ * have nothing to write on the run row, because the row that describes that
+ * directory was never handed back.
  */
-async function claimFor(order: LaunchOrder, task: Task, deps: LauncherDeps): Promise<string> {
-  const repo = task.cwd;
+async function claimFor(order: LaunchOrder, task: Task, deps: LauncherDeps): Promise<Claim> {
+  const repo = canonicalRepo(task.cwd);
   const branch = branchFor(task);
   const path = worktreePath(repo, branch);
 
@@ -126,7 +148,7 @@ async function claimFor(order: LaunchOrder, task: Task, deps: LauncherDeps): Pro
       ownerTaskId: order.taskId,
     });
     if (!record.ok) throw new Error(record.message);
-    return path;
+    return { path, worktreeId: record.value.id };
   }
 
   // `adopt`: the row is already this task's, and `path` is the legal route
@@ -137,7 +159,40 @@ async function claimFor(order: LaunchOrder, task: Task, deps: LauncherDeps): Pro
     const moved = deps.store.worktrees.setState(id, state);
     if (!moved.ok) throw new Error(moved.message);
   }
-  return path;
+  return { path, worktreeId: id };
+}
+
+/**
+ * The directory the task names, spelled the way git will answer.
+ *
+ * `claimWorktree` decides identity by comparing the repository git reports for
+ * a worktree against the one on the record, and git RESOLVES the path before
+ * answering. So a task whose cwd reaches the repository any other way created
+ * its worktree once and could then never adopt it again: the record kept the
+ * task's spelling, git kept the real one, and every retry was refused.
+ *
+ * Found on the Windows runner, where TEMP is an 8.3 short path
+ * (`C:\Users\RUNNER~1\...`) and git answers with `runneradmin`; reproduced on
+ * every platform with a symlink, which is the same fault. `samePath` cannot
+ * close it — folding case and separators is string work, and only the
+ * filesystem knows that two spellings name one directory.
+ *
+ * It also settles WHERE the worktree goes, which matters more: `worktreePath`
+ * hangs a `-worktrees` directory off the repository's own name, so two
+ * spellings of one checkout were getting two worktree trees and two live
+ * claims — the collision `worktreePathKey` exists to prevent, arriving one
+ * layer above it.
+ *
+ * Falls back to the given spelling when the path cannot be resolved, which
+ * leaves the claim exactly as strict as it was: an unreadable path is not a
+ * reason to guess, and `claimWorktree` refuses on mismatch anyway.
+ */
+function canonicalRepo(cwd: string): string {
+  try {
+    return realpathSync.native(cwd);
+  } catch {
+    return cwd;
+  }
 }
 
 /**

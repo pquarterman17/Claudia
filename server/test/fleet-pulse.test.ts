@@ -820,6 +820,151 @@ describe('a run that has been reserved but not yet launched', () => {
     expect(after.value?.state).toBe('failed');
   });
 
+  it('can be told which worktree it claimed', () => {
+    // The same shape as the session id, and it was missing entirely: the
+    // launcher wrote the worktree row and threw the id away, so no run ever
+    // named the directory it worked in and `gatherEvidence` — which reads that
+    // one field — had nothing to look at for any real child.
+    const { store, mission: m } = mission();
+    const { task, run } = reserved(store, m.id);
+    const worktree = store.worktrees.create({
+      repo: '/repo',
+      path: '/repo-work',
+      branch: 'claudia/t',
+      baseSha: 'abc',
+      ownerMissionId: m.id,
+      ownerTaskId: task.id,
+    });
+    if (!worktree.ok) throw new Error(worktree.message);
+
+    const owned = store.runs.attachWorktree(run.id, worktree.value.id);
+    expect(owned.ok, owned.ok ? '' : owned.message).toBe(true);
+    const after = store.runs.get(run.id);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value?.worktreeId).toBe(worktree.value.id);
+    // Write-once, for the same reason the session id is: a run is one attempt
+    // in one directory, and a second would mean evidence read from a worktree
+    // the child never worked in.
+    const second = store.runs.attachWorktree(run.id, 'some-other-worktree');
+    expect(second.ok).toBe(false);
+  });
+
+  it('refuses a worktree another task holds, and one nobody holds', () => {
+    // Raised in review, and right: the foreign key proves only that the row
+    // exists. Without an ownership check a run could be pointed at another
+    // task's worktree, and `judgeReported` would read a branch, a base, a head
+    // and a diff out of an unrelated directory and file them as this run's
+    // evidence — the exact false association this write-once link exists to
+    // prevent. `claimWorktree` refuses it in the launcher, but a rule the
+    // store does not enforce is a rule the next caller does not have.
+    const { store, mission: m } = mission();
+    const { run } = reserved(store, m.id);
+    const rival = readyTask(store, m.id);
+    const theirs = store.worktrees.create({
+      repo: '/repo',
+      path: '/repo-theirs',
+      branch: 'claudia/theirs',
+      baseSha: 'abc',
+      ownerMissionId: m.id,
+      ownerTaskId: rival.id,
+    });
+    if (!theirs.ok) throw new Error(theirs.message);
+
+    const stolen = store.runs.attachWorktree(run.id, theirs.value.id);
+    expect(stolen.ok).toBe(false);
+
+    // A half-recorded owner is a row written by something that crashed midway,
+    // which is not evidence that this run may claim it.
+    const orphan = store.worktrees.create({
+      repo: '/repo',
+      path: '/repo-orphan',
+      branch: 'claudia/orphan',
+      baseSha: 'abc',
+      ownerMissionId: m.id,
+    });
+    if (!orphan.ok) throw new Error(orphan.message);
+    expect(store.runs.attachWorktree(run.id, orphan.value.id).ok).toBe(false);
+
+    // Neither attempt left a mark.
+    const after = store.runs.get(run.id);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value?.worktreeId).toBeUndefined();
+  });
+
+  it('refuses a worktree that has been removed', () => {
+    // `removed` is the one state that gives up its path — the live-path index
+    // exempts it — so its directory may already belong to another claim, and
+    // evidence read from it would be somebody else's work.
+    const { store, mission: m } = mission();
+    const { task, run } = reserved(store, m.id);
+    const gone = store.worktrees.create({
+      repo: '/repo',
+      path: '/repo-gone',
+      branch: 'claudia/gone',
+      baseSha: 'abc',
+      ownerMissionId: m.id,
+      ownerTaskId: task.id,
+    });
+    if (!gone.ok) throw new Error(gone.message);
+    // By the route the contract allows: `removed` is reached through
+    // `archived`, never straight from `active`.
+    for (const state of ['archived', 'removed'] as const) {
+      const moved = store.worktrees.setState(gone.value.id, state);
+      if (!moved.ok) throw new Error(moved.message);
+    }
+
+    expect(store.runs.attachWorktree(run.id, gone.value.id).ok).toBe(false);
+  });
+
+  it('does not bless a bad link just because it is already on the row', () => {
+    // The ordering the review called out. Taking the same-id early return
+    // first would answer `ok` for a corrupt link already written — the one
+    // case where being asked twice must not mean "already done" — so the
+    // ownership check runs before it.
+    const { store, mission: m } = mission();
+    const { run } = reserved(store, m.id);
+    const rival = readyTask(store, m.id);
+    const theirs = store.worktrees.create({
+      repo: '/repo',
+      path: '/repo-corrupt',
+      branch: 'claudia/corrupt',
+      baseSha: 'abc',
+      ownerMissionId: m.id,
+      ownerTaskId: rival.id,
+    });
+    if (!theirs.ok) throw new Error(theirs.message);
+    // Written behind the repository's back, which is the only way this row can
+    // exist — and exactly the state a re-attach must not confirm.
+    store.db.prepare('UPDATE child_runs SET worktree_id = ? WHERE id = ?').run(theirs.value.id, run.id);
+
+    expect(store.runs.attachWorktree(run.id, theirs.value.id).ok).toBe(false);
+  });
+
+  it('refuses a worktree once the reservation has been retired', () => {
+    // The same race as the session id one above, one field over: a slow
+    // `git worktree add` can outlast the starting grace, and a launcher told it
+    // succeeded there would leave a child nothing supervises.
+    const { store, mission: m } = mission();
+    const { task, run } = reserved(store, m.id);
+    const worktree = store.worktrees.create({
+      repo: '/repo',
+      path: '/repo-late',
+      branch: 'claudia/late',
+      baseSha: 'abc',
+      ownerMissionId: m.id,
+      ownerTaskId: task.id,
+    });
+    if (!worktree.ok) throw new Error(worktree.message);
+    const retired = store.runs.setState(run.id, 'failed', { terminalReason: 'took too long to start' });
+    if (!retired.ok) throw new Error(retired.message);
+
+    const late = store.runs.attachWorktree(run.id, worktree.value.id);
+    expect(late.ok).toBe(false);
+    const after = store.runs.get(run.id);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value?.worktreeId).toBeUndefined();
+  });
+
   it('counts as alive once its session is attached', async () => {
     const { store, mission: m } = mission();
     const { run } = reserved(store, m.id);

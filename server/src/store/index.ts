@@ -3,7 +3,8 @@ import { closeFleetDb, fleetDbPath, ok, openFleetDb, type StoreResult } from './
 import { EscalationRepo } from './escalations.js';
 import { FleetEventLog } from './events.js';
 import { MissionRepo, TaskRepo } from './missions.js';
-import { ChildRunRepo, WorktreeRepo } from './runs.js';
+import { ChildRunRepo } from './runs.js';
+import { WorktreeRepo } from './worktrees.js';
 
 /**
  * One handle over the whole durable side, so callers take a dependency on the

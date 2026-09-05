@@ -1,7 +1,9 @@
 import {
   CLAUDIA_PORT,
   CLIENT_PING_MS,
+  DEFAULT_FLEET_LIMITS,
   type ClientCommand,
+  type FleetLimits,
   type FeedStep,
   type FileMatch,
   type HostPlatform,
@@ -73,6 +75,8 @@ export interface ClaudiaState {
   templates: SessionTemplate[];
   toolkit: ToolkitAction[];
   customCeilings?: { sessionTokens: number; weeklyTokens: number };
+  /** Fleet-wide child and attempt ceilings, as the server currently holds them. */
+  fleetLimits: FleetLimits;
   lastError?: string;
   /** Something that happened and worked, as distinct from lastError. */
   lastNotice?: string;
@@ -115,6 +119,7 @@ class Store {
     defaultPermissionMode: 'auto',
     templates: [],
     toolkit: [],
+    fleetLimits: DEFAULT_FLEET_LIMITS,
     observed: [],
     mirrors: new Map(),
     fleet: NO_FLEET,
@@ -254,6 +259,7 @@ class Store {
           templates: event.templates,
           toolkit: event.toolkit,
           customCeilings: event.customCeilings,
+          fleetLimits: event.fleetLimits,
           mcp: event.mcp,
           observed: event.observed,
           monitoring: event.monitoring,
@@ -286,6 +292,7 @@ class Store {
           templates: event.templates,
           toolkit: event.toolkit,
           customCeilings: event.customCeilings,
+          fleetLimits: event.fleetLimits,
         });
         return;
       case 'trigger_status':

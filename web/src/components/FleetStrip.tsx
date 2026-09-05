@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { AGENT_KINDS, type AgentKind, type Mission } from '@claudia/shared';
+import type { FleetLimits } from '@claudia/shared';
 import type { FleetState } from '../fleet-state';
 import { send } from '../store';
+import { FleetLimitsControl } from './FleetLimits';
 import { MissionEscalations } from './MissionEscalations';
 import { MissionTasks } from './MissionTasks';
 
@@ -25,7 +27,7 @@ import { MissionTasks } from './MissionTasks';
  * stand between typing a task and paying for it: promoting the task to `ready`
  * and setting the mission to `watching`.
  */
-export function FleetStrip({ fleet, connected }: { fleet: FleetState; connected: boolean }) {
+export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; connected: boolean; limits: FleetLimits }) {
   const [open, setOpen] = useState<string | undefined>(undefined);
   const [creating, setCreating] = useState(false);
 
@@ -70,6 +72,7 @@ export function FleetStrip({ fleet, connected }: { fleet: FleetState; connected:
           <span style={{ fontSize: 10.5, color: '#595d6c' }}>{fleet.missions.length}</span>
         )}
         <span style={{ flex: 1 }} />
+        {fleet.unavailable === undefined && <FleetLimitsControl limits={limits} />}
         {fleet.unavailable === undefined && (
           <button onClick={() => setCreating((v) => !v)} className="btn btn-ghost" style={ghost}>
             {creating ? 'cancel' : 'new mission'}

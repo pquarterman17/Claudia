@@ -44,6 +44,7 @@ export function App() {
     templates,
     toolkit,
     customCeilings,
+    fleetLimits,
     savedSessions,
     checkpoints,
     mcp,
@@ -263,7 +264,7 @@ export function App() {
           <DebateStrip debates={debates} sessions={ordered} />
           <CrewStrip crews={crews} sessions={ordered} />
           <ObservedStrip observed={observed} monitoring={monitoring} now={now} mirrors={mirrors} />
-          <FleetStrip fleet={fleet} connected={connected} />
+          <FleetStrip fleet={fleet} connected={connected} limits={fleetLimits} />
         </div>
       </div>
 

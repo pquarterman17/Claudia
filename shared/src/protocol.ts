@@ -53,6 +53,8 @@ export type ServerEvent =
       observed: ObservedSession[];
       /** Whether the global hook that feeds `observed` is currently installed. */
       monitoring: boolean;
+      /** Fleet-wide ceilings, so a fresh page knows them before anything changes. */
+      fleetLimits: FleetLimits;
     }
   | { type: 'session_upsert'; session: SessionSummary }
   | { type: 'session_removed'; sessionId: string }

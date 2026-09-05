@@ -15,6 +15,12 @@ import type {
   PermissionLaunchMode, PromptImage, SavedSession, SessionSummary, SessionTemplate,
   CrewStatus,
   DebateStatus,
+  FleetEvent,
+  FleetLimits,
+  Mission,
+  TaskStatus,
+  MissionWatch,
+  Task,
   DebateSubject,
   FileMatch,
   ObservedSession,
@@ -80,12 +86,52 @@ export type ServerEvent =
       templates: SessionTemplate[];
       toolkit: ToolkitAction[];
       customCeilings?: { sessionTokens: number; weeklyTokens: number };
+      /** Fleet-wide ceilings. Always sent, because "unset" is not a limit. */
+      fleetLimits: FleetLimits;
     }
   /** Result of a browse_folder request; empty when the user cancelled. */
   | { type: 'folders_picked'; paths: string[] }
   /** Something worth telling the user that is NOT a failure — what was written
    * to their settings, and where the backup went. */
   | { type: 'notice'; message: string }
+  | { type: 'missions'; missions: Mission[] }
+  | { type: 'tasks'; missionId: string; tasks: Task[] }
+  /** A page of history, in reply to `get_fleet_events`. */
+  | { type: 'fleet_events'; missionId: string; events: FleetEvent[] }
+  /**
+   * The backlog for a newly mirrored session, tail-first.
+   *
+   * `elided` is how many steps were dropped off the front. A long transcript is
+   * not a payload, and saying nothing about the cut would let a viewer read a
+   * partial conversation as a complete one.
+   */
+  | { type: 'mirror_opened'; sessionId: string; transcript: TranscriptItem[]; feed: FeedStep[]; elided: number }
+  /** One step, as it is read. */
+  | { type: 'mirror_step'; sessionId: string; step: FeedStep }
+  /** A revision to a step already sent, possibly in the backlog. */
+  | { type: 'mirror_patch'; sessionId: string; stepId: string; patch: FeedStepPatch }
+  | { type: 'mirror_item'; sessionId: string; item: TranscriptItem }
+  /**
+   * There is nothing to read: no transcript on this machine, or it cannot be
+   * opened. A normal answer rather than an error — a session running on another
+   * machine, or on the web, has no local log and never will.
+   */
+  | { type: 'mirror_unavailable'; sessionId: string; reason: string }
+  /**
+   * One event, as it is appended.
+   *
+   * Broadcast AFTER its transaction commits, never during: a sequence number
+   * announced by a transaction that then rolls back is a number the log will
+   * hand to a different event, and a client holding it would never be shown
+   * the real one. `onCommit` in the store is what makes that ordering true.
+   */
+  | { type: 'fleet_event'; event: FleetEvent }
+  /**
+   * The mission layer is not available this run — the database would not open.
+   * Sent instead of failing every command separately, so the UI can say so once
+   * rather than a client inferring it from a string of refusals.
+   */
+  | { type: 'fleet_unavailable'; reason: string }
   | { type: 'server_error'; message: string };
 
 // ---------- client → server ----------
@@ -174,6 +220,9 @@ export type ClientCommand =
   | { type: 'get_transcript'; sessionId: string }
   /** Seconds after the last browser closes before sessions stop; 0 disables. */
   | { type: 'set_stop_on_close'; seconds: number }
+  /** Fleet-wide child and attempt ceilings. Clamped server-side; a value out
+   * of range is corrected rather than refused, and the reply says what stuck. */
+  | { type: 'set_fleet_limits'; maxChildren: number; maxAttempts: number }
   /** Saves (or overwrites, by name) a reusable launch shape. */
   | { type: 'save_template'; template: SessionTemplate }
   /** Fuzzy file search under a session's directory, for @-mention completion. */
@@ -216,6 +265,42 @@ export type ClientCommand =
   | { type: 'delete_toolkit_action'; id: string }
   | { type: 'delete_template'; name: string }
   /** Liveness beat from a page that is actually running. See CLIENT_PING_MS. */
+  /**
+   * The mission layer's commands.
+   *
+   * Deliberately small: create, read, and the watch switch. Everything that
+   * SPENDS anything — dispatching a run, retrying, accepting work — belongs to
+   * the dispatcher and the watchdog, which decide by policy rather than by a
+   * socket asking. A client can describe work and ask what happened; it cannot
+   * reach past that and start something.
+   */
+  | { type: 'create_mission'; name: string; body: string; cwd: string }
+  | { type: 'list_missions' }
+  | { type: 'set_mission_watch'; missionId: string; watch: MissionWatch }
+  | { type: 'create_task'; missionId: string; title: string; description: string; cwd: string; dependsOn?: string[] }
+  | { type: 'list_tasks'; missionId: string }
+  /**
+   * Move a task through its lifecycle — chiefly `proposed -> ready`, which is
+   * how a human says a described task may actually be worked on.
+   *
+   * Found by running the fleet end to end rather than in tests: `create_task`
+   * lands in `proposed`, the reconciler only dispatches `ready`, and there was
+   * no command between the two. Every test moved the row directly, which no
+   * client can do, so the whole mission layer was unreachable from the wire.
+   * The store still decides which transitions are legal; this only asks.
+   */
+  | { type: 'set_task_status'; missionId: string; taskId: string; status: TaskStatus }
+  /** `afterSeq` is the client's high-water mark; 0 asks for the whole log. */
+  | { type: 'get_fleet_events'; missionId: string; afterSeq?: number }
+  /**
+   * Follow a session Claudia does not own, by reading its transcript.
+   *
+   * On demand rather than always: the usage reader already sweeps every log on
+   * the machine for totals, but reconstructing a conversation is per-session
+   * work and only worth doing for the one somebody is looking at.
+   */
+  | { type: 'mirror_session'; sessionId: string }
+  | { type: 'close_mirror'; sessionId: string }
   | { type: 'ping' };
 
 /**

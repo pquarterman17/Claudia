@@ -12,7 +12,7 @@
  * cases fail loudly (a missing `case` falls through to "unknown command
  * type") the moment the two drift apart.
  */
-import type { ClientCommand } from '@claudia/shared';
+import { TASK_TRANSITIONS, type ClientCommand } from '@claudia/shared';
 import {
   answersField, field, imagesField, isAgentKind, isBool, isBulkOp, isDebateSubject, isDirection,
   isEffortLevel, isFinishAction, isLabel, isNullableLabel, isNum, isPermissionMode, isPlainObject,
@@ -21,6 +21,13 @@ import {
 } from './command-fields.js';
 
 export type ParseResult = { ok: true; cmd: ClientCommand } | { ok: false; reason: string };
+
+const isMissionWatch = (v: unknown): boolean => v === 'watching' || v === 'paused';
+/** Checked against the union the store enforces, so the two cannot drift. */
+const TASK_STATUSES: readonly string[] = Object.keys(TASK_TRANSITIONS);
+const isTaskStatus = (v: unknown): boolean => typeof v === 'string' && TASK_STATUSES.includes(v);
+const isSeq = (v: unknown): boolean => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
+const isLabelList = (v: unknown): boolean => Array.isArray(v) && v.every((item) => isLabel(item));
 
 const req = (key: string, test: (v: unknown) => boolean, what: string) => field(key, true, test, what);
 const opt = (key: string, test: (v: unknown) => boolean, what: string) => field(key, false, test, what);
@@ -115,6 +122,49 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
     case 'disarm_trigger':
     case 'ping':
       return undefined;
+    // The mission layer. Hand-written like every other case here, for the
+    // reason at the top of this file: a checker derived from the union it
+    // polices lets one mistake cancel the other out.
+    case 'create_mission':
+      return runChecks(type, o, [
+        req('name', isLabel, 'a string'),
+        req('body', isText, 'a string'),
+        req('cwd', isLabel, 'a string'),
+      ]);
+    case 'list_missions':
+      return runChecks(type, o, []);
+    case 'set_mission_watch':
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        req('watch', isMissionWatch, 'watching or paused'),
+      ]);
+    case 'create_task':
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        req('title', isLabel, 'a string'),
+        req('description', isText, 'a string'),
+        req('cwd', isLabel, 'a string'),
+        opt('dependsOn', isLabelList, 'an array of task ids'),
+      ]);
+    case 'list_tasks':
+      return runChecks(type, o, [req('missionId', isLabel, 'a string')]);
+    case 'set_task_status':
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        req('taskId', isLabel, 'a string'),
+        req('status', isTaskStatus, 'a known task status'),
+      ]);
+    case 'get_fleet_events':
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        // A cursor, so it has to be a whole number that is not negative — a
+        // fractional or negative one would silently widen the window rather
+        // than fail, which is the shape of bug this validation exists for.
+        opt('afterSeq', isSeq, 'a non-negative whole number'),
+      ]);
+    case 'mirror_session':
+    case 'close_mirror':
+      return runChecks(type, o, [req('sessionId', isLabel, 'a string')]);
     case 'set_permission_mode':
       return runChecks(type, o, [
         req('sessionId', isLabel, 'a string'),
@@ -138,6 +188,8 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
     case 'set_countdown':
     case 'set_stop_on_close':
       return runChecks(type, o, [req('seconds', isNum, 'a number')]);
+    case 'set_fleet_limits':
+      return runChecks(type, o, [req('maxChildren', isNum, 'a number'), req('maxAttempts', isNum, 'a number')]);
     case 'rename_session':
       return runChecks(type, o, [req('sessionId', isLabel, 'a string'), req('title', isLabel, 'a string')]);
     case 'set_model':

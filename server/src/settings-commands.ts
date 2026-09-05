@@ -1,4 +1,4 @@
-import type { ClientCommand } from '@claudia/shared';
+import { usableFleetLimits, type ClientCommand } from '@claudia/shared';
 import type { SettingsStore } from './settings-store.js';
 import type { TriggerEngine } from './trigger-engine.js';
 import type { UsageService } from './usage-service.js';
@@ -43,6 +43,13 @@ export function handleSettingsCommand(cmd: ClientCommand, ctx: SettingsCommandCt
       // Clamped: a few seconds is not enough to survive a page reload.
       const seconds = cmd.seconds <= 0 ? 0 : Math.max(10, Math.min(3600, Math.round(cmd.seconds)));
       ctx.settings.update({ stopSessionsWhenClosedSec: seconds });
+      break;
+    }
+    case 'set_fleet_limits': {
+      // Clamped, not refused. This is a preference dialog, not an API: a
+      // client that sends 0 children means "as few as possible", and the
+      // shared reader answers with the nearest limit the fleet can run on.
+      ctx.settings.update({ fleetLimits: usableFleetLimits({ maxChildren: cmd.maxChildren, maxAttempts: cmd.maxAttempts }) });
       break;
     }
     case 'set_countdown':

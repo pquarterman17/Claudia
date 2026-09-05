@@ -3,6 +3,78 @@
 Notable changes to Claudia. Versions follow [Semantic Versioning](https://semver.org/);
 entries are generated from the commits since the previous tag.
 
+## [Unreleased]
+
+The fleet stops being a plan. Claudia can now hold a standing intention — a
+mission with tasks — and act on it without a human in the loop: it reconciles
+what should happen next, reserves the attempt durably, starts a real Claude
+Code child in its own git worktree on its own branch, watches it, and retries
+or escalates when it stalls. Everything survives a restart, because all of it
+is rows rather than memory.
+
+Second theme: the board can now read the conversations of sessions Claudia did
+not launch. It could already see that a terminal session was working; it can
+now show what it is saying.
+
+### Fleet orchestration
+
+- Durable fleet store opened at boot — missions, tasks, child runs, worktrees,
+  escalations and an append-only event log in a STRICT SQLite file with
+  versioned migrations, opened once and reported as a value when it cannot be
+- Crash recovery: runs left `dispatched` or `running` by a killed server are
+  reconciled against the sessions that no longer exist, at boot, before
+  anything decides to spend
+- Mission and task commands on the wire, plus a resumable fleet event stream
+- The pulse: a clock that turns the reconciler's decisions into durable writes,
+  at each mission's own cadence. The run row IS the reservation, so a repeated
+  pulse cannot pay twice for one attempt, and a launch that fails after the
+  commit releases its slot rather than holding it for the life of the mission
+- Watchdog over silent runs, runs parked on a human approval, and orphaned
+  runs, with bounded retries and backoff — and a starting grace, so a child is
+  not killed in the seconds between its reservation and its session existing
+- A launcher that starts real children: a claimed worktree, a branch of its
+  own, a brief built from the task, and the session id written back onto the
+  run that reserved it
+- Fleet-wide child and attempt ceilings as a stored preference, read at every
+  pulse rather than pinned in source — lowering the limit binds the next pulse,
+  not the next restart
+
+### Mirroring sessions Claudia did not launch
+
+- One session's conversation read out of its transcript on disk, resumable by
+  byte offset and safe against the partial trailing line a live session always
+  has
+- A mirror service that follows a foreign session on the wire, with a backlog
+  on open and chunked tailing after it, costing nothing when nobody is watching
+- A read-only tile for an observed session: expandable, clearly marked, with no
+  composer and no way to approve, interrupt or prompt — because none of those
+  are things Claudia can do to a session it does not own
+
+### Fixed
+
+- `usage-reader` advanced its offset to the file size before reading, so a
+  record split across two scans was lost permanently rather than re-read. Rare
+  and small for token accounting; a dropped message for a mirror, and most
+  likely on exactly the sessions being watched live
+- Fleet children were stopped by the idle-browser reaper: closing the last tab
+  killed work nobody was watching by design
+- `set_task_status` was handled but never routed, so the mission layer was
+  unreachable from the wire
+- A run's session could be attached to a reservation that had already been
+  retired
+
+### Infrastructure
+
+- Tag-triggered release workflow that runs the full gate on the tagged tree and
+  refuses to publish when the tag, `package.json` and the changelog disagree
+- A pulse that decides nothing now says why, once per fault rather than every
+  fifteen seconds
+
+### Testing
+
+- 1,689 tests (1,549 server, 140 web) across 100 files, on the same
+  Ubuntu/Windows × Node 22/24 matrix
+
 ## [0.1.0] — 2026-09-01
 
 First release. Claudia is one window over every parallel Claude Code session: a local

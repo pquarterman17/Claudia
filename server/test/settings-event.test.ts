@@ -1,3 +1,4 @@
+import { DEFAULT_FLEET_LIMITS } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
 import { buildSettingsEvent } from '../src/settings-event.js';
 import type { Settings } from '../src/settings-store.js';
@@ -11,6 +12,7 @@ const BASE: Settings = {
   defaultPermissionMode: 'auto',
   templates: [],
   toolkit: [],
+  fleetLimits: DEFAULT_FLEET_LIMITS,
 };
 
 describe('buildSettingsEvent', () => {
@@ -24,6 +26,7 @@ describe('buildSettingsEvent', () => {
       defaultPermissionMode: 'auto',
       templates: [],
       customCeilings: undefined,
+      fleetLimits: DEFAULT_FLEET_LIMITS,
     });
   });
 

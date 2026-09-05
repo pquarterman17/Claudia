@@ -1,14 +1,9 @@
 import { createReadStream } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { createInterface } from 'node:readline';
+import { decodeProject, PROJECTS_DIR, recentTranscripts } from './transcript-files.js';
 import { UsageStore } from './usage-store.js';
 
-const PROJECTS_DIR = join(process.env['CLAUDE_CONFIG_DIR'] ?? join(homedir(), '.claude'), 'projects');
-
-/** Only files touched within this horizon are worth reading at all. */
-const HORIZON_MS = 8 * 24 * 60 * 60 * 1000;
+const NEWLINE = 0x0a;
+const EMPTY: Buffer<ArrayBufferLike> = Buffer.alloc(0);
 
 /**
  * Reads token usage out of Claude Code's own session logs.
@@ -31,6 +26,10 @@ export class UsageReader {
   private scanning = false;
   private lastScan = 0;
 
+  /** The projects directory to walk. Injectable so a test can point at a
+   * fixture rather than at whatever this machine happens to have logged. */
+  constructor(private readonly projectsDir: string = PROJECTS_DIR) {}
+
   get scannedAt(): number {
     return this.lastScan;
   }
@@ -43,7 +42,7 @@ export class UsageReader {
     if (this.scanning) return;
     this.scanning = true;
     try {
-      for (const file of await this.recentFiles(now)) {
+      for (const file of await recentTranscripts(this.projectsDir, now)) {
         await this.readIncrementally(file.path, file.size);
       }
       this.store.prune(now);
@@ -53,53 +52,55 @@ export class UsageReader {
     }
   }
 
-  private async recentFiles(now: number): Promise<Array<{ path: string; size: number }>> {
-    const out: Array<{ path: string; size: number }> = [];
-    let projects: string[];
-    try {
-      projects = await readdir(PROJECTS_DIR);
-    } catch {
-      return out; // no Claude Code history on this machine yet
-    }
-    for (const project of projects) {
-      const dir = join(PROJECTS_DIR, project);
-      let entries: string[];
-      try {
-        entries = await readdir(dir);
-      } catch {
-        continue;
-      }
-      for (const entry of entries) {
-        if (!entry.endsWith('.jsonl')) continue;
-        const path = join(dir, entry);
-        try {
-          const info = await stat(path);
-          // Skip cold files outright — most of the 736 MB is history we never need.
-          if (now - info.mtimeMs > HORIZON_MS) continue;
-          out.push({ path, size: info.size });
-        } catch {
-          /* vanished mid-scan */
-        }
-      }
-    }
-    return out;
-  }
-
+  /**
+   * Reads the bytes appended since last time, and stops at the last COMPLETE line.
+   *
+   * The offset used to be advanced to the file size before reading. That is
+   * wrong for exactly the files this class exists to follow: a session still
+   * running is appending, so its last line is usually half-written. The
+   * fragment failed to parse and the next scan resumed from the middle of it,
+   * so the rest arrived as a fragment too and the record was lost for good.
+   *
+   * The split is found in RAW BYTES rather than by measuring decoded text.
+   * Found in review, and the second defect in the same three lines: a read that
+   * ends partway through a multi-byte character has that trailing fragment
+   * replaced by U+FFFD, which re-encodes to a different length than was read —
+   * so `size - Buffer.byteLength(fragment)` was not the start of the fragment,
+   * and on a four-byte character it went negative and `createReadStream` threw.
+   * A file that hit that could never be scanned again. Counting the bytes of
+   * the lines actually consumed cannot drift, because it never converts back.
+   */
   private async readIncrementally(path: string, size: number): Promise<void> {
     const previous = this.offsets.get(path) ?? 0;
     // A shrunk file means it was rotated or rewritten; start over.
     const start = size < previous ? 0 : previous;
     if (size === start) return;
-    this.offsets.set(path, size);
 
     const project = decodeProject(path);
-    const stream = createReadStream(path, { start, end: size - 1, encoding: 'utf8' });
-    const lines = createInterface({ input: stream, crlfDelay: Infinity });
-    for await (const line of lines) {
-      // Cheap pre-filter: JSON.parse on every line of 81 MB would dominate.
-      if (!line.includes('"usage"')) continue;
-      this.ingest(line, project);
+    // No encoding, so chunks arrive as Buffers and every position below is a
+    // byte position. Still streamed: what is held is one unfinished line, not
+    // the delta.
+    const stream = createReadStream(path, { start, end: size - 1 });
+    let consumed = start;
+    let rest: Buffer<ArrayBufferLike> = EMPTY;
+    for await (const chunk of stream) {
+      const buffer: Buffer<ArrayBufferLike> = rest.length === 0 ? (chunk as Buffer) : Buffer.concat([rest, chunk as Buffer]);
+      let from = 0;
+      for (let brk = buffer.indexOf(NEWLINE, from); brk !== -1; brk = buffer.indexOf(NEWLINE, from)) {
+        this.consider(buffer.subarray(from, brk).toString('utf8'), project);
+        consumed += brk - from + 1;
+        from = brk + 1;
+      }
+      rest = buffer.subarray(from);
     }
+    // `rest` is an unterminated line, so its bytes are deliberately not counted:
+    // the next scan reads it whole once it has been written.
+    this.offsets.set(path, consumed);
+  }
+
+  /** Cheap pre-filter: JSON.parse on every line of 81 MB would dominate. */
+  private consider(line: string, project: string): void {
+    if (line.includes('"usage"')) this.ingest(line, project);
   }
 
   private ingest(line: string, project: string): void {
@@ -126,16 +127,4 @@ export class UsageReader {
       cacheCreationTokens: num(usage['cache_creation_input_tokens']),
     });
   }
-}
-
-/**
- * Claude Code encodes a project's path into the directory name by replacing
- * separators with dashes, which is lossy — so show the tail, which is the part
- * a human recognises.
- */
-export function decodeProject(path: string): string {
-  const parts = path.split(/[\\/]/);
-  const dir = parts[parts.length - 2] ?? 'unknown';
-  const segments = dir.split('-').filter(Boolean);
-  return segments.slice(-2).join('/') || dir;
 }

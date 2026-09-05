@@ -21,5 +21,6 @@ export function buildSettingsEvent(s: Settings): Extract<ServerEvent, { type: 's
     defaultPermissionMode: s.defaultPermissionMode,
     templates: s.templates,
     customCeilings: s.customCeilings,
+    fleetLimits: s.fleetLimits,
   };
 }

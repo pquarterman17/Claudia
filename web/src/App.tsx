@@ -28,6 +28,7 @@ export function App() {
     lastError,
     lastNotice,
     observed,
+    mirrors,
     monitoring,
     debates,
     crews,
@@ -259,7 +260,7 @@ export function App() {
           </div>
           <DebateStrip debates={debates} sessions={ordered} />
           <CrewStrip crews={crews} sessions={ordered} />
-          <ObservedStrip observed={observed} monitoring={monitoring} now={now} />
+          <ObservedStrip observed={observed} monitoring={monitoring} now={now} mirrors={mirrors} />
         </div>
       </div>
 

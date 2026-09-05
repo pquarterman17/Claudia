@@ -3,13 +3,18 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { runBulkOp } from './bulk-ops.js';
 import { parseCommand } from './command-schema.js';
 import { buildHello, ownedSessionIds } from './hello-event.js';
+import { handleFleetCommand, isFleetCommand } from './fleet/commands.js';
+import { MirrorService } from './mirror.js';
+import { handleSessionActionCommand } from './session-actions.js';
+import { handleSessionQueryCommand } from './session-queries.js';
+import type { FleetStore } from './store/index.js';
 import type { Orchestrators } from './orchestrators.js';
 import { setHookMonitor } from './hook-commands.js';
 import { handleSavedSessionCommand } from './saved-session-commands.js';
 import { handleSessionSettingCommand } from './session-setting-commands.js';
 import { handleSettingsCommand } from './settings-commands.js';
 import type { HookMonitor } from './hook-monitor.js';
-import { isClientLive, sessionsToStop } from './client-liveness.js';
+import { busySessionIds, isClientLive, sessionsToStop } from './client-liveness.js';
 import { pickFolders } from './folder-picker.js';
 import { launchSession, resumeSavedSession } from './launch-session.js';
 import { decideRewind, describeRewind } from './rewind-flow.js';
@@ -31,6 +36,7 @@ export class Gateway {
   private monitor!: HookMonitor;
   private monitoring = false;
   private orchestrators!: Orchestrators;
+  private fleet: FleetStore | undefined;
   private idleTimer: ReturnType<typeof setTimeout> | undefined;
   /** Last time each socket proved a live page was behind it. */
   private lastSeen = new WeakMap<WebSocket, number>();
@@ -146,7 +152,7 @@ export class Gateway {
 
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined;
-      const busy = this.orchestrators.activeSessionIds();
+      const busy = busySessionIds(this.orchestrators.activeSessionIds(), this.fleet);
       const stopping = sessionsToStop(this.manager.summaries(), busy);
       if (stopping.length === 0) {
         if (busy.size > 0) console.log(`[claudia] no browser, but ${busy.size} session(s) are mid-run — kept`);
@@ -158,6 +164,7 @@ export class Gateway {
   }
 
   stop(): void {
+    this.mirror.closeAll();
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     if (this.idleTimer) clearTimeout(this.idleTimer);
   }
@@ -204,10 +211,60 @@ export class Gateway {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(event));
   }
 
+  /**
+   * The mission store, when this run has one.
+   *
+   * Set separately from `attach` rather than added as a seventh positional
+   * argument, because it is the one dependency that is legitimately absent:
+   * the database may fail to open and the server carries on without it.
+   */
+  /**
+   * Following a session Claudia does not own, for whoever asked.
+   *
+   * Keyed by session rather than by socket: two viewers of one terminal
+   * session read the same transcript, and opening it twice would double every
+   * step. The service is closed when the last watcher goes, which
+   * `onClientCountChanged` already tracks for the board.
+   */
+  private readonly mirror = new MirrorService({
+    opened: (sessionId, backlog) => this.broadcast({ type: 'mirror_opened', sessionId, ...backlog }),
+    step: (sessionId, step) => this.broadcast({ type: 'mirror_step', sessionId, step }),
+    item: (sessionId, item) => this.broadcast({ type: 'mirror_item', sessionId, item }),
+    patch: (sessionId, stepId, patch) => this.broadcast({ type: 'mirror_patch', sessionId, stepId, patch }),
+    unavailable: (sessionId, reason) => this.broadcast({ type: 'mirror_unavailable', sessionId, reason }),
+  });
+
+  /** Reads whatever the mirrored transcripts have gained. Driven by the server's timer. */
+  pollMirrors(): Promise<void> {
+    return this.mirror.poll();
+  }
+
+  attachFleet(store: FleetStore | undefined): void {
+    this.fleet = store;
+  }
+
   private dispatch(cmd: ClientCommand, socket: WebSocket): void {
+    // Answered to the asking socket, not broadcast: these are replies to a
+    // question one client asked. The live `fleet_event` stream is the part
+    // everyone hears, and that is published from the store's commit hook.
+    if (isFleetCommand(cmd)) {
+      for (const event of handleFleetCommand(cmd, this.fleet)) this.sendTo(socket, event);
+      return;
+    }
     // One-session setting changes and preference writes each share one shape,
     // and each lives in its own module.
     if (handleSessionSettingCommand(cmd, this.manager)) return;
+    const reply = (event: ServerEvent): void => this.sendTo(socket, event);
+    if (handleSessionQueryCommand(cmd, { manager: this.manager, reply })) return;
+    if (handleSessionActionCommand(cmd, { manager: this.manager, reply })) return;
+    if (cmd.type === 'mirror_session') {
+      void this.mirror.open(cmd.sessionId);
+      return;
+    }
+    if (cmd.type === 'close_mirror') {
+      this.mirror.close(cmd.sessionId);
+      return;
+    }
     if (handleSavedSessionCommand(cmd, { manager: this.manager, settings: this.settings, reply: (e) => this.sendTo(socket, e) })) return;
     if (this.orchestrators.handle(cmd)) return;
     if (
@@ -262,80 +319,6 @@ export class Gateway {
               message: `Folder picker failed: ${err instanceof Error ? err.message : String(err)}`,
             }),
           );
-        return;
-      case 'send_prompt':
-        this.manager.get(cmd.sessionId)?.sendPrompt(cmd.text, cmd.images);
-        return;
-      case 'approve':
-        this.manager.get(cmd.sessionId)?.approve(cmd.requestId);
-        return;
-      case 'deny':
-        this.manager.get(cmd.sessionId)?.deny(cmd.requestId, cmd.message);
-        return;
-      case 'always_allow_project':
-        void this.manager.get(cmd.sessionId)?.alwaysAllowProject(cmd.requestId).then((r) => {
-          if (!r.ok) this.sendTo(socket, { type: 'server_error', message: r.message });
-        });
-        return;
-      case 'answer_question':
-        this.manager.get(cmd.sessionId)?.answerQuestion(cmd.requestId, cmd.answers);
-        return;
-      case 'interrupt':
-        void this.manager.get(cmd.sessionId)?.interrupt();
-        return;
-      case 'get_transcript':
-        this.sendTo(socket, {
-          type: 'transcript',
-          sessionId: cmd.sessionId,
-          items: this.manager.get(cmd.sessionId)?.transcript.list() ?? [],
-        });
-        return;
-      case 'stop_session':
-        this.manager.get(cmd.sessionId)?.stop();
-        return;
-      case 'remove_session':
-        this.manager.remove(cmd.sessionId);
-        return;
-      case 'rename_session':
-        this.manager.get(cmd.sessionId)?.rename(cmd.title);
-        return;
-      case 'set_permission_mode':
-        void this.manager.get(cmd.sessionId)?.setPermissionMode(cmd.mode);
-        return;
-      case 'refresh_context':
-        this.manager.get(cmd.sessionId)?.refreshContext();
-        return;
-      case 'get_models':
-        this.manager
-          .get(cmd.sessionId)
-          ?.models()
-          .then((models) => this.sendTo(socket, { type: 'models', sessionId: cmd.sessionId, models }));
-        return;
-      case 'get_commands':
-        this.manager
-          .get(cmd.sessionId)
-          ?.commands()
-          .then((commands) => this.sendTo(socket, { type: 'session_commands', sessionId: cmd.sessionId, commands }));
-        return;
-      case 'get_mcp_status':
-        this.manager.get(cmd.sessionId)?.mcpStatus().then((servers) => this.sendTo(socket, { type: 'mcp_status', sessionId: cmd.sessionId, servers }));
-        return;
-      case 'reconnect_mcp':
-        this.manager.get(cmd.sessionId)?.reconnectMcp(cmd.serverName)?.catch(() => undefined).then(() => this.dispatch({ type: 'get_mcp_status', sessionId: cmd.sessionId }, socket));
-        return;
-      case 'toggle_mcp':
-        this.manager.get(cmd.sessionId)?.toggleMcp(cmd.serverName, cmd.enabled)?.catch(() => undefined).then(() => this.dispatch({ type: 'get_mcp_status', sessionId: cmd.sessionId }, socket));
-        return;
-      case 'get_effective_settings':
-        void this.manager
-          .get(cmd.sessionId)
-          ?.effectiveSettings()
-          .then((settings) => {
-            if (settings) this.sendTo(socket, { type: 'effective_settings', sessionId: cmd.sessionId, settings });
-          });
-        return;
-      case 'stop_task':
-        void this.manager.get(cmd.sessionId)?.stopTask(cmd.taskId)?.catch(() => undefined);
         return;
       case 'require_approvals_everywhere':
         for (const s of this.manager.summaries()) {

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { FLEET_META } from './path-platform.js';
-import { ESCALATION_KEYS, FLEET_CORE } from './schema.js';
+import { ESCALATION_KEYS, FLEET_CORE, MISSION_AGENT } from './schema.js';
 import {
   CANONICAL_WORKTREE_PATHS,
   canonicaliseWorktreePaths,
@@ -102,6 +102,14 @@ export const MIGRATIONS: readonly Migration[] = [
     // changing — and a migration that stamped a file it had not just rewritten
     // would be recording an answer it had no way to check.
     up: (db) => db.exec(FLEET_META),
+  },
+  {
+    version: 9,
+    name: 'mission-agent',
+    // A plain ADD COLUMN, so no table rebuild and no foreign keys to switch
+    // off: the existing rows keep their identity and every child row keeps
+    // pointing at them.
+    up: (db) => db.exec(MISSION_AGENT),
   },
 ];
 

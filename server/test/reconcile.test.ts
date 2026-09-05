@@ -21,6 +21,7 @@ function mission(over: Partial<Mission> = {}): Mission {
     pulseSec: 60,
     maxChildren: 2,
     cwd: '/repo',
+    agent: 'claude',
     createdAt: 1,
     updatedAt: 1,
     ...over,

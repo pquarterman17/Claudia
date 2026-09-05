@@ -1,9 +1,13 @@
+import type { SessionState } from '@claudia/shared';
 import { resolvePort } from './resolve-port.js';
 import { createServer, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { MAX_FRAME_BYTES } from './command-fields.js';
 import { commitAndPush } from './commit-action.js';
+import { startFleet } from './fleet/boot.js';
+import { createLauncher } from './fleet/launcher.js';
+import { FleetPulser, type SessionFacts } from './fleet/pulse.js';
 import { Orchestrators } from './orchestrators.js';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
 import { Gateway } from './gateway.js';
@@ -126,6 +130,105 @@ const manager = new SessionManager({
 
 const orchestrators = new Orchestrators(manager, (event) => gateway.broadcast(event));
 
+// After the manager, because reconciliation is a comparison against the
+// sessions that actually exist: a run row saying `running` is adopted when its
+// session is still there and orphaned when it is not. On a cold start there are
+// none, and orphaning every stale run is the right answer — the alternative is
+// a file that believes it is busy and will not dispatch again.
+//
+// Opened here rather than lazily on first use so that the reconciliation
+// happens exactly once, before anything reads the rows it fixes.
+const fleet = startFleet(new Set(manager.summaries().map((session) => session.id)));
+console.log(`[claudia] ${fleet.summary}`);
+gateway.attachFleet(fleet.store);
+// Published AFTER the transaction commits, which is what `onAppended`
+// subscribes to. A sequence number announced from inside a transaction that
+// then rolls back is a number the log will hand to a different event, and a
+// client holding it would never be shown the real one.
+fleet.store?.events.onAppended((event) => gateway.broadcast({ type: 'fleet_event', event }));
+
+// The clock the reconciler and the watchdog have been missing. It fires often
+// and decides little: each mission carries its own `pulseSec`, and the pulser
+// skips the ones whose interval has not elapsed. Unref'd, because a fleet with
+// nothing to decide must not be the reason the process refuses to exit.
+//
+// No launcher is passed. Dispatch decisions are recorded as deferred rather
+// than carried out — starting a child means claiming a worktree and going
+// through the session manager, which is its own change. The pulse still
+// applies everything that costs nothing: blocks, unblocks, escalations, and
+// giving up on a task that has run out of attempts.
+/**
+ * What the watchdog gets to see, built from the sessions themselves.
+ *
+ * Two things it needs beyond "is this id known". `lastActivityAt`, or `assess`
+ * falls back to the run's START time and calls any live run older than
+ * `silentAfterMs` silent — failing or retrying work that is still producing
+ * output. And the approval fields, or a run parked on a human is retried,
+ * spending a fresh turn that parks on the same approval, instead of escalated.
+ *
+ * Built from an ALLOWLIST of live states rather than by excluding the dead
+ * ones. `stopped` was excluded first, and review caught the other half:
+ * `Session.fail()` retains a tile in state `error` after its driver has
+ * terminated, so a dead process was still reported alive and its run waited
+ * out the whole silence threshold instead of being recognised as an orphan
+ * immediately. Naming what IS alive means the next terminal state added to the
+ * union cannot quietly join the living.
+ */
+const LIVE_SESSION_STATES: ReadonlySet<SessionState> = new Set([
+  'starting',
+  'working',
+  'awaiting_approval',
+  'idle',
+]);
+
+function liveSessionFacts(): ReadonlyMap<string, SessionFacts> {
+  const facts = new Map<string, SessionFacts>();
+  for (const session of manager.summaries()) {
+    if (!LIVE_SESSION_STATES.has(session.state)) continue;
+    facts.set(session.id, {
+      lastActivityAt: session.lastActivityAt,
+      ...(session.pendingApproval
+        ? { pendingApproval: session.pendingApproval.toolName, pendingSince: session.pendingApproval.requestedAt }
+        : {}),
+    });
+  }
+  return facts;
+}
+
+const pulser = fleet.store
+  ? new FleetPulser({
+      store: fleet.store,
+      // Read at every mission's pulse, not captured here: the limits are a
+      // stored preference the user can change while the fleet is running.
+      policy: () => settings.get().fleetLimits,
+      observeSessions: liveSessionFacts,
+      launch: createLauncher({
+        store: fleet.store,
+        // `launch` throws rather than returning a session, so the id is read
+        // back off the tile it created. A manager that refused answers
+        // `undefined` here, which the launcher reports as a launch that did
+        // not happen.
+        startSession: (spec) => {
+          try {
+            return manager.launch({ ...spec, effortLevel: 'high', thinkingMode: 'adaptive' }).id;
+          } catch {
+            return undefined;
+          }
+        },
+        stopSession: (sessionId) => manager.get(sessionId)?.stop(),
+      }),
+    })
+  : undefined;
+const pulseTicker = setInterval(() => void pulser?.tick(), 15_000);
+pulseTicker.unref?.();
+
+// Mirrored transcripts, read only while somebody is watching one. Faster than
+// the pulse because this is a human reading a conversation rather than a fleet
+// deciding what to spend, and it costs nothing when nothing is mirrored: the
+// service returns immediately with no watches.
+const mirrorTicker = setInterval(() => void gateway.pollMirrors(), 2_000);
+mirrorTicker.unref?.();
+
 const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: usage.snapshot() }));
 usage.setTier(saved.planTier);
 if (saved.customCeilings) usage.setCustomCeilings(saved.customCeilings);
@@ -202,8 +305,13 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     clearInterval(ticker);
     clearInterval(gitTicker);
     clearInterval(pruneTicker);
+    clearInterval(pulseTicker);
+    clearInterval(mirrorTicker);
     usage.stop();
     manager.stopAll();
+    // Closed on the way out so the file is not left locked by a connection
+    // nobody holds — the next start has to be able to take the write lock.
+    fleet.close();
     httpServer.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();
   });

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { ClientCommand, Mission, ServerEvent, Task } from '@claudia/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import { startFleet } from '../src/fleet/boot.js';
+import { readFileSync } from 'node:fs';
 import { handleFleetCommand, isFleetCommand } from '../src/fleet/commands.js';
 import { parseCommand } from '../src/command-schema.js';
 import type { FleetStore } from '../src/store/index.js';
@@ -157,6 +158,7 @@ describe('what the wire refuses', () => {
       { type: 'set_mission_watch', missionId: 'm', watch: 'watching' },
       { type: 'create_task', missionId: 'm', title: 't', description: '', cwd: '/' },
       { type: 'list_tasks', missionId: 'm' },
+      { type: 'set_task_status', missionId: 'm', taskId: 't', status: 'ready' },
       { type: 'get_fleet_events', missionId: 'm' },
     ];
     const store = freshStore();
@@ -165,5 +167,21 @@ describe('what the wire refuses', () => {
       expect(handleFleetCommand(cmd, store).length).toBeGreaterThan(0);
     }
     expect(isFleetCommand({ type: 'ping' })).toBe(false);
+  });
+
+  it('routes every command its switch handles', () => {
+    // The OTHER direction, and the one that bit: a case added to the switch
+    // without its type in the routed set compiles, typechecks and is simply
+    // never reached, because the router asks `isFleetCommand` first. Found by
+    // running the fleet end to end — `set_task_status` was handled here and
+    // silently dropped at the door. Read from the source because there is no
+    // way to reflect on a switch.
+    const source = readFileSync(new URL('../src/fleet/commands.ts', import.meta.url), 'utf8');
+    const body = source.slice(source.indexOf('switch (cmd.type)'));
+    const handled = [...body.matchAll(/case '([a-z_]+)':/g)].map((m) => m[1] ?? '');
+    expect(handled.length).toBeGreaterThan(0);
+    for (const type of handled) {
+      expect(isFleetCommand({ type } as ClientCommand), `${type} is handled but not routed`).toBe(true);
+    }
   });
 });

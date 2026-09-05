@@ -38,6 +38,32 @@ export function isClientLive(
  *
  * Pure so the exemption is testable without a socket, a timer or an agent.
  */
+/**
+ * Sessions that must survive the browser going away.
+ *
+ * Orchestrator-owned ones were always exempt. Fleet children were not, and the
+ * omission was only visible once a launcher existed: a mission dispatched a
+ * task, the child started, the tab closed, and thirty seconds later the reaper
+ * stopped the very work the fleet had just paid to begin. Unattended is what a
+ * fleet IS — the pulse keeps deciding with nobody watching, and a child it
+ * started is no more abandoned than the mission that wanted it.
+ *
+ * Read from the STORE rather than from a set kept in memory, so a run adopted
+ * across a restart counts too: those rows outlive the process, and an in-memory
+ * set would forget them exactly when recovery had just remembered.
+ */
+export function busySessionIds(
+  orchestrated: ReadonlySet<string>,
+  fleet: { runs: { listActive(): { ok: boolean; value?: Array<{ sessionId?: string }> } } } | undefined,
+): ReadonlySet<string> {
+  const busy = new Set(orchestrated);
+  const active = fleet?.runs.listActive();
+  if (active?.ok) {
+    for (const run of active.value ?? []) if (run.sessionId) busy.add(run.sessionId);
+  }
+  return busy;
+}
+
 export function sessionsToStop(
   sessions: ReadonlyArray<{ id: string; state: string }>,
   busy: ReadonlySet<string>,

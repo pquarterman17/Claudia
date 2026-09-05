@@ -21,6 +21,7 @@ const FLEET_COMMANDS = new Set([
   'set_mission_watch',
   'create_task',
   'list_tasks',
+  'set_task_status',
   'get_fleet_events',
 ]);
 
@@ -65,6 +66,13 @@ export function handleFleetCommand(cmd: ClientCommand, store: FleetStore | undef
         dependsOn: cmd.dependsOn,
       });
       if (!created.ok) return [notice(created.message)];
+      return listTasks(store, cmd.missionId);
+    }
+    case 'set_task_status': {
+      // The store owns which transitions are legal; this only asks for one, and
+      // reports the refusal verbatim when the answer is no.
+      const moved = store.tasks.setStatus(cmd.taskId, cmd.status);
+      if (!moved.ok) return [notice(moved.message)];
       return listTasks(store, cmd.missionId);
     }
     case 'list_tasks':

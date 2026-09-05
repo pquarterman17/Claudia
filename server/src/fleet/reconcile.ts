@@ -1,4 +1,4 @@
-import type { ChildRun, FleetLimits, Mission, Task } from '@claudia/shared';
+import type { ChildRun, FleetLimits, Mission, Task, TaskStatus } from '@claudia/shared';
 
 /**
  * What the fleet should do next, decided by arithmetic rather than by a model.
@@ -345,4 +345,31 @@ function tasksInCycles(tasks: readonly Task[]): Set<string> {
 
   for (const task of tasks) walk(task.id, []);
   return cyclic;
+}
+
+/**
+ * The legal route from where the task actually is to where the watchdog wants it.
+ *
+ * Derived rather than fixed. `TASK_REQUEUED` and `TASK_GIVEN_UP` both start at
+ * `failed`, which is only reachable from `running` — so the constant encodes an
+ * assumption the state machine does not make, that every active run's task is
+ * `running`. `undefined` means "leave it alone", which is always safe: the run
+ * has been terminalized either way, and the reconciler decides again next pulse.
+ */
+export function routeTo(
+  from: TaskStatus | undefined,
+  to: 'ready' | 'failed' | 'running' | 'reported',
+): readonly TaskStatus[] | undefined {
+  if (from === undefined) return undefined;
+  if (from === to) return [];
+  if (to === 'running') return from === 'ready' ? ['running'] : undefined;
+  // Before the `running` arm below, which would otherwise route a finished
+  // child's task through `failed`. `running -> reported` is one hop and the
+  // only way in: a task that is not running has no claim to report.
+  if (to === 'reported') return from === 'running' ? ['reported'] : undefined;
+  // `running -> failed` is the one edge into `failed`, and `failed -> ready`
+  // the one edge back out: a requeue is two hops, not a jump.
+  if (from === 'running') return to === 'failed' ? ['failed'] : ['failed', 'ready'];
+  if (to === 'ready' && (from === 'failed' || from === 'reported')) return ['ready'];
+  return undefined;
 }

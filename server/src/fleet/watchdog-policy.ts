@@ -24,6 +24,17 @@ export interface WatchdogPolicy {
    * costs the attempt AND launches a duplicate.
    */
   startingGraceMs: number;
+  /**
+   * How long a session must sit idle before its turn counts as finished.
+   *
+   * The SDK reports `idle` for a turn that ENDED, not for a pause between tool
+   * calls, so a child that is genuinely done stays idle and reports one tick
+   * later. The grace is only for the seconds between a session being created
+   * and its first turn starting, where a tile can read idle before it has done
+   * anything — and it is short, because a finished child holding a concurrency
+   * slot is the fleet's own throughput.
+   */
+  doneGraceMs: number;
   maxAttempts: number;
   /** First retry delay; doubles per attempt up to retryMaxMs. */
   retryBaseMs: number;
@@ -40,6 +51,7 @@ export const DEFAULT_WATCHDOG: WatchdogPolicy = {
   // Three times the first retry backoff, so the grace outlasts the gate that
   // would otherwise retire the run at 30 seconds.
   startingGraceMs: 90_000,
+  doneGraceMs: 15_000,
   maxAttempts: 3,
   retryBaseMs: 30_000,
   retryMaxMs: 10 * 60_000,
@@ -54,8 +66,9 @@ export const DEFAULT_WATCHDOG: WatchdogPolicy = {
  * is not a delay, and a cap below the base is not a cap.
  */
 export function usablePolicy(policy: WatchdogPolicy): boolean {
-  const { silentAfterMs, approvalStuckAfterMs, retryBaseMs, retryMaxMs, startingGraceMs, maxAttempts } = policy;
-  const durations = [silentAfterMs, approvalStuckAfterMs, retryBaseMs, retryMaxMs, startingGraceMs];
+  const { silentAfterMs, approvalStuckAfterMs, retryBaseMs, retryMaxMs, startingGraceMs, doneGraceMs, maxAttempts } =
+    policy;
+  const durations = [silentAfterMs, approvalStuckAfterMs, retryBaseMs, retryMaxMs, startingGraceMs, doneGraceMs];
   if (!durations.every((ms) => Number.isFinite(ms) && ms > 0)) return false;
   if (retryMaxMs < retryBaseMs) return false;
   return Number.isSafeInteger(maxAttempts) && maxAttempts > 0;

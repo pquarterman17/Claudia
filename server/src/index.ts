@@ -187,6 +187,10 @@ function liveSessionFacts(): ReadonlyMap<string, SessionFacts> {
     if (!LIVE_SESSION_STATES.has(session.state)) continue;
     facts.set(session.id, {
       lastActivityAt: session.lastActivityAt,
+      // Its own account of what it is doing. `idle` is the SDK reporting a
+      // turn that ENDED, which for a fleet child given one brief is the child
+      // saying the work is done.
+      state: session.state,
       ...(session.pendingApproval
         ? { pendingApproval: session.pendingApproval.toolName, pendingSince: session.pendingApproval.requestedAt }
         : {}),

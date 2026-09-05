@@ -68,6 +68,15 @@ export interface Mission {
   budgetTokens?: number;
   /** Repository the mission's tasks default to. */
   cwd: string;
+  /**
+   * Which harness this mission's children run on.
+   *
+   * On the mission and not on the task: it describes how a body of work should
+   * be done, not one unit of it, and a task inherits it. `ChildRun.agent`
+   * records what a given attempt actually ran, which is the same value today
+   * and the seam a retry on the other harness would use.
+   */
+  agent: AgentKind;
   createdAt: number;
   updatedAt: number;
 }

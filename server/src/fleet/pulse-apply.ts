@@ -1,4 +1,4 @@
-import type { AgentKind, Mission, Task, TaskStatus } from '@claudia/shared';
+import type { Mission, Task, TaskStatus } from '@claudia/shared';
 import { transact } from '../store/db.js';
 import { escalationKey } from './capabilities.js';
 import { childCeiling, isActiveRun, type Decision } from './reconcile.js';
@@ -270,16 +270,6 @@ function hasFreeSlot(mission: Mission, deps: PulseDeps): boolean {
 }
 
 /**
- * The agent a reservation names.
- *
- * Neither a mission nor a task carries a preference, so the pulse has to pick
- * one, and `claude` is the only harness this build launches. Choosing between
- * the roster — and letting a retry pick the other one, which `ChildRun.agent`
- * exists for — is the launcher's decision, not this module's.
- */
-const RESERVED_AGENT: AgentKind = 'claude';
-
-/**
  * Claims the attempt durably, then hands back the order to launch after commit.
  *
  * The run row is the reservation. Writing it inside the transaction is what
@@ -298,7 +288,10 @@ function reserve(taskId: string, attempt: number, key: string, mission: Mission,
   const run = store.runs.create({
     missionId: mission.id,
     taskId,
-    agent: RESERVED_AGENT,
+    // The mission's choice, recorded on the attempt that spends it. The run
+    // row is what the launcher reads, so a mission edited between the
+    // reservation and the launch cannot change what a started child is.
+    agent: mission.agent,
     attempt,
     state: 'dispatched',
   });
@@ -312,7 +305,7 @@ function reserve(taskId: string, attempt: number, key: string, mission: Mission,
     const moved = store.tasks.setStatus(taskId, status);
     if (!moved.ok) throw new Error(moved.message);
   }
-  return { missionId: mission.id, taskId, runId: run.value.id, attempt, key };
+  return { missionId: mission.id, taskId, runId: run.value.id, agent: run.value.agent, attempt, key };
 }
 
 /**

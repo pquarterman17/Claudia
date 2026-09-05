@@ -1,9 +1,7 @@
 import {
   canTransitionRun,
   canTransitionWorktree,
-  isAgentKind,
   RUN_TRANSITIONS,
-  type AgentKind,
   type ChildRun,
   type ChildRunState,
   type WorktreeRecord,
@@ -13,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { HOST_PLATFORM, worktreePathKey } from '../path-key.js';
 import { attempt, refuse, transact, type StoreResult } from './db.js';
-import { boolToInt, flag, int, optInt, optText, text, type Row } from './rows.js';
+import { agentKind, boolToInt, flag, int, optInt, optText, text, type Row } from './rows.js';
 
 /**
  * Child runs and the worktrees they work in.
@@ -43,25 +41,6 @@ const RUN_COLUMNS =
 const WORKTREE_COLUMNS =
   'id, repo, path, branch, base_sha, owner_mission_id, owner_task_id, state, dirty, last_seen_at, created_at';
 const WORKTREE_INSERT = `${WORKTREE_COLUMNS}, path_key`;
-
-/**
- * Checks an agent rather than asserting one, on the way in AND on the way out.
- *
- * Found in review: `create()` took `input.agent` straight from its caller and
- * `toRun` cast the column with `as AgentKind`, so `'gemini'` was accepted by
- * the repository itself and read back as a `ChildRun` the dispatcher would try
- * to launch a nonexistent harness for. A cast is a claim about a value, and
- * neither end of this had anything checking the claim.
- *
- * Version 3 of the schema now refuses it too, which is what makes the read side
- * safe to keep strict: a value that cannot be stored cannot be read, so
- * refusing here can only fire on a file written by an older build, where a
- * named failure beats a typed lie.
- */
-function agentKind(value: string): AgentKind {
-  if (!isAgentKind(value)) refuse(`${JSON.stringify(value)} is not an agent Claudia can run.`);
-  return value;
-}
 
 /**
  * The runs in a batch that can be read, rather than none of them.

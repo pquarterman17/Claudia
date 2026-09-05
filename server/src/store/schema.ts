@@ -173,3 +173,30 @@ ALTER TABLE escalations ADD COLUMN idempotency_key TEXT;
 CREATE UNIQUE INDEX escalations_key ON escalations (idempotency_key)
   WHERE idempotency_key IS NOT NULL;
 `;
+
+/**
+ * A mission names the agent its children run on.
+ *
+ * The roster has been two harnesses since Codex landed, and `ChildRun.agent`
+ * has always been typed and stored — but nothing chose it. The pulse wrote
+ * `'claude'` and the launcher launched `'claude'`, so a repository best served
+ * by the other one had no way to say so short of editing two constants and
+ * restarting.
+ *
+ * On the mission rather than on the task, because it is a property of how a
+ * body of work should be done rather than of one unit of it, and because a
+ * task inheriting a mission's answer needs no column of its own. A task-level
+ * override is a later migration if a mixed mission ever turns out to be worth
+ * the second place to look.
+ *
+ * `DEFAULT 'claude'` is what makes this a widening rather than a break: every
+ * mission written before this migration ran was launched on Claude, so the
+ * default records what already happened instead of guessing. The CHECK is the
+ * lesson from `child_runs.agent`, which shipped without one and accepted
+ * `'gemini'` from a hand-written UPDATE — a value that cannot be stored is one
+ * the reader never has to be strict about.
+ */
+export const MISSION_AGENT = `
+ALTER TABLE missions ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'
+  CHECK (agent IN ('claude','codex'));
+`;

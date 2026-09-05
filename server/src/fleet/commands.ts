@@ -44,7 +44,12 @@ export function handleFleetCommand(cmd: ClientCommand, store: FleetStore | undef
   }
   switch (cmd.type) {
     case 'create_mission': {
-      const created = store.missions.create({ name: cmd.name, body: cmd.body, cwd: cmd.cwd });
+      const created = store.missions.create({
+        name: cmd.name,
+        body: cmd.body,
+        cwd: cmd.cwd,
+        ...(cmd.agent ? { agent: cmd.agent } : {}),
+      });
       if (!created.ok) return [notice(created.message)];
       // The whole list, not just the new row: a client that has been away has
       // no reliable way to merge one insert into a list it may not hold.

@@ -5,6 +5,7 @@ import { ControlSidebar } from './components/ControlSidebar';
 import { LaunchBar } from './components/LaunchBar';
 import { CrewStrip } from './components/CrewStrip';
 import { DebateStrip } from './components/DebateStrip';
+import { FleetStrip } from './components/FleetStrip';
 import { ObservedStrip } from './components/ObservedStrip';
 import { SessionTile } from './components/SessionTile';
 import { StatusFooter } from './components/StatusFooter';
@@ -29,6 +30,7 @@ export function App() {
     lastNotice,
     observed,
     mirrors,
+    fleet,
     monitoring,
     debates,
     crews,
@@ -261,6 +263,7 @@ export function App() {
           <DebateStrip debates={debates} sessions={ordered} />
           <CrewStrip crews={crews} sessions={ordered} />
           <ObservedStrip observed={observed} monitoring={monitoring} now={now} mirrors={mirrors} />
+          <FleetStrip fleet={fleet} connected={connected} />
         </div>
       </div>
 

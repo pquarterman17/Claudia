@@ -149,6 +149,23 @@ export class ChildRunRepo {
   }
 
   /**
+   * Every run still occupying a slot, across all missions.
+   *
+   * Asked by things that need to know a session is the fleet's before deciding
+   * something about it — the browser-idle reaper above all, which stops
+   * sessions nobody is watching and would otherwise stop the fleet's own
+   * children thirty seconds after the tab closes.
+   */
+  listActive(): StoreResult<ChildRun[]> {
+    return attempt('list the active runs', () => {
+      const rows = this.db
+        .prepare(`SELECT ${RUN_COLUMNS} FROM child_runs WHERE state IN ('dispatched','running') ORDER BY started_at`)
+        .all() as Row[];
+      return readable(rows);
+    });
+  }
+
+  /**
    * Moves a run, refusing what RUN_TRANSITIONS does not allow.
    *
    * `endedAt` is stamped when the target state has no outgoing transitions,

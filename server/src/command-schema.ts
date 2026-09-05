@@ -12,7 +12,7 @@
  * cases fail loudly (a missing `case` falls through to "unknown command
  * type") the moment the two drift apart.
  */
-import type { ClientCommand } from '@claudia/shared';
+import { TASK_TRANSITIONS, type ClientCommand } from '@claudia/shared';
 import {
   answersField, field, imagesField, isAgentKind, isBool, isBulkOp, isDebateSubject, isDirection,
   isEffortLevel, isFinishAction, isLabel, isNullableLabel, isNum, isPermissionMode, isPlainObject,
@@ -23,6 +23,9 @@ import {
 export type ParseResult = { ok: true; cmd: ClientCommand } | { ok: false; reason: string };
 
 const isMissionWatch = (v: unknown): boolean => v === 'watching' || v === 'paused';
+/** Checked against the union the store enforces, so the two cannot drift. */
+const TASK_STATUSES: readonly string[] = Object.keys(TASK_TRANSITIONS);
+const isTaskStatus = (v: unknown): boolean => typeof v === 'string' && TASK_STATUSES.includes(v);
 const isSeq = (v: unknown): boolean => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 const isLabelList = (v: unknown): boolean => Array.isArray(v) && v.every((item) => isLabel(item));
 
@@ -145,6 +148,12 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
       ]);
     case 'list_tasks':
       return runChecks(type, o, [req('missionId', isLabel, 'a string')]);
+    case 'set_task_status':
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        req('taskId', isLabel, 'a string'),
+        req('status', isTaskStatus, 'a known task status'),
+      ]);
     case 'get_fleet_events':
       return runChecks(type, o, [
         req('missionId', isLabel, 'a string'),

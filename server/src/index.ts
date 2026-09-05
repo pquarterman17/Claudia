@@ -6,6 +6,7 @@ import { WebSocketServer } from 'ws';
 import { MAX_FRAME_BYTES } from './command-fields.js';
 import { commitAndPush } from './commit-action.js';
 import { startFleet } from './fleet/boot.js';
+import { createLauncher } from './fleet/launcher.js';
 import { FleetPulser, type SessionFacts } from './fleet/pulse.js';
 import { Orchestrators } from './orchestrators.js';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
@@ -199,6 +200,21 @@ const pulser = fleet.store
       store: fleet.store,
       policy: { maxChildren: MAX_CHILDREN_CEILING, maxAttempts: 3 },
       observeSessions: liveSessionFacts,
+      launch: createLauncher({
+        store: fleet.store,
+        // `launch` throws rather than returning a session, so the id is read
+        // back off the tile it created. A manager that refused answers
+        // `undefined` here, which the launcher reports as a launch that did
+        // not happen.
+        startSession: (spec) => {
+          try {
+            return manager.launch({ ...spec, effortLevel: 'high', thinkingMode: 'adaptive' }).id;
+          } catch {
+            return undefined;
+          }
+        },
+        stopSession: (sessionId) => manager.get(sessionId)?.stop(),
+      }),
     })
   : undefined;
 const pulseTicker = setInterval(() => void pulser?.tick(), 15_000);

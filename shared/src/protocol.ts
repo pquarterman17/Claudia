@@ -17,6 +17,7 @@ import type {
   DebateStatus,
   FleetEvent,
   Mission,
+  TaskStatus,
   MissionWatch,
   Task,
   DebateSubject,
@@ -272,6 +273,17 @@ export type ClientCommand =
   | { type: 'set_mission_watch'; missionId: string; watch: MissionWatch }
   | { type: 'create_task'; missionId: string; title: string; description: string; cwd: string; dependsOn?: string[] }
   | { type: 'list_tasks'; missionId: string }
+  /**
+   * Move a task through its lifecycle — chiefly `proposed -> ready`, which is
+   * how a human says a described task may actually be worked on.
+   *
+   * Found by running the fleet end to end rather than in tests: `create_task`
+   * lands in `proposed`, the reconciler only dispatches `ready`, and there was
+   * no command between the two. Every test moved the row directly, which no
+   * client can do, so the whole mission layer was unreachable from the wire.
+   * The store still decides which transitions are legal; this only asks.
+   */
+  | { type: 'set_task_status'; missionId: string; taskId: string; status: TaskStatus }
   /** `afterSeq` is the client's high-water mark; 0 asks for the whole log. */
   | { type: 'get_fleet_events'; missionId: string; afterSeq?: number }
   /**

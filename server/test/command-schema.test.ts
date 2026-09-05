@@ -78,15 +78,16 @@ const VALID: Array<[string, Record<string, unknown>]> = [
   ['create_task', { type: 'create_task', missionId: 'm1', title: 't', description: '', cwd: '/repo' }],
   ['list_tasks', { type: 'list_tasks', missionId: 'm1' }],
   ['get_fleet_events', { type: 'get_fleet_events', missionId: 'm1', afterSeq: 0 }],
+  ['set_task_status', { type: 'set_task_status', missionId: 'm1', taskId: 't1', status: 'ready' }],
   ['mirror_session', { type: 'mirror_session', sessionId: 's1' }],
   ['close_mirror', { type: 'close_mirror', sessionId: 's1' }],
 ];
 
 describe('parseCommand: every ClientCommand member', () => {
   // Pinned so a member added to the union without a row above fails here,
-  // not silently — 62 is the count in shared/src/protocol.ts as of this PR.
-  it('covers all 62 members', () => {
-    expect(VALID).toHaveLength(62);
+  // not silently — 63 is the count in shared/src/protocol.ts as of this PR.
+  it('covers all 63 members', () => {
+    expect(VALID).toHaveLength(63);
   });
 
   it.each(VALID)('accepts a valid %s', (_label, cmd) => {

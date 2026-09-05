@@ -14,7 +14,7 @@ import { handleSavedSessionCommand } from './saved-session-commands.js';
 import { handleSessionSettingCommand } from './session-setting-commands.js';
 import { handleSettingsCommand } from './settings-commands.js';
 import type { HookMonitor } from './hook-monitor.js';
-import { isClientLive, sessionsToStop } from './client-liveness.js';
+import { busySessionIds, isClientLive, sessionsToStop } from './client-liveness.js';
 import { pickFolders } from './folder-picker.js';
 import { launchSession, resumeSavedSession } from './launch-session.js';
 import { decideRewind, describeRewind } from './rewind-flow.js';
@@ -152,7 +152,7 @@ export class Gateway {
 
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined;
-      const busy = this.orchestrators.activeSessionIds();
+      const busy = busySessionIds(this.orchestrators.activeSessionIds(), this.fleet);
       const stopping = sessionsToStop(this.manager.summaries(), busy);
       if (stopping.length === 0) {
         if (busy.size > 0) console.log(`[claudia] no browser, but ${busy.size} session(s) are mid-run — kept`);

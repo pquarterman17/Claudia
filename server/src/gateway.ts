@@ -4,6 +4,8 @@ import { runBulkOp } from './bulk-ops.js';
 import { parseCommand } from './command-schema.js';
 import { buildHello, ownedSessionIds } from './hello-event.js';
 import { handleFleetCommand, isFleetCommand } from './fleet/commands.js';
+import { MirrorService } from './mirror.js';
+import { handleSessionActionCommand } from './session-actions.js';
 import { handleSessionQueryCommand } from './session-queries.js';
 import type { FleetStore } from './store/index.js';
 import type { Orchestrators } from './orchestrators.js';
@@ -162,6 +164,7 @@ export class Gateway {
   }
 
   stop(): void {
+    this.mirror.closeAll();
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     if (this.idleTimer) clearTimeout(this.idleTimer);
   }
@@ -215,6 +218,27 @@ export class Gateway {
    * argument, because it is the one dependency that is legitimately absent:
    * the database may fail to open and the server carries on without it.
    */
+  /**
+   * Following a session Claudia does not own, for whoever asked.
+   *
+   * Keyed by session rather than by socket: two viewers of one terminal
+   * session read the same transcript, and opening it twice would double every
+   * step. The service is closed when the last watcher goes, which
+   * `onClientCountChanged` already tracks for the board.
+   */
+  private readonly mirror = new MirrorService({
+    opened: (sessionId, backlog) => this.broadcast({ type: 'mirror_opened', sessionId, ...backlog }),
+    step: (sessionId, step) => this.broadcast({ type: 'mirror_step', sessionId, step }),
+    item: (sessionId, item) => this.broadcast({ type: 'mirror_item', sessionId, item }),
+    patch: (sessionId, stepId, patch) => this.broadcast({ type: 'mirror_patch', sessionId, stepId, patch }),
+    unavailable: (sessionId, reason) => this.broadcast({ type: 'mirror_unavailable', sessionId, reason }),
+  });
+
+  /** Reads whatever the mirrored transcripts have gained. Driven by the server's timer. */
+  pollMirrors(): Promise<void> {
+    return this.mirror.poll();
+  }
+
   attachFleet(store: FleetStore | undefined): void {
     this.fleet = store;
   }
@@ -230,7 +254,17 @@ export class Gateway {
     // One-session setting changes and preference writes each share one shape,
     // and each lives in its own module.
     if (handleSessionSettingCommand(cmd, this.manager)) return;
-    if (handleSessionQueryCommand(cmd, { manager: this.manager, reply: (e) => this.sendTo(socket, e) })) return;
+    const reply = (event: ServerEvent): void => this.sendTo(socket, event);
+    if (handleSessionQueryCommand(cmd, { manager: this.manager, reply })) return;
+    if (handleSessionActionCommand(cmd, { manager: this.manager, reply })) return;
+    if (cmd.type === 'mirror_session') {
+      void this.mirror.open(cmd.sessionId);
+      return;
+    }
+    if (cmd.type === 'close_mirror') {
+      this.mirror.close(cmd.sessionId);
+      return;
+    }
     if (handleSavedSessionCommand(cmd, { manager: this.manager, settings: this.settings, reply: (e) => this.sendTo(socket, e) })) return;
     if (this.orchestrators.handle(cmd)) return;
     if (
@@ -285,51 +319,6 @@ export class Gateway {
               message: `Folder picker failed: ${err instanceof Error ? err.message : String(err)}`,
             }),
           );
-        return;
-      case 'send_prompt':
-        this.manager.get(cmd.sessionId)?.sendPrompt(cmd.text, cmd.images);
-        return;
-      case 'approve':
-        this.manager.get(cmd.sessionId)?.approve(cmd.requestId);
-        return;
-      case 'deny':
-        this.manager.get(cmd.sessionId)?.deny(cmd.requestId, cmd.message);
-        return;
-      case 'always_allow_project':
-        void this.manager.get(cmd.sessionId)?.alwaysAllowProject(cmd.requestId).then((r) => {
-          if (!r.ok) this.sendTo(socket, { type: 'server_error', message: r.message });
-        });
-        return;
-      case 'answer_question':
-        this.manager.get(cmd.sessionId)?.answerQuestion(cmd.requestId, cmd.answers);
-        return;
-      case 'interrupt':
-        void this.manager.get(cmd.sessionId)?.interrupt();
-        return;
-      case 'get_transcript':
-        this.sendTo(socket, {
-          type: 'transcript',
-          sessionId: cmd.sessionId,
-          items: this.manager.get(cmd.sessionId)?.transcript.list() ?? [],
-        });
-        return;
-      case 'stop_session':
-        this.manager.get(cmd.sessionId)?.stop();
-        return;
-      case 'remove_session':
-        this.manager.remove(cmd.sessionId);
-        return;
-      case 'rename_session':
-        this.manager.get(cmd.sessionId)?.rename(cmd.title);
-        return;
-      case 'set_permission_mode':
-        void this.manager.get(cmd.sessionId)?.setPermissionMode(cmd.mode);
-        return;
-      case 'refresh_context':
-        this.manager.get(cmd.sessionId)?.refreshContext();
-        return;
-      case 'stop_task':
-        void this.manager.get(cmd.sessionId)?.stopTask(cmd.taskId)?.catch(() => undefined);
         return;
       case 'require_approvals_everywhere':
         for (const s of this.manager.summaries()) {

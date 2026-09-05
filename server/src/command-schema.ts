@@ -162,6 +162,9 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
         // than fail, which is the shape of bug this validation exists for.
         opt('afterSeq', isSeq, 'a non-negative whole number'),
       ]);
+    case 'mirror_session':
+    case 'close_mirror':
+      return runChecks(type, o, [req('sessionId', isLabel, 'a string')]);
     case 'set_permission_mode':
       return runChecks(type, o, [
         req('sessionId', isLabel, 'a string'),

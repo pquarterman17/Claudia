@@ -4,6 +4,7 @@ import { runBulkOp } from './bulk-ops.js';
 import { parseCommand } from './command-schema.js';
 import { buildHello, ownedSessionIds } from './hello-event.js';
 import { handleFleetCommand, isFleetCommand } from './fleet/commands.js';
+import { MirrorService } from './mirror.js';
 import { handleSessionActionCommand } from './session-actions.js';
 import { handleSessionQueryCommand } from './session-queries.js';
 import type { FleetStore } from './store/index.js';
@@ -163,6 +164,7 @@ export class Gateway {
   }
 
   stop(): void {
+    this.mirror.closeAll();
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     if (this.idleTimer) clearTimeout(this.idleTimer);
   }
@@ -216,6 +218,27 @@ export class Gateway {
    * argument, because it is the one dependency that is legitimately absent:
    * the database may fail to open and the server carries on without it.
    */
+  /**
+   * Following a session Claudia does not own, for whoever asked.
+   *
+   * Keyed by session rather than by socket: two viewers of one terminal
+   * session read the same transcript, and opening it twice would double every
+   * step. The service is closed when the last watcher goes, which
+   * `onClientCountChanged` already tracks for the board.
+   */
+  private readonly mirror = new MirrorService({
+    opened: (sessionId, backlog) => this.broadcast({ type: 'mirror_opened', sessionId, ...backlog }),
+    step: (sessionId, step) => this.broadcast({ type: 'mirror_step', sessionId, step }),
+    item: (sessionId, item) => this.broadcast({ type: 'mirror_item', sessionId, item }),
+    patch: (sessionId, stepId, patch) => this.broadcast({ type: 'mirror_patch', sessionId, stepId, patch }),
+    unavailable: (sessionId, reason) => this.broadcast({ type: 'mirror_unavailable', sessionId, reason }),
+  });
+
+  /** Reads whatever the mirrored transcripts have gained. Driven by the server's timer. */
+  pollMirrors(): Promise<void> {
+    return this.mirror.poll();
+  }
+
   attachFleet(store: FleetStore | undefined): void {
     this.fleet = store;
   }
@@ -234,6 +257,14 @@ export class Gateway {
     const reply = (event: ServerEvent): void => this.sendTo(socket, event);
     if (handleSessionQueryCommand(cmd, { manager: this.manager, reply })) return;
     if (handleSessionActionCommand(cmd, { manager: this.manager, reply })) return;
+    if (cmd.type === 'mirror_session') {
+      void this.mirror.open(cmd.sessionId);
+      return;
+    }
+    if (cmd.type === 'close_mirror') {
+      this.mirror.close(cmd.sessionId);
+      return;
+    }
     if (handleSavedSessionCommand(cmd, { manager: this.manager, settings: this.settings, reply: (e) => this.sendTo(socket, e) })) return;
     if (this.orchestrators.handle(cmd)) return;
     if (

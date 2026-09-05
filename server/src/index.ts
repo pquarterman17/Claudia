@@ -204,6 +204,13 @@ const pulser = fleet.store
 const pulseTicker = setInterval(() => void pulser?.tick(), 15_000);
 pulseTicker.unref?.();
 
+// Mirrored transcripts, read only while somebody is watching one. Faster than
+// the pulse because this is a human reading a conversation rather than a fleet
+// deciding what to spend, and it costs nothing when nothing is mirrored: the
+// service returns immediately with no watches.
+const mirrorTicker = setInterval(() => void gateway.pollMirrors(), 2_000);
+mirrorTicker.unref?.();
+
 const usage = new UsageService(() => gateway.broadcast({ type: 'usage', usage: usage.snapshot() }));
 usage.setTier(saved.planTier);
 if (saved.customCeilings) usage.setCustomCeilings(saved.customCeilings);
@@ -281,6 +288,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     clearInterval(gitTicker);
     clearInterval(pruneTicker);
     clearInterval(pulseTicker);
+    clearInterval(mirrorTicker);
     usage.stop();
     manager.stopAll();
     // Closed on the way out so the file is not left locked by a connection

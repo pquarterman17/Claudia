@@ -95,6 +95,25 @@ export type ServerEvent =
   /** A page of history, in reply to `get_fleet_events`. */
   | { type: 'fleet_events'; missionId: string; events: FleetEvent[] }
   /**
+   * The backlog for a newly mirrored session, tail-first.
+   *
+   * `elided` is how many steps were dropped off the front. A long transcript is
+   * not a payload, and saying nothing about the cut would let a viewer read a
+   * partial conversation as a complete one.
+   */
+  | { type: 'mirror_opened'; sessionId: string; transcript: TranscriptItem[]; feed: FeedStep[]; elided: number }
+  /** One step, as it is read. */
+  | { type: 'mirror_step'; sessionId: string; step: FeedStep }
+  /** A revision to a step already sent, possibly in the backlog. */
+  | { type: 'mirror_patch'; sessionId: string; stepId: string; patch: FeedStepPatch }
+  | { type: 'mirror_item'; sessionId: string; item: TranscriptItem }
+  /**
+   * There is nothing to read: no transcript on this machine, or it cannot be
+   * opened. A normal answer rather than an error — a session running on another
+   * machine, or on the web, has no local log and never will.
+   */
+  | { type: 'mirror_unavailable'; sessionId: string; reason: string }
+  /**
    * One event, as it is appended.
    *
    * Broadcast AFTER its transaction commits, never during: a sequence number
@@ -255,6 +274,15 @@ export type ClientCommand =
   | { type: 'list_tasks'; missionId: string }
   /** `afterSeq` is the client's high-water mark; 0 asks for the whole log. */
   | { type: 'get_fleet_events'; missionId: string; afterSeq?: number }
+  /**
+   * Follow a session Claudia does not own, by reading its transcript.
+   *
+   * On demand rather than always: the usage reader already sweeps every log on
+   * the machine for totals, but reconstructing a conversation is per-session
+   * work and only worth doing for the one somebody is looking at.
+   */
+  | { type: 'mirror_session'; sessionId: string }
+  | { type: 'close_mirror'; sessionId: string }
   | { type: 'ping' };
 
 /**

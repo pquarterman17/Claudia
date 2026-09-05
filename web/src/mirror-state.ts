@@ -84,7 +84,14 @@ function withEntry(mirrors: Mirrors, id: string, view: MirrorView): Mirrors {
   return new Map(mirrors).set(id, view);
 }
 
-/** The events this fold owns, named once so the guard above can run first. */
+/**
+ * The events this fold owns, named once so the guard above can run first.
+ *
+ * `server/test/client-events.test.ts` reads this list out of the source and
+ * checks it against the store's switch, because between them these two are the
+ * whole of the client's event handling and a member with nothing reading it is
+ * not a type error.
+ */
 const MIRROR_EVENTS = new Set<ServerEvent['type']>([
   'mirror_opened',
   'mirror_unavailable',

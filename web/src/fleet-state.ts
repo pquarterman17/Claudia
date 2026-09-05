@@ -1,4 +1,4 @@
-import type { FleetEvent, Mission, ServerEvent, Task } from '@claudia/shared';
+import type { Escalation, FleetEvent, Mission, ServerEvent, Task } from '@claudia/shared';
 
 /**
  * What the client keeps for the mission layer.
@@ -22,6 +22,15 @@ export interface FleetState {
   /** Recent history by mission id, oldest first. */
   events: ReadonlyMap<string, FleetEvent[]>;
   /**
+   * Decisions a mission is waiting on, by mission id.
+   *
+   * Pending ones, which is what an inbox is. The watchdog files one when a run
+   * is parked on a human, and until this existed it filed them into a table
+   * with nothing reading it — the mission simply stopped moving and said
+   * nothing about why.
+   */
+  escalations: ReadonlyMap<string, Escalation[]>;
+  /**
    * Set when the mission database would not open this run.
    *
    * The server says this once instead of refusing every command separately, so
@@ -31,7 +40,12 @@ export interface FleetState {
   unavailable?: string;
 }
 
-export const NO_FLEET: FleetState = { missions: [], tasks: new Map(), events: new Map() };
+export const NO_FLEET: FleetState = {
+  missions: [],
+  tasks: new Map(),
+  events: new Map(),
+  escalations: new Map(),
+};
 
 /** As much history as one mission's timeline shows. A log is not a payload. */
 const HISTORY = 200;
@@ -52,6 +66,8 @@ export function foldFleet(state: FleetState, event: ServerEvent): FleetState | u
       return { ...state, missions: event.missions, unavailable: undefined };
     case 'tasks':
       return { ...state, tasks: replace(state.tasks, event.missionId, event.tasks) };
+    case 'escalations':
+      return { ...state, escalations: replace(state.escalations, event.missionId, event.escalations) };
     case 'fleet_events':
       return { ...state, events: replace(state.events, event.missionId, merge(known(state, event.missionId), event.events)) };
     case 'fleet_event':
@@ -91,6 +107,7 @@ function merge(existing: readonly FleetEvent[], incoming: readonly FleetEvent[])
 const FLEET_EVENTS = new Set<ServerEvent['type']>([
   'missions',
   'tasks',
+  'escalations',
   'fleet_events',
   'fleet_event',
   'fleet_unavailable',

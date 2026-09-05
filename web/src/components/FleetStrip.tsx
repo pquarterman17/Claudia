@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { AGENT_KINDS, type AgentKind, type Mission } from '@claudia/shared';
 import type { FleetState } from '../fleet-state';
 import { send } from '../store';
+import { MissionEscalations } from './MissionEscalations';
 import { MissionTasks } from './MissionTasks';
 
 /**
@@ -41,7 +42,12 @@ export function FleetStrip({ fleet, connected }: { fleet: FleetState; connected:
   // number, which is exactly "something happened here" and nothing else.
   const latest = open === undefined ? undefined : fleet.events.get(open)?.at(-1)?.seq;
   useEffect(() => {
-    if (open !== undefined && latest !== undefined) send({ type: 'list_tasks', missionId: open });
+    if (open === undefined || latest === undefined) return;
+    send({ type: 'list_tasks', missionId: open });
+    // And the inbox with them: the watchdog files an escalation and notes it
+    // in the log, so the log moving is exactly the signal that one may be
+    // waiting.
+    send({ type: 'list_escalations', missionId: open });
   }, [open, latest]);
 
   const expand = (mission: Mission): void => {
@@ -51,6 +57,7 @@ export function FleetStrip({ fleet, connected }: { fleet: FleetState; connected:
     // missions is twenty task lists and twenty logs nobody is looking at.
     if (next !== undefined) {
       send({ type: 'list_tasks', missionId: mission.id });
+      send({ type: 'list_escalations', missionId: mission.id });
       send({ type: 'get_fleet_events', missionId: mission.id, afterSeq: 0 });
     }
   };
@@ -122,6 +129,11 @@ export function FleetStrip({ fleet, connected }: { fleet: FleetState; connected:
                     {mission.watch === 'watching' ? 'watching — pause' : 'paused — start watching'}
                   </button>
                 </div>
+                {open === mission.id && (
+                  <div style={{ paddingLeft: 16 }}>
+                    <MissionEscalations missionId={mission.id} escalations={fleet.escalations.get(mission.id)} />
+                  </div>
+                )}
                 {open === mission.id && (
                   <MissionTasks
                     missionId={mission.id}

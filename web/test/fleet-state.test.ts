@@ -1,4 +1,4 @@
-import type { FleetEvent, Mission, ServerEvent, Task } from '@claudia/shared';
+import type { Escalation, FleetEvent, Mission, ServerEvent, Task } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
 import { foldFleet, NO_FLEET, type FleetState } from '../src/fleet-state';
 
@@ -57,6 +57,37 @@ describe('what the fold owns', () => {
       { type: 'tasks', missionId: 'm1', tasks: [task('t1', 'm1')] },
     );
     expect(state.tasks.get('m1')?.map((t) => t.id)).toEqual(['t1']);
+  });
+});
+
+describe('the inbox', () => {
+  const escalation = (id: string, missionId = 'm1', resolution: Escalation['resolution'] = 'pending'): Escalation =>
+    ({ id, missionId, source: 'system', request: 'git push', reason: 'parked', severity: 'blocking', resolution, createdAt: 1 }) as Escalation;
+
+  it('keeps each mission’s escalations apart', () => {
+    const state = fold(
+      NO_FLEET,
+      { type: 'escalations', missionId: 'm1', escalations: [escalation('e1')] },
+      { type: 'escalations', missionId: 'm2', escalations: [escalation('e2', 'm2')] },
+    );
+    expect(state.escalations.get('m1')?.map((e) => e.id)).toEqual(['e1']);
+    expect(state.escalations.get('m2')?.map((e) => e.id)).toEqual(['e2']);
+  });
+
+  it('replaces rather than merges, so an answered one disappears', () => {
+    // The server answers a resolve with what is STILL pending. Merging would
+    // leave the thing just decided sitting in the inbox.
+    const state = fold(
+      NO_FLEET,
+      { type: 'escalations', missionId: 'm1', escalations: [escalation('e1'), escalation('e2')] },
+      { type: 'escalations', missionId: 'm1', escalations: [escalation('e2')] },
+    );
+    expect(state.escalations.get('m1')?.map((e) => e.id)).toEqual(['e2']);
+  });
+
+  it('starts empty rather than undefined, so a mission never renders a stale inbox', () => {
+    expect(NO_FLEET.escalations.size).toBe(0);
+    expect(NO_FLEET.escalations.get('m1')).toBeUndefined();
   });
 });
 

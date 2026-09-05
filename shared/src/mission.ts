@@ -46,7 +46,30 @@ export type WorktreeState = 'active' | 'idle' | 'stale' | 'archived' | 'removed'
 
 export type EscalationSeverity = 'info' | 'warning' | 'blocking';
 
-export type EscalationResolution = 'pending' | 'approved' | 'denied' | 'expired' | 'withdrawn';
+/**
+ * The roster as data, so the wire checker and the store cannot drift apart —
+ * the same reason `AGENT_KINDS` is a list rather than only a union.
+ */
+export const ESCALATION_RESOLUTIONS = ['pending', 'approved', 'denied', 'expired', 'withdrawn'] as const;
+
+export type EscalationResolution = (typeof ESCALATION_RESOLUTIONS)[number];
+
+/**
+ * The resolutions a person may choose.
+ *
+ * Narrower than the column on purpose. `pending` is not a resolution and the
+ * store refuses it. `expired` belongs to a clock — nothing implements expiry
+ * yet, and a human marking something expired would be backdating a decision
+ * they actually made. Approving, denying and withdrawing are the three a
+ * person can honestly mean.
+ */
+export const HUMAN_RESOLUTIONS = ['approved', 'denied', 'withdrawn'] as const;
+
+export type HumanResolution = (typeof HUMAN_RESOLUTIONS)[number];
+
+export function isHumanResolution(value: unknown): value is HumanResolution {
+  return typeof value === 'string' && (HUMAN_RESOLUTIONS as readonly string[]).includes(value);
+}
 
 /** Who caused an event. Children are never trusted; humans always are. */
 export type FleetActor = 'human' | 'manager' | 'child' | 'system';

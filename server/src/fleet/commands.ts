@@ -1,4 +1,4 @@
-import type { ClientCommand, ServerEvent } from '@claudia/shared';
+import type { ClientCommand, EscalationResolution, ServerEvent } from '@claudia/shared';
 import type { FleetStore } from '../store/index.js';
 
 /**
@@ -23,6 +23,8 @@ const FLEET_COMMANDS = new Set([
   'list_tasks',
   'set_task_status',
   'get_fleet_events',
+  'list_escalations',
+  'resolve_escalation',
 ]);
 
 export function isFleetCommand(cmd: ClientCommand): boolean {
@@ -87,6 +89,29 @@ export function handleFleetCommand(cmd: ClientCommand, store: FleetStore | undef
       if (!events.ok) return [notice(events.message)];
       return [{ type: 'fleet_events', missionId: cmd.missionId, events: events.value }];
     }
+    case 'list_escalations':
+      // Pending unless asked otherwise. The inbox is the point; the settled
+      // ones are an audit trail somebody goes looking for.
+      return listEscalations(store, cmd.missionId, cmd.resolution ?? 'pending');
+    case 'resolve_escalation': {
+      const answered = store.escalations.resolve(cmd.escalationId, cmd.resolution, cmd.note);
+      // The store refuses `pending` and refuses re-resolving something already
+      // settled, in its own words — overwriting a decision somebody made is
+      // the one thing an audit trail cannot do. Passed through rather than
+      // rephrased.
+      if (!answered.ok) return [notice(answered.message)];
+      // Recorded in the timeline too, so the log shows who answered and how,
+      // beside the escalation it answers.
+      const logged = store.events.append({
+        missionId: cmd.missionId,
+        ...(answered.value.taskId !== undefined ? { taskId: answered.value.taskId } : {}),
+        actor: 'human',
+        kind: `escalation_${cmd.resolution}`,
+        payload: { request: answered.value.request, note: cmd.note ?? null },
+      });
+      if (!logged.ok) return [notice(logged.message)];
+      return listEscalations(store, cmd.missionId, 'pending');
+    }
     default:
       return [];
   }
@@ -95,6 +120,11 @@ export function handleFleetCommand(cmd: ClientCommand, store: FleetStore | undef
 function listMissions(store: FleetStore): ServerEvent[] {
   const missions = store.missions.list();
   return missions.ok ? [{ type: 'missions', missions: missions.value }] : [notice(missions.message)];
+}
+
+function listEscalations(store: FleetStore, missionId: string, resolution: EscalationResolution): ServerEvent[] {
+  const found = store.escalations.listByMission(missionId, resolution);
+  return found.ok ? [{ type: 'escalations', missionId, escalations: found.value }] : [notice(found.message)];
 }
 
 function listTasks(store: FleetStore, missionId: string): ServerEvent[] {

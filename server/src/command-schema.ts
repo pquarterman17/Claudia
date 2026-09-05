@@ -12,7 +12,7 @@
  * cases fail loudly (a missing `case` falls through to "unknown command
  * type") the moment the two drift apart.
  */
-import { TASK_TRANSITIONS, type ClientCommand } from '@claudia/shared';
+import { ESCALATION_RESOLUTIONS, HUMAN_RESOLUTIONS, TASK_TRANSITIONS, type ClientCommand } from '@claudia/shared';
 import {
   answersField, field, imagesField, isAgentKind, isBool, isBulkOp, isDebateSubject, isDirection,
   isEffortLevel, isFinishAction, isLabel, isNullableLabel, isNum, isPermissionMode, isPlainObject,
@@ -26,6 +26,8 @@ const isMissionWatch = (v: unknown): boolean => v === 'watching' || v === 'pause
 /** Checked against the union the store enforces, so the two cannot drift. */
 const TASK_STATUSES: readonly string[] = Object.keys(TASK_TRANSITIONS);
 const isTaskStatus = (v: unknown): boolean => typeof v === 'string' && TASK_STATUSES.includes(v);
+const isHumanResolution = (v: unknown): boolean => typeof v === 'string' && (HUMAN_RESOLUTIONS as readonly string[]).includes(v);
+const isResolution = (v: unknown): boolean => typeof v === 'string' && (ESCALATION_RESOLUTIONS as readonly string[]).includes(v);
 const isSeq = (v: unknown): boolean => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
 const isLabelList = (v: unknown): boolean => Array.isArray(v) && v.every((item) => isLabel(item));
 
@@ -189,6 +191,15 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
     case 'set_countdown':
     case 'set_stop_on_close':
       return runChecks(type, o, [req('seconds', isNum, 'a number')]);
+    case 'list_escalations':
+      return runChecks(type, o, [req('missionId', isLabel, 'a string'), opt('resolution', isResolution, 'a resolution')]);
+    case 'resolve_escalation':
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        req('escalationId', isLabel, 'a string'),
+        req('resolution', isHumanResolution, 'approved, denied or withdrawn'),
+        opt('note', isText, 'a string'),
+      ]);
     case 'set_fleet_limits':
       return runChecks(type, o, [req('maxChildren', isNum, 'a number'), req('maxAttempts', isNum, 'a number')]);
     case 'rename_session':

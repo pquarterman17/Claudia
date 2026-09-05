@@ -15,6 +15,9 @@ import type {
   PermissionLaunchMode, PromptImage, SavedSession, SessionSummary, SessionTemplate,
   CrewStatus,
   DebateStatus,
+  Escalation,
+  EscalationResolution,
+  HumanResolution,
   FleetEvent,
   FleetLimits,
   Mission,
@@ -98,6 +101,8 @@ export type ServerEvent =
   | { type: 'tasks'; missionId: string; tasks: Task[] }
   /** A page of history, in reply to `get_fleet_events`. */
   | { type: 'fleet_events'; missionId: string; events: FleetEvent[] }
+  /** The decisions a mission is waiting on, newest first. */
+  | { type: 'escalations'; missionId: string; escalations: Escalation[] }
   /**
    * The backlog for a newly mirrored session, tail-first.
    *
@@ -293,6 +298,14 @@ export type ClientCommand =
   | { type: 'set_task_status'; missionId: string; taskId: string; status: TaskStatus }
   /** `afterSeq` is the client's high-water mark; 0 asks for the whole log. */
   | { type: 'get_fleet_events'; missionId: string; afterSeq?: number }
+  /** Pending by default; pass a resolution to read what was already decided. */
+  | { type: 'list_escalations'; missionId: string; resolution?: EscalationResolution }
+  /**
+   * Answer one. `approved` and `denied` are the human's; `withdrawn` says the
+   * question stopped mattering. `expired` is the clock's and is not offered,
+   * and `pending` is not a resolution — the store refuses both.
+   */
+  | { type: 'resolve_escalation'; missionId: string; escalationId: string; resolution: HumanResolution; note?: string }
   /**
    * Follow a session Claudia does not own, by reading its transcript.
    *

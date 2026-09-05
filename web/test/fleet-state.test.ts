@@ -95,7 +95,7 @@ describe('one timeline out of two sources', () => {
   it('appends a live event to the page it already has', () => {
     const state = fold(
       NO_FLEET,
-      { type: 'fleet_events', missionId: 'm1', events: [fleetEvent(1), fleetEvent(2)] },
+      { type: 'fleet_events', missionId: 'm1', events: [fleetEvent(1), fleetEvent(2)], elided: 0, more: false, throughSeq: 0 },
       { type: 'fleet_event', event: fleetEvent(3) },
     );
     expect(state.events.get('m1')?.map((e) => e.seq)).toEqual([1, 2, 3]);
@@ -107,7 +107,7 @@ describe('one timeline out of two sources', () => {
     const state = fold(
       NO_FLEET,
       { type: 'fleet_event', event: fleetEvent(3) },
-      { type: 'fleet_events', missionId: 'm1', events: [fleetEvent(1), fleetEvent(2), fleetEvent(3)] },
+      { type: 'fleet_events', missionId: 'm1', events: [fleetEvent(1), fleetEvent(2), fleetEvent(3)], elided: 0, more: false, throughSeq: 0 },
     );
     expect(state.events.get('m1')?.map((e) => e.seq)).toEqual([1, 2, 3]);
   });
@@ -124,7 +124,7 @@ describe('one timeline out of two sources', () => {
   it('keeps a live event under its own mission, not the one last asked about', () => {
     const state = fold(
       NO_FLEET,
-      { type: 'fleet_events', missionId: 'm1', events: [fleetEvent(1)] },
+      { type: 'fleet_events', missionId: 'm1', events: [fleetEvent(1)], elided: 0, more: false, throughSeq: 0 },
       { type: 'fleet_event', event: fleetEvent(9, 'm2') },
     );
     expect(state.events.get('m1')?.map((e) => e.seq)).toEqual([1]);
@@ -133,10 +133,60 @@ describe('one timeline out of two sources', () => {
 
   it('keeps the newest history when a log outgrows the cap', () => {
     const many = Array.from({ length: 260 }, (_, i) => fleetEvent(i + 1));
-    const state = fold(NO_FLEET, { type: 'fleet_events', missionId: 'm1', events: many });
+    const state = fold(NO_FLEET, { type: 'fleet_events', missionId: 'm1', events: many, elided: 0, more: false, throughSeq: 0 });
     const kept = state.events.get('m1') ?? [];
     expect(kept).toHaveLength(200);
     expect(kept[kept.length - 1]?.seq).toBe(260);
+  });
+});
+
+describe('a page that admits to being one', () => {
+  const page = (over: Partial<{ events: FleetEvent[]; elided: number; more: boolean; throughSeq: number; reset: string }> = {}) =>
+    ({
+      type: 'fleet_events' as const,
+      missionId: 'm1',
+      events: [fleetEvent(1)],
+      elided: 0,
+      more: false,
+      throughSeq: 1,
+      ...over,
+    });
+
+  it('remembers how many it was not sent', () => {
+    const state = fold(NO_FLEET, page({ elided: 700 }));
+    expect(state.pages.get('m1')?.elided).toBe(700);
+  });
+
+  it('remembers where to ask from next, which is the window and not the last event', () => {
+    // The two differ whenever the window was sparse. Continuing from the last
+    // event would re-walk a gap the server already said was empty, one
+    // sequence per round trip.
+    const state = fold(NO_FLEET, page({ events: [fleetEvent(2)], more: true, throughSeq: 501 }));
+    expect(state.pages.get('m1')?.through).toBe(501);
+    expect(state.pages.get('m1')?.more).toBe(true);
+  });
+
+  it('adds what its own cap dropped to what the server skipped', () => {
+    // A viewer told "12 earlier events" when 212 are missing has been given a
+    // number worse than none.
+    const many = Array.from({ length: 260 }, (_, i) => fleetEvent(i + 1));
+    const state = fold(NO_FLEET, page({ events: many, elided: 700, throughSeq: 260 }));
+    expect(state.events.get('m1')).toHaveLength(200);
+    expect(state.pages.get('m1')?.elided).toBe(760);
+  });
+
+  it('discards what it holds when told its cursor could not be replayed', () => {
+    // Merging would splice a fresh page onto a history that never led to it,
+    // producing a timeline that looks continuous and is not.
+    const before = fold(NO_FLEET, page({ events: [fleetEvent(1), fleetEvent(2)], throughSeq: 2 }));
+    const after = fold(before, page({ events: [fleetEvent(90)], throughSeq: 90, reset: 'the client is ahead of the log' }));
+    expect(after.events.get('m1')?.map((e) => e.seq)).toEqual([90]);
+  });
+
+  it('merges when there is no reset, which is the ordinary case', () => {
+    const before = fold(NO_FLEET, page({ events: [fleetEvent(1)], throughSeq: 1 }));
+    const after = fold(before, page({ events: [fleetEvent(2)], throughSeq: 2 }));
+    expect(after.events.get('m1')?.map((e) => e.seq)).toEqual([1, 2]);
   });
 });
 

@@ -27,6 +27,17 @@ import { MissionTasks } from './MissionTasks';
  * stand between typing a task and paying for it: promoting the task to `ready`
  * and setting the mission to `watching`.
  */
+/**
+ * The sequence this client is caught up TO, which the server told it.
+ *
+ * Not the last event it holds. Those differ whenever the page's window was
+ * sparse, and continuing from the last event would re-walk a gap the server
+ * has already said is empty — one sequence per round trip.
+ */
+function caughtUpTo(fleet: FleetState, missionId: string): number {
+  return fleet.pages.get(missionId)?.through ?? 0;
+}
+
 export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; connected: boolean; limits: FleetLimits }) {
   const [open, setOpen] = useState<string | undefined>(undefined);
   const [creating, setCreating] = useState(false);
@@ -52,6 +63,19 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
     send({ type: 'list_escalations', missionId: open });
   }, [open, latest]);
 
+  // A page that said it was not the end. Asked for from the last sequence
+  // rendered, so every round strictly advances and the loop ends when the
+  // server stops saying `more` — the client can no longer stop a page short
+  // and believe it is caught up.
+  const more = open === undefined ? false : (fleet.pages.get(open)?.more ?? false);
+  useEffect(() => {
+    if (open !== undefined && more) send({ type: 'get_fleet_events', missionId: open, afterSeq: caughtUpTo(fleet, open) });
+    // `fleet` is deliberately not a dependency: this fires on the flag, and the
+    // reply that lands clears it. Depending on the whole snapshot would re-ask
+    // on every unrelated mission update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, more]);
+
   const expand = (mission: Mission): void => {
     const next = open === mission.id ? undefined : mission.id;
     setOpen(next);
@@ -60,7 +84,10 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
     if (next !== undefined) {
       send({ type: 'list_tasks', missionId: mission.id });
       send({ type: 'list_escalations', missionId: mission.id });
-      send({ type: 'get_fleet_events', missionId: mission.id, afterSeq: 0 });
+      // From what this client has already rendered, not from zero. A cursor of
+      // zero asks for a fresh tail every time, which re-sends a page the board
+      // is already holding; a real cursor asks only for the gap.
+      send({ type: 'get_fleet_events', missionId: mission.id, afterSeq: caughtUpTo(fleet, mission.id) });
     }
   };
 
@@ -143,6 +170,7 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
                     cwd={mission.cwd}
                     tasks={fleet.tasks.get(mission.id)}
                     events={fleet.events.get(mission.id)}
+                    elided={fleet.pages.get(mission.id)?.elided ?? 0}
                   />
                 )}
               </div>

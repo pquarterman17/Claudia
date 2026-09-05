@@ -4,6 +4,7 @@ import { runBulkOp } from './bulk-ops.js';
 import { parseCommand } from './command-schema.js';
 import { buildHello, ownedSessionIds } from './hello-event.js';
 import { handleFleetCommand, isFleetCommand } from './fleet/commands.js';
+import { handleSessionActionCommand } from './session-actions.js';
 import { handleSessionQueryCommand } from './session-queries.js';
 import type { FleetStore } from './store/index.js';
 import type { Orchestrators } from './orchestrators.js';
@@ -230,7 +231,9 @@ export class Gateway {
     // One-session setting changes and preference writes each share one shape,
     // and each lives in its own module.
     if (handleSessionSettingCommand(cmd, this.manager)) return;
-    if (handleSessionQueryCommand(cmd, { manager: this.manager, reply: (e) => this.sendTo(socket, e) })) return;
+    const reply = (event: ServerEvent): void => this.sendTo(socket, event);
+    if (handleSessionQueryCommand(cmd, { manager: this.manager, reply })) return;
+    if (handleSessionActionCommand(cmd, { manager: this.manager, reply })) return;
     if (handleSavedSessionCommand(cmd, { manager: this.manager, settings: this.settings, reply: (e) => this.sendTo(socket, e) })) return;
     if (this.orchestrators.handle(cmd)) return;
     if (
@@ -285,51 +288,6 @@ export class Gateway {
               message: `Folder picker failed: ${err instanceof Error ? err.message : String(err)}`,
             }),
           );
-        return;
-      case 'send_prompt':
-        this.manager.get(cmd.sessionId)?.sendPrompt(cmd.text, cmd.images);
-        return;
-      case 'approve':
-        this.manager.get(cmd.sessionId)?.approve(cmd.requestId);
-        return;
-      case 'deny':
-        this.manager.get(cmd.sessionId)?.deny(cmd.requestId, cmd.message);
-        return;
-      case 'always_allow_project':
-        void this.manager.get(cmd.sessionId)?.alwaysAllowProject(cmd.requestId).then((r) => {
-          if (!r.ok) this.sendTo(socket, { type: 'server_error', message: r.message });
-        });
-        return;
-      case 'answer_question':
-        this.manager.get(cmd.sessionId)?.answerQuestion(cmd.requestId, cmd.answers);
-        return;
-      case 'interrupt':
-        void this.manager.get(cmd.sessionId)?.interrupt();
-        return;
-      case 'get_transcript':
-        this.sendTo(socket, {
-          type: 'transcript',
-          sessionId: cmd.sessionId,
-          items: this.manager.get(cmd.sessionId)?.transcript.list() ?? [],
-        });
-        return;
-      case 'stop_session':
-        this.manager.get(cmd.sessionId)?.stop();
-        return;
-      case 'remove_session':
-        this.manager.remove(cmd.sessionId);
-        return;
-      case 'rename_session':
-        this.manager.get(cmd.sessionId)?.rename(cmd.title);
-        return;
-      case 'set_permission_mode':
-        void this.manager.get(cmd.sessionId)?.setPermissionMode(cmd.mode);
-        return;
-      case 'refresh_context':
-        this.manager.get(cmd.sessionId)?.refreshContext();
-        return;
-      case 'stop_task':
-        void this.manager.get(cmd.sessionId)?.stopTask(cmd.taskId)?.catch(() => undefined);
         return;
       case 'require_approvals_everywhere':
         for (const s of this.manager.summaries()) {

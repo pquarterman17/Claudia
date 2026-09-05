@@ -1,12 +1,16 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parseCommand } from '../src/command-schema.js';
 import { MAX_FRAME_BYTES, MAX_IMAGE_DATA_LEN, MAX_TEXT_LEN, MAX_TOTAL_TEXT_LEN } from '../src/command-fields.js';
 
 /**
  * One valid example per ClientCommand member (shared/src/protocol.ts), kept
- * as a flat table so adding a 55th command type is a one-line addition here
- * rather than a new test to remember to write. The count below is the real
- * guardrail: it fails the moment this list and the union drift apart.
+ * as a flat table so adding a command type is a one-line addition here rather
+ * than a new test to remember to write. The guardrail below reads the union
+ * out of the protocol and names any member with no row — and any row with no
+ * member, so a renamed command does not leave a dead example behind.
  */
 const VALID: Array<[string, Record<string, unknown>]> = [
   ['launch_session', {
@@ -82,13 +86,39 @@ const VALID: Array<[string, Record<string, unknown>]> = [
   ['mirror_session', { type: 'mirror_session', sessionId: 's1' }],
   ['close_mirror', { type: 'close_mirror', sessionId: 's1' }],
   ['set_fleet_limits', { type: 'set_fleet_limits', maxChildren: 4, maxAttempts: 3 }],
+  ['list_escalations', { type: 'list_escalations', missionId: 'm1', resolution: 'pending' }],
+  ['resolve_escalation', { type: 'resolve_escalation', missionId: 'm1', escalationId: 'e1', resolution: 'approved', note: 'ok' }],
 ];
 
+/** The `type: '...'` of every member of the ClientCommand union, from source. */
+function clientCommandTypes(): string[] {
+  const path = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'shared', 'src', 'protocol.ts');
+  const source = readFileSync(path, 'utf8');
+  const start = source.indexOf('export type ClientCommand =');
+  expect(start).toBeGreaterThan(-1);
+  const end = source.indexOf('\nexport ', start + 1);
+  const union = source.slice(start, end === -1 ? undefined : end);
+  return [...union.matchAll(/type: '([a-z_]+)'/g)].map((m) => m[1] as string);
+}
+
 describe('parseCommand: every ClientCommand member', () => {
-  // Pinned so a member added to the union without a row above fails here,
-  // not silently — 64 is the count in shared/src/protocol.ts as of this PR.
-  it('covers all 64 members', () => {
-    expect(VALID).toHaveLength(64);
+  // Read out of the union rather than pinned to a number. The count was a
+  // hand-maintained 64 and it did NOT catch a new member: adding a command
+  // without a row here left the assertion passing, because it only counted
+  // the table against itself. Naming the missing member is also a better
+  // failure than "expected 66 to be 64".
+  it('has a row for every member of the union', () => {
+    const declared = clientCommandTypes();
+    // A floor under the extraction, so a union whose shape stops matching
+    // cannot make this pass vacuously.
+    expect(declared.length).toBeGreaterThan(50);
+    const covered = new Set(VALID.map(([label]) => label));
+    expect(declared.filter((type) => !covered.has(type))).toEqual([]);
+  });
+
+  it('has no row for anything the union does not declare', () => {
+    const declared = new Set(clientCommandTypes());
+    expect(VALID.map(([label]) => label).filter((label) => !declared.has(label))).toEqual([]);
   });
 
   it.each(VALID)('accepts a valid %s', (_label, cmd) => {

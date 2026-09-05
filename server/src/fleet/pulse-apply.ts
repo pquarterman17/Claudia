@@ -143,6 +143,13 @@ export function applyWatchdogOutcomes(
         // pulse and advanced the cadence while the blocking escalation — the
         // thing a human is supposed to answer — had been dropped.
         if (!filed.ok) throw new Error(filed.message);
+        // In the log as well as the inbox. Found by audit: an escalation was
+        // filed into a table with no wire surface and no note in the timeline,
+        // so the one thing a human is supposed to answer left no trace they
+        // could see — a watched mission simply stopped moving. The note is
+        // idempotent on the same reason, so a fault that re-escalates does not
+        // fill the log.
+        note(store, mission.id, run.taskId, 'escalated', `${action.request}: ${action.reason}`);
         result.escalated += 1;
         // An escalation does not end the run: it is still active, still
         // holding its task, and still occupying a slot.

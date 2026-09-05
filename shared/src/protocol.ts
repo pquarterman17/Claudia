@@ -10,9 +10,9 @@
  */
 import type {
   AgentKind,
-  ChainStep, ContextUsage, EffectiveSettings, EffortLevel, FeedStep, FeedStepPatch,
+  EffectiveSettings, EffortLevel, FeedStep, FeedStepPatch,
   FileCheckpoint, FinishActionKey, HostPlatform, McpServerInfo, ModelChoice,
-  PermissionLaunchMode, PromptImage, SavedSession, SessionSummary, SessionTemplate,
+  PermissionLaunchMode, SavedSession, SessionSummary, SessionTemplate,
   CrewStatus,
   DebateStatus,
   Escalation,

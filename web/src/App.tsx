@@ -1,4 +1,3 @@
-import type { SessionSummary } from '@claudia/shared';
 import { useEffect, useRef, useState } from 'react';
 import { BoardControls } from './components/BoardControls';
 import { ControlSidebar } from './components/ControlSidebar';

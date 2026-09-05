@@ -354,7 +354,6 @@ export interface SessionTemplate {
 }
 
 export * from './operations.js';
-import type { EffectiveSettings, McpServerInfo } from './operations.js';
 
 export interface TokenCounts {
   inputTokens: number;
@@ -363,13 +362,13 @@ export interface TokenCounts {
   cacheCreationTokens: number;
 }
 
-// Re-exported so `@claudia/shared` keeps one entry point; also imported as
-// types because the protocol definitions below reference them directly.
+// Re-exported so `@claudia/shared` keeps one entry point. The protocol used
+// to live in this file and imported these directly; it is its own module now
+// and imports what it needs itself.
 export * from './usage.js';
 export * from './mission.js';
 export * from './orchestration.js';
 export * from './protocol.js';
-import type { PlanTier, UsageSnapshot } from './usage.js';
 
 export const CLIENT_PING_MS = 5_000;
 export const CLIENT_STALE_MS = 20_000;

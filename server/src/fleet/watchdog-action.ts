@@ -1,7 +1,7 @@
 import type { EscalationSeverity, TaskStatus } from '@claudia/shared';
 import { escalationKey } from './capabilities.js';
 import { dispatchKey } from './reconcile.js';
-import { backoffMs, DEFAULT_WATCHDOG, minutes, usablePolicy, type WatchdogPolicy } from './watchdog-policy.js';
+import { backoffMs, DEFAULT_WATCHDOG, usablePolicy, type WatchdogPolicy } from './watchdog-policy.js';
 import type { RunHealth, RunObservation } from './watchdog.js';
 
 /**

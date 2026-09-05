@@ -1,7 +1,5 @@
-import type { ChildRun, EscalationSeverity, SessionState, TaskStatus } from '@claudia/shared';
-import { escalationKey } from './capabilities.js';
-import { dispatchKey } from './reconcile.js';
-import { backoffMs, DEFAULT_WATCHDOG, minutes, usablePolicy, type WatchdogPolicy } from './watchdog-policy.js';
+import type { ChildRun, SessionState } from '@claudia/shared';
+import { DEFAULT_WATCHDOG, minutes, usablePolicy, type WatchdogPolicy } from './watchdog-policy.js';
 
 /**
  * Noticing that a child has stopped being useful.

@@ -1,4 +1,4 @@
-import type { AgentKind, ChildRun, Mission, SessionState, Task } from '@claudia/shared';
+import type { AgentKind, ChildRun, Mission, SessionState } from '@claudia/shared';
 import { transact } from '../store/db.js';
 import type { FleetStore } from '../store/index.js';
 import { judgeReported } from './evidence.js';

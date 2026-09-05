@@ -156,13 +156,28 @@ describe('judging a reported run', () => {
   });
 
   it('leaves a run alone that has not reported', async () => {
-    const { store, mission, run } = fixture({ work: true });
-    const back = store.runs.setState(run.id, 'stopped');
-    // `reported -> stopped` is not a legal run transition, so this run stays
-    // reported; the point is the filter, which is asserted directly below.
-    void back;
-    const other = fixture();
-    expect(await judgeReported(deps(other.store), other.mission)).toBe(1);
+    // Rewritten after CodeQL pointed at an unused variable here, which was the
+    // symptom: the old version destructured a mission it never used, moved a
+    // run through a transition the store refuses, and then asserted on a
+    // SECOND fixture — so it proved nothing about the filter it was named for.
+    const { store, mission, task } = fixture({ work: true });
+    const running = store.runs.create({
+      missionId: mission.id,
+      taskId: task.id,
+      agent: 'claude',
+      attempt: 2,
+      state: 'dispatched',
+    });
+    if (!running.ok) throw new Error(running.message);
+
+    // One reported run and one still dispatched: exactly one judgement, and it
+    // belongs to the one that made a claim.
+    expect(await judgeReported(deps(store), mission)).toBe(1);
+    const log = store.events.sinceForMission(mission.id);
+    if (!log.ok) throw new Error(log.message);
+    const judgements = log.value.filter((e) => e.kind === 'task_judged');
+    expect(judgements).toHaveLength(1);
+    expect(judgements[0]?.runId).not.toBe(running.value.id);
   });
 
   it('says nothing it cannot see when there is no worktree', async () => {

@@ -1,4 +1,4 @@
-import type { ChildRun, Mission, Task } from '@claudia/shared';
+import type { ChildRun, FleetLimits, Mission, Task } from '@claudia/shared';
 
 /**
  * What the fleet should do next, decided by arithmetic rather than by a model.
@@ -18,12 +18,17 @@ import type { ChildRun, Mission, Task } from '@claudia/shared';
  * the same shape as `dispatch`.
  */
 
-export interface FleetPolicy {
-  /** Runs that may be in flight for this mission at once. */
-  maxChildren: number;
-  /** Attempts a single task gets before it stops being retried. */
-  maxAttempts: number;
-}
+/**
+ * The fleet's ceilings, under the name this module has always called them.
+ *
+ * An alias rather than a second declaration: the same two numbers are stored
+ * in settings, sent over the wire and offered by the UI, and the shared
+ * definition is the one all of them read. Kept named `FleetPolicy` here
+ * because that is what the reconciler's vocabulary calls a limit it decides
+ * against — the wire calls the same record limits, which is what it is once
+ * nobody is deciding with it.
+ */
+export type FleetPolicy = FleetLimits;
 
 /** What the mission has spent so far, measured by the caller. */
 export interface MissionSpend {

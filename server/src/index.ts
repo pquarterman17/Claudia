@@ -1,4 +1,4 @@
-import { MAX_CHILDREN_CEILING, type SessionState } from '@claudia/shared';
+import type { SessionState } from '@claudia/shared';
 import { resolvePort } from './resolve-port.js';
 import { createServer, type IncomingMessage } from 'node:http';
 import { join } from 'node:path';
@@ -198,7 +198,9 @@ function liveSessionFacts(): ReadonlyMap<string, SessionFacts> {
 const pulser = fleet.store
   ? new FleetPulser({
       store: fleet.store,
-      policy: { maxChildren: MAX_CHILDREN_CEILING, maxAttempts: 3 },
+      // Read at every mission's pulse, not captured here: the limits are a
+      // stored preference the user can change while the fleet is running.
+      policy: () => settings.get().fleetLimits,
       observeSessions: liveSessionFacts,
       launch: createLauncher({
         store: fleet.store,

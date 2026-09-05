@@ -1,4 +1,13 @@
-import type { FinishActionKey, PermissionLaunchMode, PlanTier, SessionTemplate, ToolkitAction } from '@claudia/shared';
+import {
+  DEFAULT_FLEET_LIMITS,
+  usableFleetLimits,
+  type FinishActionKey,
+  type FleetLimits,
+  type PermissionLaunchMode,
+  type PlanTier,
+  type SessionTemplate,
+  type ToolkitAction,
+} from '@claudia/shared';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -22,6 +31,16 @@ export interface Settings {
   toolkit: ToolkitAction[];
   /** Ceilings the user has calibrated themselves, used when planTier === 'custom'. */
   customCeilings?: { sessionTokens: number; weeklyTokens: number };
+  /**
+   * Fleet-wide ceilings, read at every pulse rather than captured at boot.
+   *
+   * Stored here rather than in the fleet database because it is a preference
+   * about this machine — how many children it can stand, how much a task is
+   * worth retrying — and it has to be readable before the database is known to
+   * have opened. The fleet runs without its store; it must not run without a
+   * limit.
+   */
+  fleetLimits: FleetLimits;
 }
 
 /** A generous ceiling; the palette stops being scannable long before this. */
@@ -37,6 +56,7 @@ const DEFAULTS: Settings = {
   recentDirectories: [],
   defaultPermissionMode: 'auto',
   templates: [],
+  fleetLimits: DEFAULT_FLEET_LIMITS,
   // Seeded rather than empty: a toolkit with nothing in it reads as broken, and
   // these three are the ones worth having in any repo. All are read-or-fix
   // instructions; nothing here pushes, tags or rewrites anything on its own.
@@ -124,7 +144,11 @@ export class SettingsStore {
     try {
       const raw = JSON.parse(readFileSync(this.path, 'utf8')) as Partial<Settings>;
       // Merge over defaults so a file written by an older version stays valid.
-      return { ...DEFAULTS, ...raw };
+      // The fleet limits are the one field re-read rather than trusted: this
+      // file is documented as hand-editable, and the pulse escalates every
+      // task under a policy it cannot use, so a typo here would take the fleet
+      // down rather than degrade it.
+      return { ...DEFAULTS, ...raw, fleetLimits: usableFleetLimits(raw.fleetLimits) };
     } catch {
       return { ...DEFAULTS };
     }

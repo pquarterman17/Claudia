@@ -81,13 +81,14 @@ const VALID: Array<[string, Record<string, unknown>]> = [
   ['set_task_status', { type: 'set_task_status', missionId: 'm1', taskId: 't1', status: 'ready' }],
   ['mirror_session', { type: 'mirror_session', sessionId: 's1' }],
   ['close_mirror', { type: 'close_mirror', sessionId: 's1' }],
+  ['set_fleet_limits', { type: 'set_fleet_limits', maxChildren: 4, maxAttempts: 3 }],
 ];
 
 describe('parseCommand: every ClientCommand member', () => {
   // Pinned so a member added to the union without a row above fails here,
-  // not silently — 63 is the count in shared/src/protocol.ts as of this PR.
-  it('covers all 63 members', () => {
-    expect(VALID).toHaveLength(63);
+  // not silently — 64 is the count in shared/src/protocol.ts as of this PR.
+  it('covers all 64 members', () => {
+    expect(VALID).toHaveLength(64);
   });
 
   it.each(VALID)('accepts a valid %s', (_label, cmd) => {

@@ -287,3 +287,66 @@ export const MAX_CHILDREN_PRESETS = [1, 2, 4, 8] as const;
 export const MAX_CHILDREN_DEFAULT = 4;
 /** Temporary, until the 16-child scale gate passes. See the plan's defaults. */
 export const MAX_CHILDREN_CEILING = 12;
+
+/**
+ * The fleet's own ceilings, applied on top of whatever each mission asks for.
+ *
+ * Two limits, one for each way a fleet runs away: `maxChildren` bounds how
+ * much it spends at once, `maxAttempts` bounds how long it keeps paying for a
+ * task that will not pass. A mission carries its own `maxChildren`; this is
+ * the fleet-wide cap the manager applies over the top of it, so lowering it
+ * throttles every mission at once without editing any of them.
+ *
+ * Shared rather than server-local because the same numbers have to be
+ * enforced by the pulse, stored in settings, and offered by the UI. Two copies
+ * of a limit is one limit and one lie.
+ */
+export interface FleetLimits {
+  /** Runs that may be in flight across the fleet at once. */
+  maxChildren: number;
+  /** Attempts a single task gets before it stops being retried. */
+  maxAttempts: number;
+}
+
+/** More than this is a loop with extra steps, not a retry. */
+export const MAX_ATTEMPTS_CEILING = 10;
+export const MAX_ATTEMPTS_DEFAULT = 3;
+
+/**
+ * The shipped limits: attempts bounded, children left to each mission.
+ *
+ * `maxChildren` defaults to the ceiling on purpose. A mission already picks
+ * its own child limit and the pulse takes the lower of the two, so a
+ * fleet-wide default below the ceiling would silently override a choice the
+ * human made per mission. The fleet cap exists to be *lowered* when a machine
+ * cannot take the load, not to be the first thing that binds.
+ */
+export const DEFAULT_FLEET_LIMITS: FleetLimits = Object.freeze({
+  maxChildren: MAX_CHILDREN_CEILING,
+  maxAttempts: MAX_ATTEMPTS_DEFAULT,
+});
+
+/**
+ * Reads limits from somewhere that could be wrong — a hand-edited settings
+ * file, an older version's record, a client — and answers with limits the
+ * fleet can actually run on.
+ *
+ * Clamped rather than refused. The reconciler treats an unusable policy as a
+ * reason to escalate every task, so a settings file with a typo in it would
+ * take the whole fleet down; falling back to the shipped number for the field
+ * that is wrong keeps the rest of the record. Fractions are rounded because
+ * "2.5 children" has no meaning at the point where it is compared with a
+ * count.
+ */
+export function usableFleetLimits(value: unknown): FleetLimits {
+  const raw = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+  return {
+    maxChildren: clampLimit(raw['maxChildren'], DEFAULT_FLEET_LIMITS.maxChildren, MAX_CHILDREN_CEILING),
+    maxAttempts: clampLimit(raw['maxAttempts'], DEFAULT_FLEET_LIMITS.maxAttempts, MAX_ATTEMPTS_CEILING),
+  };
+}
+
+function clampLimit(value: unknown, fallback: number, ceiling: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(ceiling, Math.max(1, Math.round(value)));
+}

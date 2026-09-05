@@ -188,6 +188,8 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
     case 'set_countdown':
     case 'set_stop_on_close':
       return runChecks(type, o, [req('seconds', isNum, 'a number')]);
+    case 'set_fleet_limits':
+      return runChecks(type, o, [req('maxChildren', isNum, 'a number'), req('maxAttempts', isNum, 'a number')]);
     case 'rename_session':
       return runChecks(type, o, [req('sessionId', isLabel, 'a string'), req('title', isLabel, 'a string')]);
     case 'set_model':

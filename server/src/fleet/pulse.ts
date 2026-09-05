@@ -81,6 +81,7 @@ export type ObserveSessions = () => ReadonlyMap<string, SessionFacts>;
 
 export interface PulseDeps {
   store: FleetStore;
+  /** The limits ONE pulse decides and spends against, already read. */
   policy: FleetPolicy;
   /** Absent means nothing launches; every dispatch is recorded as deferred. */
   launch?: LaunchChild;
@@ -89,6 +90,30 @@ export interface PulseDeps {
    * the one fault the watchdog exists to catch. */
   observeSessions: ObserveSessions;
   now?: () => number;
+}
+
+/**
+ * A fixed policy, or a way to read the one currently configured.
+ *
+ * The fleet's ceilings are a user preference now, so the number in force can
+ * change between one pulse and the next. A supplier is how the long-lived
+ * ticker sees that change without being rebuilt — the same reason
+ * `observeSessions` is a function rather than a snapshot.
+ *
+ * Read ONCE per mission, never per use. Two reads inside one pulse could
+ * straddle a settings write and let the half that decides to dispatch disagree
+ * with the half that checks for a free slot, which is exactly the split the
+ * shared `maxAttempts` fix closed on the watchdog.
+ */
+export type FleetPolicySource = FleetPolicy | (() => FleetPolicy);
+
+/** What a long-lived caller holds: a pulse whose policy is not yet read. */
+export interface PulseConfig extends Omit<PulseDeps, 'policy'> {
+  policy: FleetPolicySource;
+}
+
+function readPolicy(config: PulseConfig): PulseDeps {
+  return { ...config, policy: typeof config.policy === 'function' ? config.policy() : config.policy };
 }
 
 export interface PulseResult {
@@ -107,13 +132,13 @@ export interface PulseResult {
  * archived one has nothing to decide. Recovery, by contrast, runs over all of
  * them — reconciling stale rows is repair, not a decision to spend.
  */
-export async function pulseFleet(deps: PulseDeps): Promise<PulseResult[]> {
-  const missions = deps.store.missions.list('active');
-  if (!missions.ok) return [];
+export async function pulseFleet(config: PulseConfig): Promise<PulseResult[]> {
+  const missions = config.store.missions.list('active');
+  if (!missions.ok) return skipFleet(missions.message);
   const results: PulseResult[] = [];
   for (const mission of missions.value) {
     if (mission.watch !== 'watching') continue;
-    const result = await pulseMission(mission, deps);
+    const result = await pulseMission(mission, readPolicy(config));
     if (result) results.push(result);
   }
   return results;
@@ -123,7 +148,12 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
   const { store } = deps;
   const tasks = store.tasks.listByMission(mission.id);
   const runs = store.runs.listByMission(mission.id);
-  if (!tasks.ok || !runs.ok) return undefined;
+  // Said out loud, not swallowed. A pulse that cannot read its own rows
+  // decides nothing, and the ticker's only other trace of that is a mission
+  // that quietly stops moving — the exact symptom that is impossible to
+  // diagnose from the outside.
+  if (!tasks.ok) return skipMission(mission, `could not read tasks: ${tasks.message}`);
+  if (!runs.ok) return skipMission(mission, `could not read runs: ${runs.message}`);
 
   const now = deps.now?.() ?? Date.now();
   const live = deps.observeSessions();
@@ -168,7 +198,10 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
     applyWatchdogOutcomes(mission, observations, watchdogPolicy, deps, result, orders);
     return result;
   });
-  if (!applied.ok) return undefined;
+  // Nothing was written and nothing was launched: the orders were collected
+  // inside the transaction that rolled back, so there is no compensation to
+  // do here, only a reason to report.
+  if (!applied.ok) return skipMission(mission, `could not apply the pulse: ${applied.message}`);
 
   // After the commit, so a process that starts is one the file already
   // describes. A launch that fails now leaves a task the next pulse will see
@@ -200,11 +233,61 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
     compensateLaunch(deps, mission.id, order, reason);
     reason = 'the launcher declined';
   }
+  recovered(mission.id);
   return result;
 }
 
 /**
- * The clock, and the only thing in this module that remembers anything.
+ * The last reason reported for each scope — the fleet, or one mission.
+ *
+ * A pulse that fails is not stamped, so it is retried on the very next tick:
+ * every fifteen seconds, for as long as the fault lasts. Reporting each of
+ * those would bury the line that matters under four an hour times sixty, so a
+ * reason is said when it STARTS and again only if it changes or comes back.
+ *
+ * Cleared on success, which is what makes a fault that returns get said twice
+ * rather than once. Keyed by scope and not by message, so a mission whose
+ * failure changes shape reports the new shape.
+ */
+const reported = new Map<string, string>();
+
+function report(scope: string, line: string, reason: string): void {
+  if (reported.get(scope) === reason) return;
+  reported.set(scope, reason);
+  console.error(line);
+}
+
+/** Forgets a scope's last failure, so its next one is reported. */
+function recovered(scope: string): void {
+  reported.delete(scope);
+}
+
+/**
+ * Reports a tick that could not even find out what to pulse.
+ *
+ * Answers an empty list, which is what the caller does with it either way —
+ * the point is that the reason reaches somebody.
+ */
+function skipFleet(reason: string): PulseResult[] {
+  report('fleet', `[claudia] fleet pulse skipped: could not read missions: ${reason}`, reason);
+  return [];
+}
+
+/**
+ * Reports why one mission's pulse decided nothing, and answers `undefined`.
+ *
+ * `undefined` is the caller's signal to leave the mission unstamped and try
+ * again next tick, which is right — but on its own it is silent, and a fleet
+ * that has silently stopped deciding looks exactly like a fleet with nothing
+ * to decide.
+ */
+function skipMission(mission: Mission, reason: string): undefined {
+  report(mission.id, `[claudia] pulse skipped for mission ${mission.id} (${mission.name}): ${reason}`, reason);
+  return undefined;
+}
+
+/**
+ * The clock, and the only thing in this module that remembers a decision.
  *
  * Each mission carries its own `pulseSec`, so one global interval cannot be the
  * cadence: a mission set to four hours must not be decided on every fifteen
@@ -221,13 +304,17 @@ export class FleetPulser {
   /** Missions with a pulse still awaiting its launchers. */
   private readonly inFlight = new Set<string>();
 
-  constructor(private readonly deps: PulseDeps) {}
+  constructor(private readonly config: PulseConfig) {}
 
   /** Pulses every watched mission whose own interval has elapsed. */
   async tick(): Promise<PulseResult[]> {
-    const missions = this.deps.store.missions.list('active');
-    if (!missions.ok) return [];
-    const now = this.deps.now?.() ?? Date.now();
+    const missions = this.config.store.missions.list('active');
+    // The fleet's widest failure, and the quietest: an unreadable mission list
+    // is a tick that decides nothing for EVERY mission, and until this line it
+    // was indistinguishable from a tick with nothing due.
+    if (!missions.ok) return skipFleet(missions.message);
+    recovered('fleet');
+    const now = this.config.now?.() ?? Date.now();
     const results: PulseResult[] = [];
     for (const mission of missions.value) {
       if (mission.watch !== 'watching') continue;
@@ -244,7 +331,9 @@ export class FleetPulser {
       this.inFlight.add(mission.id);
       let result: PulseResult | undefined;
       try {
-        result = await pulseMission(mission, this.deps);
+        // Read per mission, so a limit lowered mid-tick binds the next
+        // mission rather than none of them.
+        result = await pulseMission(mission, readPolicy(this.config));
       } catch (err) {
         // One mission's failure is not the fleet's. The production caller is a
         // timer that discards this promise, so a rejection escaping here is an

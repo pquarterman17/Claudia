@@ -16,6 +16,7 @@ import type {
   CrewStatus,
   DebateStatus,
   FleetEvent,
+  FleetLimits,
   Mission,
   TaskStatus,
   MissionWatch,
@@ -85,6 +86,8 @@ export type ServerEvent =
       templates: SessionTemplate[];
       toolkit: ToolkitAction[];
       customCeilings?: { sessionTokens: number; weeklyTokens: number };
+      /** Fleet-wide ceilings. Always sent, because "unset" is not a limit. */
+      fleetLimits: FleetLimits;
     }
   /** Result of a browse_folder request; empty when the user cancelled. */
   | { type: 'folders_picked'; paths: string[] }
@@ -217,6 +220,9 @@ export type ClientCommand =
   | { type: 'get_transcript'; sessionId: string }
   /** Seconds after the last browser closes before sessions stop; 0 disables. */
   | { type: 'set_stop_on_close'; seconds: number }
+  /** Fleet-wide child and attempt ceilings. Clamped server-side; a value out
+   * of range is corrected rather than refused, and the reply says what stuck. */
+  | { type: 'set_fleet_limits'; maxChildren: number; maxAttempts: number }
   /** Saves (or overwrites, by name) a reusable launch shape. */
   | { type: 'save_template'; template: SessionTemplate }
   /** Fuzzy file search under a session's directory, for @-mention completion. */

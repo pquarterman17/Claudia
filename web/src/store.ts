@@ -24,6 +24,7 @@ import {
   type ToolkitAction,
 } from '@claudia/shared';
 import { foldMirror, type Mirrors } from './mirror-state';
+import { isSafeKey } from './safe-key';
 import { useSyncExternalStore } from 'react';
 
 /**
@@ -90,14 +91,6 @@ type Listener = () => void;
  * Minimal external store: one WS connection, immutable snapshots, no deps.
  * Snapshots are replaced (never mutated) so useSyncExternalStore stays stable.
  */
-/** Property names that must never be written from remote data. */
-const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-
-/** A usable object key: a non-empty string that cannot reach the prototype. */
-function isSafeKey(value: unknown): value is string {
-  return typeof value === 'string' && value !== '' && !UNSAFE_KEYS.has(value);
-}
-
 class Store {
   private state: ClaudiaState = {
     connected: false,

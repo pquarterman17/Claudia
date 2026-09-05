@@ -1,4 +1,5 @@
 import type { FeedStep, ServerEvent, TranscriptItem } from '@claudia/shared';
+import { isSafeKey } from './safe-key';
 
 /**
  * What the client keeps for sessions it is only WATCHING.
@@ -35,30 +36,34 @@ const CAP = 500;
  * the middle.
  */
 export function foldMirror(mirrors: Mirrors, event: ServerEvent): Mirrors | undefined {
+  if (!MIRROR_EVENTS.has(event.type)) return undefined;
+  // Validated HERE, where the key is written, rather than relied upon from a
+  // caller. A session id arrives over the socket, and `__proto__` as a key
+  // reaches the prototype and poisons every object inheriting from it. The
+  // store guards its own switch, but this function is exported and a guard
+  // upstream of it proves nothing about anybody else calling it.
+  const id = (event as { sessionId?: unknown }).sessionId;
+  if (!isSafeKey(id)) return mirrors;
+
   switch (event.type) {
     case 'mirror_opened':
-      return {
-        ...mirrors,
-        [event.sessionId]: { feed: event.feed, transcript: event.transcript, elided: event.elided },
-      };
+      return { ...mirrors, [id]: { feed: event.feed, transcript: event.transcript, elided: event.elided } };
     case 'mirror_unavailable':
-      return { ...mirrors, [event.sessionId]: { feed: [], transcript: [], elided: 0, reason: event.reason } };
+      return { ...mirrors, [id]: { feed: [], transcript: [], elided: 0, reason: event.reason } };
     case 'mirror_step': {
-      const open = mirrors[event.sessionId];
-      return open ? { ...mirrors, [event.sessionId]: { ...open, feed: [...open.feed, event.step].slice(-CAP) } } : mirrors;
+      const open = mirrors[id];
+      return open ? { ...mirrors, [id]: { ...open, feed: [...open.feed, event.step].slice(-CAP) } } : mirrors;
     }
     case 'mirror_item': {
-      const open = mirrors[event.sessionId];
-      return open
-        ? { ...mirrors, [event.sessionId]: { ...open, transcript: [...open.transcript, event.item].slice(-CAP) } }
-        : mirrors;
+      const open = mirrors[id];
+      return open ? { ...mirrors, [id]: { ...open, transcript: [...open.transcript, event.item].slice(-CAP) } } : mirrors;
     }
     case 'mirror_patch': {
-      const open = mirrors[event.sessionId];
+      const open = mirrors[id];
       if (!open) return mirrors;
       return {
         ...mirrors,
-        [event.sessionId]: {
+        [id]: {
           ...open,
           feed: open.feed.map((step) => (step.id === event.stepId ? { ...step, ...event.patch } : step)),
         },
@@ -68,3 +73,12 @@ export function foldMirror(mirrors: Mirrors, event: ServerEvent): Mirrors | unde
       return undefined;
   }
 }
+
+/** The events this fold owns, named once so the guard above can run first. */
+const MIRROR_EVENTS = new Set<ServerEvent['type']>([
+  'mirror_opened',
+  'mirror_unavailable',
+  'mirror_step',
+  'mirror_item',
+  'mirror_patch',
+]);

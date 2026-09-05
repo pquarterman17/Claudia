@@ -76,3 +76,28 @@ describe('folding mirror events', () => {
     expect(next?.['s']?.transcript).toEqual([]);
   });
 });
+
+describe('a session id is not a safe object key by default', () => {
+  // CodeQL flagged this, correctly: the id arrives over the socket and becomes
+  // a property name. `__proto__` reaches the prototype and poisons every object
+  // inheriting from it. The store guarded its own switch, but this fold is
+  // exported, so the check has to live with the write.
+  it.each(['__proto__', 'constructor', 'prototype', ''])('refuses %j as a key', (hostile) => {
+    const before: Mirrors = {};
+    const after = foldMirror(before, {
+      type: 'mirror_opened',
+      sessionId: hostile,
+      transcript: [],
+      feed: [],
+      elided: 0,
+    });
+    expect(after).toEqual({});
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+  });
+
+  it('still folds a normal id', () => {
+    const after = foldMirror({}, opened('sess-1'));
+    expect(Object.keys(after ?? {})).toEqual(['sess-1']);
+  });
+});

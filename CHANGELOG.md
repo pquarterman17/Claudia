@@ -3,18 +3,25 @@
 Notable changes to Claudia. Versions follow [Semantic Versioning](https://semver.org/);
 entries are generated from the commits since the previous tag.
 
+To cut a release: rename the `[Unreleased]` heading below to the version and
+today's date, set the same version in the root `package.json`, then push the
+tag. `.github/workflows/release.yml` runs the full gate on the tagged tree and
+refuses to publish if those three disagree — `node scripts/release-notes.mjs
+v0.2.0` says so before you tag, and prints the notes it would use.
+
 ## [Unreleased]
 
-The fleet stops being a plan. Claudia can now hold a standing intention — a
-mission with tasks — and act on it without a human in the loop: it reconciles
-what should happen next, reserves the attempt durably, starts a real Claude
-Code child in its own git worktree on its own branch, watches it, and retries
-or escalates when it stalls. Everything survives a restart, because all of it
-is rows rather than memory.
+The fleet stops being a plan, and then stops being unreachable. Claudia can now
+hold a standing intention — a mission with tasks — and act on it without a
+human in the loop: it reconciles what should happen next, reserves the attempt
+durably, starts a real Claude Code child in its own git worktree on its own
+branch, watches it, retries or escalates when it stalls, and records the claim
+when it finishes. All of it survives a restart, because all of it is rows
+rather than memory, and all of it is now driveable from the board.
 
-Second theme: the board can now read the conversations of sessions Claudia did
-not launch. It could already see that a terminal session was working; it can
-now show what it is saying.
+Second theme: the board can read the conversations of sessions Claudia did not
+launch. It could already see that a terminal session was working; it can now
+show what it is saying.
 
 ### Fleet orchestration
 
@@ -35,9 +42,24 @@ now show what it is saying.
 - A launcher that starts real children: a claimed worktree, a branch of its
   own, a brief built from the task, and the session id written back onto the
   run that reserved it
+- A child can finish. A session idle since after its run started is the child
+  saying the work is done, which lands the run and its task on `reported` — a
+  claim awaiting a decision, never an acceptance
+- A mission chooses which harness its children run on, Claude or Codex
 - Fleet-wide child and attempt ceilings as a stored preference, read at every
-  pulse rather than pinned in source — lowering the limit binds the next pulse,
-  not the next restart
+  pulse rather than pinned in source, and settable from the board
+
+### A board for the fleet
+
+- Missions created, listed, watched and paused from the browser. A new mission
+  is paused and a new task is `proposed`: two separate decisions stand between
+  typing a task and paying for one
+- Task rows with the moves that are a person's to make. `ready -> running` and
+  `running -> reported` are deliberately absent — the first reserves a run in
+  the same transaction, the second is the child's own claim
+- An inbox for the decisions a mission is blocked on, with approve, deny and
+  withdraw, and a note kept with the decision
+- Per-mission timeline, read from the event log
 
 ### Mirroring sessions Claudia did not launch
 
@@ -52,6 +74,22 @@ now show what it is saying.
 
 ### Fixed
 
+- **The board stopped updating.** Seven cases — `session_upsert`,
+  `session_removed`, `settings`, `usage`, `trigger_status`, `notice` and
+  `folders_picked` — were deleted from the client's event switch while a
+  reducer was split out of it. New sessions never appeared, stopped ones never
+  left, usage never moved and the folder picker did nothing until a reload.
+  Restored, with a test that reads the protocol and fails if any event is
+  unhandled
+- **Mission budgets enforced nothing.** `budgetSec` was persisted, settable and
+  compared against nothing: the pulse never measured what a mission had spent,
+  so every mission was under budget forever
+- **A finished child was retried.** With no path to `reported`, a child that
+  did its work went idle, read as silent, and was retried at full price until
+  its attempts ran out and the task was failed
+- **Escalations went nowhere.** The watchdog filed them into a table with no
+  wire surface and no note in the timeline, so a mission parked on a human
+  simply stopped moving and said nothing about why
 - `usage-reader` advanced its offset to the file size before reading, so a
   record split across two scans was lost permanently rather than re-read. Rare
   and small for token accounting; a dropped message for a mirror, and most
@@ -68,11 +106,14 @@ now show what it is saying.
 - Tag-triggered release workflow that runs the full gate on the tagged tree and
   refuses to publish when the tag, `package.json` and the changelog disagree
 - A pulse that decides nothing now says why, once per fault rather than every
-  fifteen seconds
+  fifteen seconds, and a mission held by its own budget says so in its log
+- Test guardrails that read the source rather than a hand-maintained count: one
+  over the `ServerEvent` union, one over `ClientCommand`. Both were added after
+  the counted version failed to catch a real omission
 
 ### Testing
 
-- 1,689 tests (1,549 server, 140 web) across 100 files, on the same
+- 1,775 tests (1,603 server, 172 web) across 108 files, on the same
   Ubuntu/Windows × Node 22/24 matrix
 
 ## [0.1.0] — 2026-09-01

@@ -1,5 +1,7 @@
-import type { ObservedSession } from '@claudia/shared';
+import type { ObservedSession, TranscriptItem } from '@claudia/shared';
+import type { MirrorView } from '../mirror-state';
 import { fmtDur } from '../format';
+import { send } from '../store';
 import { COLORS } from '../status';
 
 /**
@@ -10,6 +12,16 @@ import { COLORS } from '../status';
  * attach path to a live CLI, so approving or interrupting from here is not
  * something that could be built later. The dashed border and the muted palette
  * are the promise that clicking will not do anything.
+ *
+ * It can now be EXPANDED to read the conversation, which is a stronger promise
+ * to keep rather than a weaker one: the expanded view looks more like an owned
+ * session than the collapsed tile does, so it says READ-ONLY in the header and
+ * has no composer. A mirror that looked like a session and silently discarded
+ * what you typed would be worse than the thin tile it replaced.
+ *
+ * There is no thinking view, and that is not an omission. Every thinking block
+ * in a real transcript carries a signature and an EMPTY body — the reasoning is
+ * not retained in the log — so a panel for it would always be blank.
  */
 
 const STATE_LABEL: Record<ObservedSession['state'], { text: string; color: string }> = {
@@ -28,7 +40,19 @@ const NEEDS_LABEL: Record<string, string> = {
 
 const name = (cwd: string): string => cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd;
 
-export function ObservedTile({ session, now }: { session: ObservedSession; now: number }) {
+export function ObservedTile({
+  session,
+  now,
+  mirror,
+  open,
+  onToggle,
+}: {
+  session: ObservedSession;
+  now: number;
+  mirror?: MirrorView;
+  open?: boolean;
+  onToggle?: () => void;
+}) {
   const mark = STATE_LABEL[session.state];
   const quiet = now - session.lastEventAt;
   const detail =
@@ -81,6 +105,19 @@ export function ObservedTile({ session, now }: { session: ObservedSession; now: 
         </span>
         <span style={{ flex: 1 }} />
         <span style={{ flex: 'none', fontSize: 10.5, color: mark.color }}>{mark.text}</span>
+        {onToggle && (
+          <button
+            onClick={() => {
+              send(open ? { type: 'close_mirror', sessionId: session.id } : { type: 'mirror_session', sessionId: session.id });
+              onToggle();
+            }}
+            title={open ? 'Stop reading this transcript' : "Read this session's transcript — you still cannot type into it"}
+            className="btn btn-ghost"
+            style={{ flex: 'none', fontSize: 10, padding: '1px 6px' }}
+          >
+            {open ? 'hide' : 'read'}
+          </button>
+        )}
       </div>
 
       {detail && (
@@ -107,6 +144,69 @@ export function ObservedTile({ session, now }: { session: ObservedSession; now: 
           {quiet < 5000 ? 'just now' : `${fmtDur(quiet)} ago`}
         </span>
       </div>
+
+      {open && <Mirror mirror={mirror} />}
     </section>
+  );
+}
+
+/**
+ * The conversation, as far as the log has it.
+ *
+ * Read-only is stated rather than implied. The collapsed tile can rely on
+ * having no controls at all; this one shows a feed that looks like a session's,
+ * so it says what it is.
+ */
+function Mirror({ mirror }: { mirror?: MirrorView }) {
+  if (!mirror) return <Note>reading…</Note>;
+  if (mirror.reason) return <Note>{mirror.reason}</Note>;
+  if (mirror.transcript.length === 0) return <Note>nothing in this transcript yet</Note>;
+
+  return (
+    <div style={{ borderTop: '1px dashed #33364a', paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <span style={{ fontSize: 9, letterSpacing: 0.4, textTransform: 'uppercase', color: '#75798c' }}>
+          read-only
+        </span>
+        {mirror.elided > 0 && (
+          <span style={{ fontSize: 10, color: '#595d6c' }}>{mirror.elided} earlier steps not shown</span>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 260, overflowY: 'auto' }}>
+        {mirror.transcript.map((item, index) => (
+          <div key={`${item.ts}-${index}`} style={{ fontSize: 11, lineHeight: 1.45, minWidth: 0 }}>
+            <span style={{ color: KIND_COLOR[item.kind] ?? '#9397ab', marginRight: 6 }}>{KIND_LABEL[item.kind]}</span>
+            <span style={{ color: '#c3c7d9', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {item.toolName ? `${item.toolName} ` : ''}
+              {clamp(item.text)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const KIND_LABEL: Record<TranscriptItem['kind'], string> = {
+  user: 'you',
+  assistant: 'claude',
+  thinking: 'thinking',
+  tool_use: 'tool',
+  tool_result: '→',
+};
+
+const KIND_COLOR: Record<string, string> = {
+  user: '#8fa6d8',
+  assistant: COLORS.ok,
+  tool_use: '#b08cd8',
+  tool_result: '#75798c',
+};
+
+/** Long tool output is the bulk of a transcript and the least of what a reader wants. */
+const clamp = (text: string): string => (text.length > 600 ? `${text.slice(0, 599)}…` : text);
+
+function Note({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ borderTop: '1px dashed #33364a', paddingTop: 8, fontSize: 11, color: '#75798c' }}>{children}</div>
   );
 }

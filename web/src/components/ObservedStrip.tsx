@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import type { ObservedSession } from '@claudia/shared';
 import { send } from '../store';
+import type { MirrorView } from '../mirror-state';
 import { ObservedTile } from './ObservedTile';
 
 /**
@@ -18,11 +20,23 @@ export function ObservedStrip({
   observed,
   monitoring,
   now,
+  mirrors,
 }: {
   observed: ObservedSession[];
   monitoring: boolean;
   now: number;
+  mirrors: ReadonlyMap<string, MirrorView>;
 }) {
+  // Which tiles are expanded. Local, because it is a view preference and
+  // nothing on the server needs to know — but the SUBSCRIPTION does follow it,
+  // so closing a tile stops the server reading that transcript.
+  const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (id: string): void =>
+    setOpen((was) => {
+      const next = new Set(was);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   // Nothing to show and nothing switched on: one quiet line, not a panel.
   const empty = observed.length === 0;
 
@@ -68,7 +82,14 @@ export function ObservedStrip({
           }}
         >
           {observed.map((session) => (
-            <ObservedTile key={session.id} session={session} now={now} />
+            <ObservedTile
+              key={session.id}
+              session={session}
+              now={now}
+              mirror={mirrors.get(session.id)}
+              open={open.has(session.id)}
+              onToggle={() => toggle(session.id)}
+            />
           ))}
         </div>
       )}

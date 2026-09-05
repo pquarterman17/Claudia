@@ -1,8 +1,9 @@
-import type { AgentKind, Mission, Task } from '@claudia/shared';
+import type { AgentKind, ChildRun, Mission, Task } from '@claudia/shared';
 import { transact } from '../store/db.js';
 import type { FleetStore } from '../store/index.js';
 import { applyDecision, applyWatchdogOutcomes, compensateLaunch } from './pulse-apply.js';
-import { reconcile, type FleetPolicy } from './reconcile.js';
+import { recovered, skipFleet, skipMission } from './pulse-report.js';
+import { reconcile, type FleetPolicy, type MissionSpend } from './reconcile.js';
 import { DEFAULT_WATCHDOG, type RunObservation, type WatchdogPolicy } from './watchdog.js';
 
 /**
@@ -167,7 +168,13 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
   // The mission's own ceiling and the fleet's, whichever binds first. The
   // reconciler already takes the lower of the two; passing the fleet policy
   // alone would let a mission set to one child dispatch the fleet default.
-  const decisions = reconcile({ mission, tasks: tasks.value, runs: runs.value, policy: deps.policy });
+  const decisions = reconcile({
+    mission,
+    tasks: tasks.value,
+    runs: runs.value,
+    policy: deps.policy,
+    spend: spendOf(runs.value, now),
+  });
   // ONE bound on attempts, shared by the half that decides and the half that
   // spends. Found in review: `reconcile` was handed `deps.policy.maxAttempts`
   // while the watchdog silently fell back to `DEFAULT_WATCHDOG`'s 3 — so a
@@ -245,52 +252,38 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
 }
 
 /**
- * The last reason reported for each scope — the fleet, or one mission.
+ * What the mission has spent, measured rather than assumed.
  *
- * A pulse that fails is not stamped, so it is retried on the very next tick:
- * every fifteen seconds, for as long as the fault lasts. Reporting each of
- * those would bury the line that matters under four an hour times sixty, so a
- * reason is said when it STARTS and again only if it changes or comes back.
+ * `overBudget` was written with this and never given it: `reconcile` takes
+ * `spend` as optional and `pulseMission` never passed one, so `if (!spend)
+ * return undefined` meant a mission with a budget ran forever. A limit that is
+ * persisted, settable and enforcing nothing is the worst shape a limit can
+ * take — the comment on `overBudget` says so, about the version of this bug it
+ * had already fixed one layer up.
  *
- * Cleared on success, which is what makes a fault that returns get said twice
- * rather than once. Keyed by scope and not by message, so a mission whose
- * failure changes shape reports the new shape.
+ * `elapsedSec` is WALL CLOCK from the moment this mission first started
+ * spending, which is what `Mission.budgetSec` says it is. Not the sum of its
+ * children's runtimes: that is a different and also useful bound — four
+ * children for an hour is four hours of machine — but it is not what the field
+ * promises, and quietly changing what a stored limit means is worse than not
+ * enforcing it. Nothing has been spent before the first run, so a mission that
+ * has never dispatched reads zero rather than its age.
+ *
+ * `tokens` is NOT measurable yet, and says so by being NaN rather than by
+ * being a comfortable zero. Token spend lives on a session, and a session that
+ * has ended has taken its counts with it; recording them per run needs a
+ * column that does not exist. `overBudget` already handles exactly this: a
+ * mission with `budgetTokens` set is HELD, with "cannot read its token spend"
+ * as the reason, on the same bias the rest of the fleet takes — an unknown is
+ * not permission. A zero would have been a lie that reads as headroom.
  */
-const reported = new Map<string, string>();
-
-function report(scope: string, line: string, reason: string): void {
-  if (reported.get(scope) === reason) return;
-  reported.set(scope, reason);
-  console.error(line);
-}
-
-/** Forgets a scope's last failure, so its next one is reported. */
-function recovered(scope: string): void {
-  reported.delete(scope);
-}
-
-/**
- * Reports a tick that could not even find out what to pulse.
- *
- * Answers an empty list, which is what the caller does with it either way —
- * the point is that the reason reaches somebody.
- */
-function skipFleet(reason: string): PulseResult[] {
-  report('fleet', `[claudia] fleet pulse skipped: could not read missions: ${reason}`, reason);
-  return [];
-}
-
-/**
- * Reports why one mission's pulse decided nothing, and answers `undefined`.
- *
- * `undefined` is the caller's signal to leave the mission unstamped and try
- * again next tick, which is right — but on its own it is silent, and a fleet
- * that has silently stopped deciding looks exactly like a fleet with nothing
- * to decide.
- */
-function skipMission(mission: Mission, reason: string): undefined {
-  report(mission.id, `[claudia] pulse skipped for mission ${mission.id} (${mission.name}): ${reason}`, reason);
-  return undefined;
+function spendOf(runs: readonly ChildRun[], now: number): MissionSpend {
+  const started = runs.map((run) => run.startedAt).filter((at) => Number.isFinite(at));
+  const from = started.length === 0 ? undefined : Math.min(...started);
+  return {
+    elapsedSec: from === undefined ? 0 : Math.max(0, (now - from) / 1000),
+    tokens: Number.NaN,
+  };
 }
 
 /**

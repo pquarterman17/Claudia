@@ -1,13 +1,8 @@
 import { isLegalRoute, TASK_TRANSITIONS, type ChildRun } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
-import {
-  assess,
-  backoffMs,
-  DEFAULT_WATCHDOG,
-  nextAction,
-  retryAnchor,
-  type RunObservation,
-} from '../src/fleet/watchdog.js';
+import { nextAction, retryAnchor } from '../src/fleet/watchdog-action.js';
+import { backoffMs, DEFAULT_WATCHDOG } from '../src/fleet/watchdog-policy.js';
+import { assess, type RunObservation } from '../src/fleet/watchdog.js';
 import { dispatchKey } from '../src/fleet/reconcile.js';
 
 /**

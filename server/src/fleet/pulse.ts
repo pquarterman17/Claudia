@@ -1,10 +1,12 @@
-import type { AgentKind, ChildRun, Mission, Task } from '@claudia/shared';
+import type { AgentKind, ChildRun, Mission, SessionState, Task } from '@claudia/shared';
 import { transact } from '../store/db.js';
 import type { FleetStore } from '../store/index.js';
-import { applyDecision, applyWatchdogOutcomes, compensateLaunch } from './pulse-apply.js';
+import { applyDecision, applyWatchdogOutcomes } from './pulse-apply.js';
+import { compensateLaunch } from './pulse-reserve.js';
 import { recovered, skipFleet, skipMission } from './pulse-report.js';
 import { reconcile, type FleetPolicy, type MissionSpend } from './reconcile.js';
-import { DEFAULT_WATCHDOG, type RunObservation, type WatchdogPolicy } from './watchdog.js';
+import { DEFAULT_WATCHDOG, type WatchdogPolicy } from './watchdog-policy.js';
+import type { RunObservation } from './watchdog.js';
 
 /**
  * One tick of a mission: what the reconciler decides, what the watchdog finds,
@@ -78,6 +80,16 @@ export type LaunchChild = (order: LaunchOrder) => Promise<boolean>;
  */
 export interface SessionFacts {
   lastActivityAt: number;
+  /**
+   * What the session says it is doing.
+   *
+   * Optional because it was added after the fact and absent means "nobody
+   * said", which reads as not-idle — the behaviour every caller had before it
+   * existed. `idle` is the one value that matters here: the SDK reports it
+   * when a TURN ENDED, not between tool calls, so for a child given one brief
+   * it is the child saying it is finished.
+   */
+  state?: SessionState;
   /** Tool name it is parked on, when it is parked. */
   pendingApproval?: string;
   /** When it parked. */
@@ -130,6 +142,8 @@ export interface PulseResult {
   launched: number;
   deferred: number;
   escalated: number;
+  /** Runs whose child finished its turn and whose task now awaits a decision. */
+  reported: number;
 }
 
 /**
@@ -195,6 +209,7 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
       return {
         run,
         sessionAlive: facts !== undefined,
+        ...(facts?.state !== undefined ? { state: facts.state } : {}),
         attemptsSpent: Math.max(...runs.value.filter((r) => r.taskId === run.taskId).map((r) => r.attempt)),
         ...(facts?.lastActivityAt !== undefined ? { lastActivityAt: facts.lastActivityAt } : {}),
         ...(facts?.pendingApproval !== undefined ? { pendingApproval: facts.pendingApproval } : {}),
@@ -203,7 +218,14 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
       };
     });
 
-  const result: PulseResult = { missionId: mission.id, decisions: decisions.length, launched: 0, deferred: 0, escalated: 0 };
+  const result: PulseResult = {
+    missionId: mission.id,
+    decisions: decisions.length,
+    launched: 0,
+    deferred: 0,
+    escalated: 0,
+    reported: 0,
+  };
   // Collected, not executed. Everything inside the transaction is a durable
   // write that can roll back; a launched process cannot.
   const orders: LaunchOrder[] = [];

@@ -24,6 +24,7 @@ import {
   type ToolkitAction,
 } from '@claudia/shared';
 import { foldMirror, type Mirrors } from './mirror-state';
+import { upsertSession, withoutKey } from './session-state';
 import { isSafeKey } from './safe-key';
 import { useSyncExternalStore } from 'react';
 
@@ -262,6 +263,52 @@ class Store {
       case 'observed_sessions':
         this.set({ observed: event.sessions, monitoring: event.monitoring });
         return;
+      case 'notice':
+        this.set({ lastNotice: event.message });
+        return;
+      case 'settings':
+        this.set({
+          recentDirectories: event.recentDirectories,
+          countdownSec: event.countdownSec,
+          stopSessionsWhenClosedSec: event.stopSessionsWhenClosedSec,
+          defaultPermissionMode: event.defaultPermissionMode,
+          templates: event.templates,
+          toolkit: event.toolkit,
+          customCeilings: event.customCeilings,
+        });
+        return;
+      case 'trigger_status':
+        this.set({ trigger: event.trigger });
+        return;
+      case 'usage':
+        this.set({ usage: event.usage });
+        return;
+      case 'folders_picked':
+        for (const listener of this.folderListeners) listener(event.paths);
+        return;
+      case 'session_upsert':
+        this.set({ sessions: upsertSession(this.state.sessions, event.session) });
+        return;
+      case 'session_removed': {
+        // Every map keyed by session id, not just the three the original
+        // restore covered: a removed session that left its MCP list, effective
+        // settings and checkpoints behind is a leak that grows with every
+        // session the board has ever held.
+        const id = event.sessionId;
+        this.set({
+          sessions: this.state.sessions.filter((s) => s.id !== id),
+          feeds: withoutKey(this.state.feeds, id),
+          drafts: withoutKey(this.state.drafts, id),
+          models: withoutKey(this.state.models, id),
+          commands: withoutKey(this.state.commands, id),
+          fileMatches: withoutKey(this.state.fileMatches, id),
+          transcripts: withoutKey(this.state.transcripts, id),
+          mcp: withoutKey(this.state.mcp, id),
+          effectiveSettings: withoutKey(this.state.effectiveSettings, id),
+          checkpoints: withoutKey(this.state.checkpoints, id),
+        });
+        return;
+      }
       case 'transcript':
         this.set({ transcripts: { ...this.state.transcripts, [event.sessionId]: event.items } });
         return;

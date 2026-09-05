@@ -190,6 +190,51 @@ describe('a page that admits to being one', () => {
   });
 });
 
+describe('how many earlier events are missing', () => {
+  const page = (over: Partial<{ events: FleetEvent[]; elided: number; more: boolean; throughSeq: number; reset: string }> = {}) =>
+    ({ type: 'fleet_events' as const, missionId: 'm1', events: [], elided: 0, more: false, throughSeq: 0, ...over });
+  const run = (from: number, count: number) => Array.from({ length: count }, (_, i) => fleetEvent(from + i));
+
+  it('counts the whole prefix after a capped tail is followed by a catch-up', () => {
+    // The count must never move BACKWARD. A tail of a 1,200-event log keeps
+    // 200 and 1,000 precede them; 500 more arrive and 1,500 precede the
+    // rendered tail. Counting only what this one merge evicted reports 500 and
+    // tells the viewer the history got shorter.
+    const tail = fold(NO_FLEET, page({ events: run(701, 500), elided: 700, throughSeq: 1200 }));
+    expect(tail.pages.get('m1')?.elided).toBe(1000);
+
+    const caught = fold(tail, page({ events: run(1201, 500), elided: 0, throughSeq: 1700 }));
+    expect(caught.events.get('m1')?.[0]?.seq).toBe(1501);
+    expect(caught.pages.get('m1')?.elided).toBe(1500);
+  });
+
+  it('does not count an event it already had as one it lost', () => {
+    // A live broadcast and the page that also contains it. The union
+    // deduplicates, so nothing was evicted — but subtracting lengths reads the
+    // collapse as an omission and inflates the count.
+    const seen = fold(NO_FLEET, page({ events: run(1, 3), throughSeq: 3 }));
+    const withBroadcast = fold(seen, { type: 'fleet_event', event: fleetEvent(4) });
+    const overlapping = fold(withBroadcast, page({ events: run(4, 2), throughSeq: 5 }));
+    expect(overlapping.events.get('m1')?.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5]);
+    expect(overlapping.pages.get('m1')?.elided).toBe(0);
+  });
+
+  it('starts the count again when it is told to discard what it holds', () => {
+    // A reset means the prior history never led here, so the number that
+    // described it cannot be carried forward either.
+    const before = fold(NO_FLEET, page({ events: run(701, 500), elided: 700, throughSeq: 1200 }));
+    expect(before.pages.get('m1')?.elided).toBe(1000);
+    const after = fold(before, page({ events: run(1, 5), elided: 0, throughSeq: 5, reset: 'the client is ahead of the log' }));
+    expect(after.pages.get('m1')?.elided).toBe(0);
+  });
+
+  it('holds steady when a page adds nothing new', () => {
+    const first = fold(NO_FLEET, page({ events: run(701, 500), elided: 700, throughSeq: 1200 }));
+    const again = fold(first, page({ events: run(1101, 100), elided: 0, throughSeq: 1200 }));
+    expect(again.pages.get('m1')?.elided).toBe(1000);
+  });
+});
+
 describe('deciding whether to ask for another page', () => {
   const page = (over: { more: boolean; throughSeq: number }) =>
     ({ type: 'fleet_events' as const, missionId: 'm1', events: [], elided: 0, ...over });

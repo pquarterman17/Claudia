@@ -90,12 +90,25 @@ export function foldFleet(state: FleetState, event: ServerEvent): FleetState | u
       // holds never led to this page. Merging would splice one history onto
       // another and produce a timeline that looks continuous and is not.
       const before = event.reset === undefined ? known(state, event.missionId) : [];
-      const kept = merge(before, event.events);
-      // Counted, not assumed: the server says how many it skipped BEFORE the
-      // page, and the client's own cap can drop more off the front on top of
-      // that. A viewer told "12 earlier events" when 212 are missing has been
-      // given a number that is worse than none.
-      const dropped = event.elided + Math.max(0, before.length + event.events.length - kept.length);
+      const union = unionOf(before, event.events);
+      const kept = union.slice(-HISTORY);
+      // How many events precede the OLDEST one now rendered — an absolute
+      // count, carried forward, not a per-merge delta.
+      //
+      // Both halves were wrong before, and a review caught both. Counting only
+      // this merge's losses made the number move BACKWARD: a tail of a
+      // 1,200-event log keeps 200 with 1,000 before them, then 500 more arrive
+      // and 1,500 precede the rendered tail — reported as 500, telling the
+      // viewer the history had got shorter. And subtracting lengths counted an
+      // event the client ALREADY HAD as one it lost: a live broadcast and the
+      // page that also contains it collapse in the union, which is not an
+      // omission. Evictions are counted off the deduplicated union.
+      //
+      // On a reset the prior count goes with the prior history: what the
+      // client held never led here, so the number describing it cannot be
+      // carried forward either.
+      const prior = event.reset === undefined ? (state.pages.get(event.missionId)?.elided ?? 0) : 0;
+      const dropped = prior + event.elided + (union.length - kept.length);
       return {
         ...state,
         events: replace(state.events, event.missionId, kept),
@@ -133,10 +146,22 @@ function replace<T>(map: ReadonlyMap<string, T>, key: string, value: T): Readonl
  * timeline with repeats in it.
  */
 function merge(existing: readonly FleetEvent[], incoming: readonly FleetEvent[]): FleetEvent[] {
+  return unionOf(existing, incoming).slice(-HISTORY);
+}
+
+/**
+ * The two sources as one ordered timeline, deduplicated and NOT yet capped.
+ *
+ * Split from the cap so the caller can see what the cap actually evicted. The
+ * difference matters: `existing.length + incoming.length - kept.length` counts
+ * every event that appeared in both as a loss, and an event the client already
+ * had is not an event it lost.
+ */
+function unionOf(existing: readonly FleetEvent[], incoming: readonly FleetEvent[]): FleetEvent[] {
   const bySeq = new Map<number, FleetEvent>();
   for (const event of existing) bySeq.set(event.seq, event);
   for (const event of incoming) bySeq.set(event.seq, event);
-  return [...bySeq.values()].sort((a, b) => a.seq - b.seq).slice(-HISTORY);
+  return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }
 
 /** The events this fold owns, named once so the guard above can run first. */

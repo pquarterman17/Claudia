@@ -135,6 +135,19 @@ describe('parseCommand: malformed input', () => {
     expect(result).toEqual({ ok: false, reason: 'approve: sessionId must be a string' });
   });
 
+  it('rejects an agent that is not on the roster', () => {
+    // Optional does not mean unchecked. A mission created with an agent the
+    // build cannot launch is a mission whose every dispatch fails at the
+    // launcher, one attempt at a time, until it runs out of them.
+    const result = parseCommand({ type: 'create_mission', name: 'm', body: '', cwd: '/r', agent: 'gemini' });
+    expect(result.ok).toBe(false);
+  });
+
+  it('accepts create_mission with no agent, which means Claude', () => {
+    const result = parseCommand({ type: 'create_mission', name: 'm', body: '', cwd: '/r' });
+    expect(result.ok).toBe(true);
+  });
+
   it('rejects a missing required field', () => {
     const result = parseCommand({ type: 'approve', sessionId: 's1' });
     expect(result).toEqual({ ok: false, reason: 'approve: requestId is required' });

@@ -1,4 +1,4 @@
-import type { Mission, Task } from '@claudia/shared';
+import type { AgentKind, Mission, Task } from '@claudia/shared';
 import { transact } from '../store/db.js';
 import type { FleetStore } from '../store/index.js';
 import { applyDecision, applyWatchdogOutcomes, compensateLaunch } from './pulse-apply.js';
@@ -41,6 +41,13 @@ export interface LaunchOrder {
    * attaches its session to, and what releases the claim if it never starts.
    */
   runId: string;
+  /**
+   * The harness to start, taken from the run row rather than re-read off the
+   * mission. The reservation is what a retry, a restart and the watchdog all
+   * agree happened; a mission edited between the write and the launch must not
+   * change what a started child actually is.
+   */
+  agent: AgentKind;
   attempt: number;
   key: string;
 }

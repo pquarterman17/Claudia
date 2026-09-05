@@ -130,6 +130,7 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
         req('name', isLabel, 'a string'),
         req('body', isText, 'a string'),
         req('cwd', isLabel, 'a string'),
+        opt('agent', isAgentKind, 'a known agent kind'),
       ]);
     case 'list_missions':
       return runChecks(type, o, []);

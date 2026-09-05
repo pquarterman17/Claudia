@@ -6,6 +6,7 @@ import {
   PULSE_DEFAULT_SEC,
   PULSE_MAX_SEC,
   PULSE_MIN_SEC,
+  type AgentKind,
   type Mission,
   type MissionStatus,
   type MissionWatch,
@@ -15,7 +16,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { attempt, refuse, transact, type StoreResult } from './db.js';
-import { idList, int, optInt, text, type Row } from './rows.js';
+import { agentKind, idList, int, optInt, text, type Row } from './rows.js';
 
 /**
  * Missions and their tasks.
@@ -27,13 +28,19 @@ import { idList, int, optInt, text, type Row } from './rows.js';
  * store, the reconciler and the UI cannot disagree about what "blocked" allows.
  */
 
-export type NewMission = Omit<Mission, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'watch' | 'pulseSec' | 'maxChildren'> & {
+export type NewMission = Omit<
+  Mission,
+  'id' | 'createdAt' | 'updatedAt' | 'status' | 'watch' | 'pulseSec' | 'maxChildren' | 'agent'
+> & {
   /** Supplied when the caller needs a known id (a replay, a fixture). */
   id?: string;
   status?: MissionStatus;
   watch?: MissionWatch;
   pulseSec?: number;
   maxChildren?: number;
+  /** Defaults to Claude, which is what every mission written before this
+   * column existed actually ran on. */
+  agent?: AgentKind;
 };
 
 /**
@@ -62,8 +69,12 @@ export type NewTask = Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'status' | '
   acceptance?: string;
 };
 
+/** What a mission runs on unless it says otherwise, and what every mission
+ * written before the column existed was in fact running on. */
+const DEFAULT_AGENT: AgentKind = 'claude';
+
 const MISSION_COLUMNS =
-  'id, name, body, status, watch, pulse_sec, max_children, budget_sec, budget_tokens, cwd, created_at, updated_at';
+  'id, name, body, status, watch, pulse_sec, max_children, budget_sec, budget_tokens, cwd, agent, created_at, updated_at';
 const TASK_COLUMNS =
   'id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, created_at, updated_at';
 
@@ -84,11 +95,14 @@ export class MissionRepo {
         budgetSec: ceiling('time budget', input.budgetSec),
         budgetTokens: ceiling('token budget', input.budgetTokens),
         cwd: input.cwd,
+        // Checked, not cast. The column has a CHECK too, but a refusal that
+        // names the value beats a constraint violation that names the column.
+        agent: agentKind(input.agent ?? DEFAULT_AGENT),
         createdAt: now,
         updatedAt: now,
       };
       this.db
-        .prepare(`INSERT INTO missions (${MISSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .prepare(`INSERT INTO missions (${MISSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           mission.id,
           mission.name,
@@ -100,6 +114,7 @@ export class MissionRepo {
           mission.budgetSec ?? null,
           mission.budgetTokens ?? null,
           mission.cwd,
+          mission.agent,
           mission.createdAt,
           mission.updatedAt,
         );
@@ -285,6 +300,7 @@ function toMission(row: Row): Mission {
     budgetSec: optInt(row, 'budget_sec'),
     budgetTokens: optInt(row, 'budget_tokens'),
     cwd: text(row, 'cwd'),
+    agent: agentKind(text(row, 'agent')),
     createdAt: int(row, 'created_at'),
     updatedAt: int(row, 'updated_at'),
   };

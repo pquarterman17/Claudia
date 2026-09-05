@@ -1,3 +1,4 @@
+import type { AgentKind } from '@claudia/shared';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -86,6 +87,7 @@ function fixture() {
     missionId: mission.value.id,
     taskId: task.id,
     runId: run.value.id,
+    agent: run.value.agent,
     attempt: 1,
     key: 'dispatch:1',
   };
@@ -94,12 +96,12 @@ function fixture() {
 
 /** A session manager that records what it was asked to do. */
 function fakeManager(over: { fail?: boolean } = {}) {
-  const started: Array<{ cwd: string; prompt: string; permissionMode: string }> = [];
+  const started: Array<{ cwd: string; agent: AgentKind; prompt: string; permissionMode: string }> = [];
   const stopped: string[] = [];
   return {
     started,
     stopped,
-    startSession: (spec: { cwd: string; prompt: string; permissionMode: string }) => {
+    startSession: (spec: { cwd: string; agent: AgentKind; prompt: string; permissionMode: string }) => {
       started.push(spec);
       return over.fail ? undefined : `sess-${started.length}`;
     },
@@ -136,6 +138,29 @@ describe('starting a child for a dispatched task', () => {
     // The child was started in the worktree, not in the repository itself.
     expect(manager.started[0]?.cwd).toBe(path);
     expect(manager.started[0]?.permissionMode).toBe('default');
+  });
+
+  it('starts the harness the reservation names, not a constant', async () => {
+    // The launcher used to pin `'claude'`, so a mission that chose the other
+    // harness was reserved on Codex and launched on Claude — a run row that
+    // says one thing and a child that is another.
+    const { store, order } = fixture();
+    const retired = store.runs.setState(order.runId, 'stopped');
+    if (!retired.ok) throw new Error(retired.message);
+    const codex = store.runs.create({
+      missionId: order.missionId,
+      taskId: order.taskId,
+      agent: 'codex',
+      attempt: 2,
+      state: 'dispatched',
+    });
+    if (!codex.ok) throw new Error(codex.message);
+
+    const manager = fakeManager();
+    const launch = createLauncher({ store, ...manager });
+    await expect(launch({ ...order, runId: codex.value.id, agent: codex.value.agent, attempt: 2 })).resolves.toBe(true);
+
+    expect(manager.started[0]?.agent).toBe('codex');
   });
 
   it('refuses to take a worktree another task owns', async () => {

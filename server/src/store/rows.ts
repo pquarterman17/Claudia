@@ -1,3 +1,4 @@
+import { isAgentKind, type AgentKind } from '@claudia/shared';
 import { refuse } from './db.js';
 
 /**
@@ -69,4 +70,24 @@ export function idList(row: Row, column: string): string[] {
     refuse(`Column "${column}" is not a JSON array of ids.`);
   }
   return parsed as string[];
+}
+
+/**
+ * Checks an agent rather than asserting one.
+ *
+ * Found in review: `child_runs.agent` was cast with `as AgentKind` on the way
+ * out, so `'gemini'` read back as a `ChildRun` the dispatcher would try to
+ * launch a nonexistent harness for. A cast is a claim about a value, and
+ * nothing was checking the claim.
+ *
+ * Lives here rather than beside one table because two tables name an agent
+ * now: the run that was launched, and the mission that decided which one to
+ * launch. The schema refuses an unknown agent in both, which is what makes
+ * this safe to keep strict on the read side — a value that cannot be stored
+ * can only come from a file written by an older build, where a named failure
+ * beats a typed lie.
+ */
+export function agentKind(value: string): AgentKind {
+  if (!isAgentKind(value)) refuse(`${JSON.stringify(value)} is not an agent Claudia can run.`);
+  return value;
 }

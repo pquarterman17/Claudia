@@ -56,9 +56,6 @@ export interface LauncherDeps {
  */
 const CHILD_PERMISSIONS: PermissionLaunchMode = 'default';
 
-/** Only `claude` is wired; `ChildRun.agent` exists for the day that changes. */
-const CHILD_AGENT: AgentKind = 'claude';
-
 export function createLauncher(deps: LauncherDeps): LaunchChild {
   return async (order: LaunchOrder): Promise<boolean> => {
     const task = deps.store.tasks.get(order.taskId);
@@ -68,7 +65,10 @@ export function createLauncher(deps: LauncherDeps): LaunchChild {
     const path = await claimFor(order, task.value, deps);
     const sessionId = deps.startSession({
       cwd: path,
-      agent: CHILD_AGENT,
+      // The reservation's answer, not a constant and not the mission's current
+      // one: the run row is the record of what this attempt was authorised to
+      // start, and it is what the watchdog and any retry will read back.
+      agent: order.agent,
       prompt: briefFor(task.value),
       permissionMode: CHILD_PERMISSIONS,
     });

@@ -274,7 +274,8 @@ export type ClientCommand =
    * socket asking. A client can describe work and ask what happened; it cannot
    * reach past that and start something.
    */
-  | { type: 'create_mission'; name: string; body: string; cwd: string }
+  /** `agent` chooses the harness the mission's children run on; absent means Claude. */
+  | { type: 'create_mission'; name: string; body: string; cwd: string; agent?: AgentKind }
   | { type: 'list_missions' }
   | { type: 'set_mission_watch'; missionId: string; watch: MissionWatch }
   | { type: 'create_task'; missionId: string; title: string; description: string; cwd: string; dependsOn?: string[] }

@@ -75,6 +75,31 @@ describe('the session list', () => {
 });
 
 describe('the rest of the snapshot', () => {
+  it('knows the fleet limits before anything changes them', () => {
+    // They arrive on `hello` as well as on a settings broadcast. Without that
+    // the board would show a default it invented until somebody happened to
+    // change a setting — a number that looks authoritative and is not.
+    const state = deliver({
+      type: 'hello',
+      sessions: [],
+      feeds: {},
+      trigger: { armed: false } as never,
+      platform: 'linux' as never,
+      usage: { tier: 'auto' } as never,
+      recentDirectories: [],
+      countdownSec: 30,
+      stopSessionsWhenClosedSec: 30,
+      defaultPermissionMode: 'auto',
+      templates: [],
+      toolkit: [],
+      fleetLimits: { maxChildren: 3, maxAttempts: 7 },
+      mcp: {},
+      observed: [],
+      monitoring: false,
+    });
+    expect(state.fleetLimits).toEqual({ maxChildren: 3, maxAttempts: 7 });
+  });
+
   it('takes a settings broadcast', () => {
     const state = deliver({
       type: 'settings',
@@ -90,6 +115,7 @@ describe('the rest of the snapshot', () => {
     expect(state.stopSessionsWhenClosedSec).toBe(0);
     expect(state.defaultPermissionMode).toBe('plan');
     expect(state.recentDirectories).toEqual(['/a']);
+    expect(state.fleetLimits).toEqual({ maxChildren: 2, maxAttempts: 5 });
   });
 
   it('takes a usage snapshot', () => {

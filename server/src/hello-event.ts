@@ -51,6 +51,7 @@ export async function buildHello(deps: HelloDeps): Promise<ServerEvent> {
     templates: saved.templates,
     toolkit: saved.toolkit,
     customCeilings: saved.customCeilings,
+    fleetLimits: saved.fleetLimits,
     mcp,
     observed: monitor.list(ownedSessionIds(manager)),
     monitoring,

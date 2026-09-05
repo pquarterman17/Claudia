@@ -148,3 +148,22 @@ const FLEET_EVENTS = new Set<ServerEvent['type']>([
   'fleet_event',
   'fleet_unavailable',
 ]);
+
+/**
+ * Where to ask for the next page, or nothing when the client is caught up.
+ *
+ * A function rather than a flag read at the call site, because the component
+ * has to react to it and a boolean cannot express "again, from further on".
+ * The sequence advances every round — the server guarantees it, and
+ * `fleet-timeline-paging.test.ts` asserts it — so a component keyed on this
+ * value re-fires each round and stops when it becomes `undefined`.
+ *
+ * Keyed on a BOOLEAN this stalled after one page: `more` stayed true from one
+ * page to the next, React saw no change in the dependency, and the client
+ * stopped a page short believing it was caught up. Which is the bug the whole
+ * paging change exists to close, reproduced one layer up.
+ */
+export function nextPageFrom(fleet: FleetState, missionId: string): number | undefined {
+  const page = fleet.pages.get(missionId);
+  return page?.more === true ? page.through : undefined;
+}

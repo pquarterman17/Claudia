@@ -1,6 +1,6 @@
 import type { Escalation, FleetEvent, Mission, ServerEvent, Task } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
-import { foldFleet, NO_FLEET, type FleetState } from '../src/fleet-state';
+import { foldFleet, nextPageFrom, NO_FLEET, type FleetState } from '../src/fleet-state';
 
 /**
  * The mission layer as the client sees it.
@@ -187,6 +187,35 @@ describe('a page that admits to being one', () => {
     const before = fold(NO_FLEET, page({ events: [fleetEvent(1)], throughSeq: 1 }));
     const after = fold(before, page({ events: [fleetEvent(2)], throughSeq: 2 }));
     expect(after.events.get('m1')?.map((e) => e.seq)).toEqual([1, 2]);
+  });
+});
+
+describe('deciding whether to ask for another page', () => {
+  const page = (over: { more: boolean; throughSeq: number }) =>
+    ({ type: 'fleet_events' as const, missionId: 'm1', events: [], elided: 0, ...over });
+
+  it('asks again from the window the server named', () => {
+    const state = fold(NO_FLEET, page({ more: true, throughSeq: 501 }));
+    expect(nextPageFrom(state, 'm1')).toBe(501);
+  });
+
+  it('stops when the server stops saying there is more', () => {
+    const state = fold(NO_FLEET, page({ more: false, throughSeq: 1200 }));
+    expect(nextPageFrom(state, 'm1')).toBeUndefined();
+  });
+
+  it('asks for nothing about a mission it has never read', () => {
+    expect(nextPageFrom(NO_FLEET, 'm1')).toBeUndefined();
+  });
+
+  it('changes between two pages that both say there is more', () => {
+    // The reason this is a SEQUENCE and not a boolean. The component keys an
+    // effect on it, and a flag that stays true from one page to the next never
+    // changes — so the effect fires once and the client stops a page short
+    // believing it is caught up, which is the bug this whole change closes.
+    const first = fold(NO_FLEET, page({ more: true, throughSeq: 501 }));
+    const second = fold(first, page({ more: true, throughSeq: 1001 }));
+    expect(nextPageFrom(first, 'm1')).not.toBe(nextPageFrom(second, 'm1'));
   });
 });
 

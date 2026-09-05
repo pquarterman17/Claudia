@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AGENT_KINDS, type AgentKind, type Mission } from '@claudia/shared';
 import type { FleetLimits } from '@claudia/shared';
-import type { FleetState } from '../fleet-state';
+import { nextPageFrom, type FleetState } from '../fleet-state';
 import { send } from '../store';
 import { FleetLimitsControl } from './FleetLimits';
 import { MissionEscalations } from './MissionEscalations';
@@ -27,17 +27,6 @@ import { MissionTasks } from './MissionTasks';
  * stand between typing a task and paying for it: promoting the task to `ready`
  * and setting the mission to `watching`.
  */
-/**
- * The sequence this client is caught up TO, which the server told it.
- *
- * Not the last event it holds. Those differ whenever the page's window was
- * sparse, and continuing from the last event would re-walk a gap the server
- * has already said is empty — one sequence per round trip.
- */
-function caughtUpTo(fleet: FleetState, missionId: string): number {
-  return fleet.pages.get(missionId)?.through ?? 0;
-}
-
 export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; connected: boolean; limits: FleetLimits }) {
   const [open, setOpen] = useState<string | undefined>(undefined);
   const [creating, setCreating] = useState(false);
@@ -63,18 +52,18 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
     send({ type: 'list_escalations', missionId: open });
   }, [open, latest]);
 
-  // A page that said it was not the end. Asked for from the last sequence
-  // rendered, so every round strictly advances and the loop ends when the
-  // server stops saying `more` — the client can no longer stop a page short
-  // and believe it is caught up.
-  const more = open === undefined ? false : (fleet.pages.get(open)?.more ?? false);
+  // A page that said it was not the end. The DEPENDENCY is the sequence to ask
+  // from, not a boolean: `more` stays true from one page to the next, so an
+  // effect keyed on it sees no change and fires once — leaving the client a
+  // page short and believing it is caught up, which is the bug this whole
+  // change exists to close. The sequence advances every round, so this fires
+  // every round and stops when it becomes undefined.
+  const nextFrom = open === undefined ? undefined : nextPageFrom(fleet, open);
   useEffect(() => {
-    if (open !== undefined && more) send({ type: 'get_fleet_events', missionId: open, afterSeq: caughtUpTo(fleet, open) });
-    // `fleet` is deliberately not a dependency: this fires on the flag, and the
-    // reply that lands clears it. Depending on the whole snapshot would re-ask
-    // on every unrelated mission update.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, more]);
+    if (open !== undefined && nextFrom !== undefined) {
+      send({ type: 'get_fleet_events', missionId: open, afterSeq: nextFrom });
+    }
+  }, [open, nextFrom]);
 
   const expand = (mission: Mission): void => {
     const next = open === mission.id ? undefined : mission.id;
@@ -224,6 +213,17 @@ function NewMission({ onDone }: { onDone: () => void }) {
       </button>
     </div>
   );
+}
+
+/**
+ * The sequence this client is caught up TO, which the server told it.
+ *
+ * Not the last event it holds. Those differ whenever the page's window was
+ * sparse, and continuing from the last event would re-walk a gap the server
+ * has already said is empty — one sequence per round trip.
+ */
+function caughtUpTo(fleet: FleetState, missionId: string): number {
+  return fleet.pages.get(missionId)?.through ?? 0;
 }
 
 const ghost: React.CSSProperties = {

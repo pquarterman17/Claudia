@@ -23,6 +23,7 @@ import {
   type UsageSnapshot,
   type ToolkitAction,
 } from '@claudia/shared';
+import { foldMirror, type Mirrors } from './mirror-state';
 import { useSyncExternalStore } from 'react';
 
 /**
@@ -77,6 +78,8 @@ export interface ClaudiaState {
   crews: CrewStatus[];
   /** Terminal sessions Claudia did not launch, seen through the global hook. */
   observed: ObservedSession[];
+  /** Sessions Claudia is only watching. See `mirror-state.ts`. */
+  mirrors: Mirrors;
   /** Whether that hook is installed in the owner's global settings. */
   monitoring: boolean;
 }
@@ -116,6 +119,7 @@ class Store {
     templates: [],
     toolkit: [],
     observed: [],
+    mirrors: {},
     monitoring: false,
     debates: [],
     crews: [],
@@ -221,6 +225,15 @@ class Store {
     // Rejecting once here covers every use below.
     if ('sessionId' in event && !isSafeKey((event as { sessionId?: unknown }).sessionId)) return;
 
+    // Mirror events first, and as a group: they all revise one map and none of
+    // them touch anything else, so folding them here keeps the switch below
+    // about sessions Claudia owns.
+    const mirrors = foldMirror(this.state.mirrors, event);
+    if (mirrors !== undefined) {
+      this.set({ mirrors });
+      return;
+    }
+
     switch (event.type) {
       case 'hello':
         this.set({
@@ -255,51 +268,6 @@ class Store {
       }
       case 'observed_sessions':
         this.set({ observed: event.sessions, monitoring: event.monitoring });
-        return;
-      case 'notice':
-        this.set({ lastNotice: event.message });
-        return;
-      case 'settings':
-        this.set({
-          recentDirectories: event.recentDirectories,
-          countdownSec: event.countdownSec,
-          stopSessionsWhenClosedSec: event.stopSessionsWhenClosedSec,
-          defaultPermissionMode: event.defaultPermissionMode,
-          templates: event.templates,
-          toolkit: event.toolkit,
-          customCeilings: event.customCeilings,
-        });
-        return;
-      case 'trigger_status':
-        this.set({ trigger: event.trigger });
-        return;
-      case 'usage':
-        this.set({ usage: event.usage });
-        return;
-      case 'folders_picked':
-        for (const listener of this.folderListeners) listener(event.paths);
-        return;
-      case 'session_upsert': {
-        const rest = this.state.sessions.filter((s) => s.id !== event.session.id);
-        const existing = this.state.sessions.find((s) => s.id === event.session.id);
-        const sessions = existing
-          ? this.state.sessions.map((s) => (s.id === event.session.id ? event.session : s))
-          : [...rest, event.session];
-        this.set({ sessions });
-        return;
-      }
-      case 'session_removed':
-        this.set({
-          sessions: this.state.sessions.filter((s) => s.id !== event.sessionId),
-          feeds: Object.fromEntries(Object.entries(this.state.feeds).filter(([k]) => k !== event.sessionId)),
-          drafts: Object.fromEntries(Object.entries(this.state.drafts).filter(([k]) => k !== event.sessionId)),
-          models: Object.fromEntries(Object.entries(this.state.models).filter(([k]) => k !== event.sessionId)),
-          commands: Object.fromEntries(Object.entries(this.state.commands).filter(([k]) => k !== event.sessionId)),
-          fileMatches: Object.fromEntries(Object.entries(this.state.fileMatches).filter(([k]) => k !== event.sessionId)),
-          transcripts: Object.fromEntries(
-            Object.entries(this.state.transcripts).filter(([k]) => k !== event.sessionId),
-          ),
-        });
         return;
       case 'transcript':
         this.set({ transcripts: { ...this.state.transcripts, [event.sessionId]: event.items } });

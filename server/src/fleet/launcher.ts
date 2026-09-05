@@ -59,9 +59,9 @@ export function createLauncher(deps: LauncherDeps): LaunchChild {
     if (!task.ok) throw new Error(task.message);
     if (!task.value) throw new Error(`there is no task ${order.taskId} to run`);
 
-    const path = await claimFor(order, task.value, deps);
+    const claim = await claimFor(order, task.value, deps);
     const sessionId = deps.startSession({
-      cwd: path,
+      cwd: claim.path,
       // The reservation's answer, not a constant and not the mission's current
       // one: the run row is the record of what this attempt was authorised to
       // start, and it is what the watchdog and any retry will read back.
@@ -80,6 +80,17 @@ export function createLauncher(deps: LauncherDeps): LaunchChild {
       deps.stopSession(sessionId);
       throw new Error(`started a child but lost the reservation: ${attached.message}`);
     }
+    // The other half of the same record, and it was never written. The
+    // directory was made and the worktree row inserted, and then the id was
+    // dropped on the floor — so `run.worktreeId` was undefined for every child
+    // the fleet ever started, and `gatherEvidence` reads exactly that field.
+    // Nothing could be observed about any finished run, and the acceptance
+    // judgement it feeds returned `needs_human` with every fact missing.
+    const owned = deps.store.runs.attachWorktree(order.runId, claim.worktreeId);
+    if (!owned.ok) {
+      deps.stopSession(sessionId);
+      throw new Error(`started a child but could not record its worktree: ${owned.message}`);
+    }
     const running = deps.store.runs.setState(order.runId, 'running');
     if (!running.ok) {
       deps.stopSession(sessionId);
@@ -89,15 +100,26 @@ export function createLauncher(deps: LauncherDeps): LaunchChild {
   };
 }
 
+/** The worktree a run was given: where it works, and which row says so. */
+interface Claim {
+  path: string;
+  worktreeId: string;
+}
+
 /**
- * Acquires the worktree this task will work in, and answers with its path.
+ * Acquires the worktree this task will work in, and answers with its identity.
  *
  * The decision is `claimWorktree`'s, which is biased towards refusing: a wrong
  * `create` costs a directory, and a wrong reuse drops somebody's uncommitted
  * work into another agent's edit stream, which nothing afterwards can detect.
  * This carries out the verdict; it does not second-guess it.
+ *
+ * The ID, not just the path. Returning the path alone is what broke the
+ * evidence: the caller could start a child in the right directory and still
+ * have nothing to write on the run row, because the row that describes that
+ * directory was never handed back.
  */
-async function claimFor(order: LaunchOrder, task: Task, deps: LauncherDeps): Promise<string> {
+async function claimFor(order: LaunchOrder, task: Task, deps: LauncherDeps): Promise<Claim> {
   const repo = task.cwd;
   const branch = branchFor(task);
   const path = worktreePath(repo, branch);
@@ -126,7 +148,7 @@ async function claimFor(order: LaunchOrder, task: Task, deps: LauncherDeps): Pro
       ownerTaskId: order.taskId,
     });
     if (!record.ok) throw new Error(record.message);
-    return path;
+    return { path, worktreeId: record.value.id };
   }
 
   // `adopt`: the row is already this task's, and `path` is the legal route
@@ -137,7 +159,7 @@ async function claimFor(order: LaunchOrder, task: Task, deps: LauncherDeps): Pro
     const moved = deps.store.worktrees.setState(id, state);
     if (!moved.ok) throw new Error(moved.message);
   }
-  return path;
+  return { path, worktreeId: id };
 }
 
 /**

@@ -218,6 +218,40 @@ export class ChildRunRepo {
     });
   }
 
+  /**
+   * Records which worktree a reserved run actually claimed.
+   *
+   * The other half of `attachSession`, and it was missing. The launcher made
+   * the directory, wrote the worktree row and then threw the id away, so every
+   * real child ran with `worktreeId` undefined — and `gatherEvidence` reads
+   * exactly that field. The acceptance judgement therefore had nothing to look
+   * at for any run the fleet ever started: every verdict came back
+   * `needs_human` with every fact missing, and the only place the link existed
+   * was a test fixture that built it by hand.
+   *
+   * Write-once and refused once the reservation is retired, for the same
+   * reasons as the session id above: two worktrees for one attempt would mean
+   * a run whose evidence is read from a directory it did not work in, and a
+   * retired reservation is one the launcher has already lost.
+   */
+  attachWorktree(id: string, worktreeId: string): StoreResult<ChildRun> {
+    return transact(this.db, 'attach a worktree to the child run', () => {
+      const row = this.db.prepare(`SELECT ${RUN_COLUMNS} FROM child_runs WHERE id = ?`).get(id) as Row | undefined;
+      if (!row) refuse(`No child run with id ${id}.`);
+      const current = toRun(row);
+      if (current.worktreeId === worktreeId) return current;
+      if (current.worktreeId !== undefined) {
+        refuse(`Child run ${id} already works in worktree ${current.worktreeId}.`);
+      }
+      if (current.state !== 'dispatched' && current.state !== 'running') {
+        refuse(`Child run ${id} is ${current.state} and is no longer claiming a worktree.`);
+      }
+      if (!worktreeId) refuse('A worktree id is required to attach one.');
+      this.db.prepare('UPDATE child_runs SET worktree_id = ? WHERE id = ?').run(worktreeId, id);
+      return { ...current, worktreeId };
+    });
+  }
+
   private nextAttempt(taskId: string): number {
     const row = this.db.prepare('SELECT MAX(attempt) AS highest FROM child_runs WHERE task_id = ?').get(taskId) as
       | Row

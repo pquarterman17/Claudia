@@ -820,6 +820,60 @@ describe('a run that has been reserved but not yet launched', () => {
     expect(after.value?.state).toBe('failed');
   });
 
+  it('can be told which worktree it claimed', () => {
+    // The same shape as the session id, and it was missing entirely: the
+    // launcher wrote the worktree row and threw the id away, so no run ever
+    // named the directory it worked in and `gatherEvidence` — which reads that
+    // one field — had nothing to look at for any real child.
+    const { store, mission: m } = mission();
+    const { task, run } = reserved(store, m.id);
+    const worktree = store.worktrees.create({
+      repo: '/repo',
+      path: '/repo-work',
+      branch: 'claudia/t',
+      baseSha: 'abc',
+      ownerMissionId: m.id,
+      ownerTaskId: task.id,
+    });
+    if (!worktree.ok) throw new Error(worktree.message);
+
+    const owned = store.runs.attachWorktree(run.id, worktree.value.id);
+    expect(owned.ok, owned.ok ? '' : owned.message).toBe(true);
+    const after = store.runs.get(run.id);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value?.worktreeId).toBe(worktree.value.id);
+    // Write-once, for the same reason the session id is: a run is one attempt
+    // in one directory, and a second would mean evidence read from a worktree
+    // the child never worked in.
+    const second = store.runs.attachWorktree(run.id, 'some-other-worktree');
+    expect(second.ok).toBe(false);
+  });
+
+  it('refuses a worktree once the reservation has been retired', () => {
+    // The same race as the session id one above, one field over: a slow
+    // `git worktree add` can outlast the starting grace, and a launcher told it
+    // succeeded there would leave a child nothing supervises.
+    const { store, mission: m } = mission();
+    const { task, run } = reserved(store, m.id);
+    const worktree = store.worktrees.create({
+      repo: '/repo',
+      path: '/repo-late',
+      branch: 'claudia/late',
+      baseSha: 'abc',
+      ownerMissionId: m.id,
+      ownerTaskId: task.id,
+    });
+    if (!worktree.ok) throw new Error(worktree.message);
+    const retired = store.runs.setState(run.id, 'failed', { terminalReason: 'took too long to start' });
+    if (!retired.ok) throw new Error(retired.message);
+
+    const late = store.runs.attachWorktree(run.id, worktree.value.id);
+    expect(late.ok).toBe(false);
+    const after = store.runs.get(run.id);
+    if (!after.ok) throw new Error(after.message);
+    expect(after.value?.worktreeId).toBeUndefined();
+  });
+
   it('counts as alive once its session is attached', async () => {
     const { store, mission: m } = mission();
     const { run } = reserved(store, m.id);

@@ -129,10 +129,14 @@ describe('starting a child for a dispatched task', () => {
     expect(held.value?.ownerTaskId).toBe(task.id);
     expect(held.value?.baseSha).toBe(git(repo, 'rev-parse', 'HEAD'));
 
-    // And the reservation now knows which session it got.
+    // And the reservation now knows which session it got — and which worktree
+    // it is working in, which for a long time it did not: the launcher made
+    // the row and dropped its id, so the acceptance judgement had no directory
+    // to read for any child the fleet ever started.
     const run = store.runs.get(order.runId);
     if (!run.ok) throw new Error(run.message);
     expect(run.value?.sessionId).toBe('sess-1');
+    expect(run.value?.worktreeId).toBe(held.value?.id);
     expect(run.value?.state).toBe('running');
 
     // The child was started in the worktree, not in the repository itself.
@@ -161,6 +165,36 @@ describe('starting a child for a dispatched task', () => {
     await expect(launch({ ...order, runId: codex.value.id, agent: codex.value.agent, attempt: 2 })).resolves.toBe(true);
 
     expect(manager.started[0]?.agent).toBe('codex');
+  });
+
+  it('records the same worktree when a second attempt adopts it', async () => {
+    // The reuse half of the claim, which returns an id read back from the
+    // store rather than one it just inserted. A retry works in the branch its
+    // predecessor left — that is why `branchFor` is derived — so its run row
+    // has to name the same worktree, or the evidence for attempt two would be
+    // gathered from nowhere.
+    const { repo, store, task, order } = fixture();
+    const manager = fakeManager();
+    const launch = createLauncher({ store, ...manager });
+    await expect(launch(order)).resolves.toBe(true);
+
+    const retired = store.runs.setState(order.runId, 'stopped', { terminalReason: 'went quiet' });
+    if (!retired.ok) throw new Error(retired.message);
+    const again = store.runs.create({
+      missionId: order.missionId,
+      taskId: order.taskId,
+      agent: 'claude',
+      attempt: 2,
+      state: 'dispatched',
+    });
+    if (!again.ok) throw new Error(again.message);
+    await expect(launch({ ...order, runId: again.value.id, attempt: 2 })).resolves.toBe(true);
+
+    const held = store.worktrees.byPath(worktreePath(repo, branchFor(task)));
+    if (!held.ok) throw new Error(held.message);
+    const second = store.runs.get(again.value.id);
+    if (!second.ok) throw new Error(second.message);
+    expect(second.value?.worktreeId).toBe(held.value?.id);
   });
 
   it('refuses to take a worktree another task owns', async () => {

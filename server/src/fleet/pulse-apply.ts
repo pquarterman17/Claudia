@@ -1,6 +1,6 @@
 import type { Mission, Task, TaskStatus } from '@claudia/shared';
 import { transact } from '../store/db.js';
-import { escalationKey } from './capabilities.js';
+import { note } from './pulse-report.js';
 import { childCeiling, isActiveRun, type Decision } from './reconcile.js';
 import { assess, nextAction, type RunObservation, type WatchdogPolicy } from './watchdog.js';
 import type { LaunchOrder, PulseDeps, PulseResult } from './pulse.js';
@@ -83,8 +83,20 @@ export function applyDecision(
       return;
     }
     case 'hold':
-      // Explanation only. Writing a row per tick for "nothing to do" would
-      // bury the log in the one state that carries no information.
+      // Written down after all, and the earlier reasoning here was wrong about
+      // its own tooling: `note` is idempotent on (mission, kind + reason), so
+      // a hold that repeats every fifteen seconds lands ONCE, not once a tick.
+      // The fear of burying the log was answered before it was written.
+      //
+      // And a hold is not always "nothing to do". A mission that has spent its
+      // budget holds, and that is the single most informative thing the log
+      // can carry: without it a stalled mission is indistinguishable from a
+      // broken one, which is the same complaint that put reasons on `hold` in
+      // the first place.
+      //
+      // No task id, because this hold is about the mission. `note` keys on the
+      // mission alone in that case rather than on the string "undefined".
+      note(store, mission.id, undefined, 'mission_held', decision.reason);
       return;
   }
 }
@@ -362,25 +374,4 @@ function routeTo(from: TaskStatus | undefined, to: 'ready' | 'failed' | 'running
   if (from === 'running') return to === 'failed' ? ['failed'] : ['failed', 'ready'];
   if (to === 'ready' && (from === 'failed' || from === 'reported')) return ['ready'];
   return undefined;
-}
-
-/** One line in the mission's timeline, keyed so a repeated tick cannot duplicate it. */
-export function note(
-  store: PulseDeps['store'],
-  missionId: string,
-  taskId: string,
-  kind: string,
-  reason: string,
-): void {
-  const appended = store.events.append({
-    missionId,
-    taskId,
-    actor: 'system',
-    kind,
-    payload: { reason },
-    idempotencyKey: escalationKey(`${missionId}:${taskId}`, `${kind}:${reason}`),
-  });
-  // A duplicate key means this exact note is already in the log, which is the
-  // idempotency doing its job rather than a failure worth aborting the pulse.
-  if (!appended.ok && !/idempot|unique/i.test(appended.message)) throw new Error(appended.message);
 }

@@ -47,21 +47,24 @@ console.log(`--- notes for ${tag} ---\n${notes.trim()}\n--- end ---`);
 if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `file=${file}\n`);
 
 /**
- * The body of one version's section: everything after its heading, up to the
+ * The body of one version's section: the lines after its heading, up to the
  * next one.
  *
- * Matched on the heading rather than by splitting the whole file, so a `## `
- * that appears inside a fenced code block in some other section cannot shorten
- * this one — and the version is escaped because `.` in a semantic version is
- * a regex wildcard that would let 0.1.0 match a heading for 0x1y0.
+ * Line-wise and literal, with no regular expression built from the argument.
+ * The first version of this escaped the version into a pattern — `.` in a
+ * semantic version is a wildcard, and an unescaped 0.1.0 matches a heading for
+ * 0x1y0 — but a regex assembled from input is a regex-injection finding
+ * whether or not the escaping happens to be right, and `startsWith` cannot
+ * have that class of bug at all. It also reads better: a heading is a line
+ * that begins with `## `, which is exactly what this asks.
  */
 function section(text, wanted) {
-  const heading = new RegExp(`^## \\[${wanted.replace(/[.+\-]/g, '\\$&')}\\].*$`, 'm');
-  const start = heading.exec(text);
-  if (!start) return undefined;
-  const rest = text.slice(start.index + start[0].length);
-  const next = /^## /m.exec(rest);
-  return next ? rest.slice(0, next.index) : rest;
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.startsWith(`## [${wanted}]`));
+  if (start === -1) return undefined;
+  const rest = lines.slice(start + 1);
+  const next = rest.findIndex((line) => line.startsWith('## '));
+  return (next === -1 ? rest : rest.slice(0, next)).join('\n');
 }
 
 function fail(message) {

@@ -108,12 +108,23 @@ describe('release notes', () => {
   });
 
   it('does not let one version match another version\'s heading', () => {
-    // `.` is a regex wildcard, so an unescaped 0.1.0 matches a heading for
-    // 0x1y0. Nothing in this repo is named that, which is exactly why it would
-    // have gone unnoticed until the day something was.
+    // The first version of the extractor built a regex from the argument, and
+    // `.` is a wildcard there: an unescaped 0.1.0 matches a heading for 0x1y0.
+    // The heading is matched literally now, so this cannot come back — but the
+    // case stays, because the bug is in the requirement, not in one
+    // implementation of it.
     const result = run(repo('0.1.0', '# Changelog\n\n## [0x1y0]\n\n- not a version\n'), 'v0.1.0');
     expect(result.ok).toBe(false);
     expect(result.out).toContain('no "## [0.1.0]" section');
+  });
+
+  it('reads a file with Windows line endings', () => {
+    // Development happens on Windows and the extractor is line-wise now, so
+    // the line splitter has to be the one thing in it that is not naive.
+    const result = run(repo('0.2.0', TWO_VERSIONS.replace(/\n/g, '\r\n')), 'v0.2.0');
+    expect(result.ok).toBe(true);
+    expect(result.out).toContain('the thing');
+    expect(result.out).not.toContain('first release');
   });
 
   it('tells the workflow where it wrote the notes', () => {

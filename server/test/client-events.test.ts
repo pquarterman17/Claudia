@@ -38,31 +38,24 @@ function handledInStore(): Set<string> {
   return new Set([...read('web', 'src', 'store.ts').matchAll(/case '([a-z_]+)':/g)].map((m) => m[1] as string));
 }
 
-/** The members of the mirror fold's own event set, which the switch never sees. */
-function handledInMirror(): Set<string> {
-  const source = read('web', 'src', 'mirror-state.ts');
-  const start = source.indexOf('MIRROR_EVENTS = new Set');
+/**
+ * The members of one fold's own event set, which the switch never sees.
+ *
+ * Sliced from the array literal's own bracket, not the first `]` after the
+ * name: these are declared `new Set<ServerEvent['type']>([...])`, and the naive
+ * slice stopped inside the type argument and came back holding `type` — which
+ * passed a size check while excusing every real event.
+ */
+function handledInFold(file: string, name: string): Set<string> {
+  const source = read('web', 'src', file);
+  const start = source.indexOf(`${name} = new Set`);
   expect(start).toBeGreaterThan(-1);
-  // From the array literal's own bracket, not the first `]` after the name:
-  // the declaration is `new Set<ServerEvent['type']>([...])`, and the naive
-  // slice stopped inside the type argument and came back holding `type`.
   const open = source.indexOf('([', start);
   const end = source.indexOf('])', open);
   expect(open).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(open);
   return new Set([...source.slice(open, end).matchAll(/'([a-z_]+)'/g)].map((m) => m[1] as string));
 }
-
-/**
- * The events the client knowingly ignores, listed rather than tolerated.
- *
- * These five are the mission layer, which is complete on the server and on the
- * wire and has no UI at all: nothing in `web/src` can create a mission,
- * promote a task, or watch one run. That is a real gap and it is tracked as
- * one — the change that builds the fleet board deletes this list, and until
- * then the assertion below still fails for anything NOT on it.
- */
-const NO_UI_YET = ['missions', 'tasks', 'fleet_events', 'fleet_event', 'fleet_unavailable'];
 
 describe('nothing the server sends is dropped on the floor', () => {
   it('handles every member of the ServerEvent union', () => {
@@ -73,21 +66,26 @@ describe('nothing the server sends is dropped on the floor', () => {
     expect(types.length).toBeGreaterThan(30);
 
     const store = handledInStore();
-    const mirror = handledInMirror();
-    // Non-vacuous, and specific: this fold owns the mirror events and nothing
+    const folds = [handledInFold('mirror-state.ts', 'MIRROR_EVENTS'), handledInFold('fleet-state.ts', 'FLEET_EVENTS')];
+    // Non-vacuous, and specific: each fold owns a named family and nothing
     // else, so an extraction that came back with the wrong thing fails here
     // rather than quietly excusing an unhandled event below.
-    expect(mirror.size).toBeGreaterThan(3);
-    expect([...mirror].every((type) => type.startsWith('mirror_'))).toBe(true);
+    for (const fold of folds) expect(fold.size).toBeGreaterThan(3);
 
-    expect(types.filter((type) => !store.has(type) && !mirror.has(type))).toEqual(NO_UI_YET);
+    const handled = new Set([...store, ...folds.flatMap((fold) => [...fold])]);
+    expect(types.filter((type) => !handled.has(type))).toEqual([]);
   });
 
-  it('names a gap that is still real', () => {
-    // So the list above cannot outlive what it excuses: the moment the fleet
-    // board handles one of these, this fails until it is taken off the list.
-    const store = handledInStore();
-    const mirror = handledInMirror();
-    for (const type of NO_UI_YET) expect(store.has(type) || mirror.has(type)).toBe(false);
+  it('sends every event somewhere exactly once', () => {
+    // Two folds and a switch, and an event in more than one of them is a
+    // second handler nobody knows about: `foldMirror` and `foldFleet` both run
+    // before the switch and both return early, so whichever is called first
+    // silently wins.
+    const seen = [
+      ...handledInStore(),
+      ...handledInFold('mirror-state.ts', 'MIRROR_EVENTS'),
+      ...handledInFold('fleet-state.ts', 'FLEET_EVENTS'),
+    ];
+    expect(seen).toHaveLength(new Set(seen).size);
   });
 });

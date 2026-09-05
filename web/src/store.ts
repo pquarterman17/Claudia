@@ -23,8 +23,9 @@ import {
   type UsageSnapshot,
   type ToolkitAction,
 } from '@claudia/shared';
+import { foldFleet, NO_FLEET, type FleetState } from './fleet-state';
 import { foldMirror, type Mirrors } from './mirror-state';
-import { upsertSession, withoutKey } from './session-state';
+import { forgetSession, upsertSession } from './session-state';
 import { isSafeKey } from './safe-key';
 import { useSyncExternalStore } from 'react';
 
@@ -82,6 +83,8 @@ export interface ClaudiaState {
   observed: ObservedSession[];
   /** Sessions Claudia is only watching. See `mirror-state.ts`. */
   mirrors: Mirrors;
+  /** Missions, their tasks and their history. See `fleet-state.ts`. */
+  fleet: FleetState;
   /** Whether that hook is installed in the owner's global settings. */
   monitoring: boolean;
 }
@@ -114,6 +117,7 @@ class Store {
     toolkit: [],
     observed: [],
     mirrors: new Map(),
+    fleet: NO_FLEET,
     monitoring: false,
     debates: [],
     crews: [],
@@ -228,6 +232,13 @@ class Store {
       return;
     }
 
+    // The mission layer's five, folded the same way and for the same reason.
+    const fleet = foldFleet(this.state.fleet, event);
+    if (fleet !== undefined) {
+      this.set({ fleet });
+      return;
+    }
+
     switch (event.type) {
       case 'hello':
         this.set({
@@ -289,26 +300,9 @@ class Store {
       case 'session_upsert':
         this.set({ sessions: upsertSession(this.state.sessions, event.session) });
         return;
-      case 'session_removed': {
-        // Every map keyed by session id, not just the three the original
-        // restore covered: a removed session that left its MCP list, effective
-        // settings and checkpoints behind is a leak that grows with every
-        // session the board has ever held.
-        const id = event.sessionId;
-        this.set({
-          sessions: this.state.sessions.filter((s) => s.id !== id),
-          feeds: withoutKey(this.state.feeds, id),
-          drafts: withoutKey(this.state.drafts, id),
-          models: withoutKey(this.state.models, id),
-          commands: withoutKey(this.state.commands, id),
-          fileMatches: withoutKey(this.state.fileMatches, id),
-          transcripts: withoutKey(this.state.transcripts, id),
-          mcp: withoutKey(this.state.mcp, id),
-          effectiveSettings: withoutKey(this.state.effectiveSettings, id),
-          checkpoints: withoutKey(this.state.checkpoints, id),
-        });
+      case 'session_removed':
+        this.set(forgetSession(this.state, event.sessionId));
         return;
-      }
       case 'transcript':
         this.set({ transcripts: { ...this.state.transcripts, [event.sessionId]: event.items } });
         return;

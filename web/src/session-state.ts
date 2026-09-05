@@ -1,4 +1,5 @@
 import type { SessionSummary } from '@claudia/shared';
+import type { ClaudiaState } from './store';
 
 /**
  * The two shapes every session list-and-maps update takes.
@@ -36,4 +37,28 @@ export function withoutKey<T>(map: Readonly<Record<string, T>>, key: string): Re
   const next = { ...map };
   delete next[key];
   return next;
+}
+
+/**
+ * Every map keyed by session id, with that session dropped from all of them.
+ *
+ * One place rather than nine lines in a `case`, because the list is the kind
+ * that grows: `mcp`, `effectiveSettings` and `checkpoints` were all added to
+ * the snapshot long after `session_removed` was written and none of them were
+ * ever cleared, so a removed session leaked three entries every time. A helper
+ * named for the whole job is one a new per-session map has an obvious home in.
+ */
+export function forgetSession(state: ClaudiaState, sessionId: string): Partial<ClaudiaState> {
+  return {
+    sessions: state.sessions.filter((s) => s.id !== sessionId),
+    feeds: withoutKey(state.feeds, sessionId),
+    drafts: withoutKey(state.drafts, sessionId),
+    models: withoutKey(state.models, sessionId),
+    commands: withoutKey(state.commands, sessionId),
+    fileMatches: withoutKey(state.fileMatches, sessionId),
+    transcripts: withoutKey(state.transcripts, sessionId),
+    mcp: withoutKey(state.mcp, sessionId),
+    effectiveSettings: withoutKey(state.effectiveSettings, sessionId),
+    checkpoints: withoutKey(state.checkpoints, sessionId),
+  };
 }

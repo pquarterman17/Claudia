@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -408,5 +408,68 @@ describe('checking the work, not just looking at it', () => {
     const payload = judged(store, mission.id);
     expect(payload?.['checks']).toBeUndefined();
     expect(payload?.['missing']).toContain('test results');
+  });
+});
+
+describe('every field of the evidence has something that writes it', () => {
+  /**
+   * The shape of the bug this whole file exists because of.
+   *
+   * `evidence.tests` was declared, judged on, reported as missing, and never
+   * written by anything — so `judge`'s reject-on-failing-checks branch could
+   * not be reached by any input and every verdict was `needs_human`. It was
+   * invisible because nothing was broken: the type checked, the unit tests
+   * passed against hand-built evidence, and the field simply never arrived.
+   *
+   * This reads the `Evidence` interface out of the source and asks, for each
+   * field, whether the server mentions it anywhere outside the module that
+   * declares it. It cannot prove a field is written properly. It can prove
+   * that nothing NEW joins the list of fields nobody fills in — which is the
+   * failure that actually happened, twice.
+   */
+  const SRC = join(import.meta.dirname, '..', 'src');
+
+  /**
+   * Declared, judged on, and still gathered by nothing. Each one is a live
+   * branch in `acceptance.ts` that no input can reach — `prState === 'closed'`
+   * rejects a run whose pull request was closed, and nothing has ever told it
+   * about a pull request. Listed rather than fixed here because gathering them
+   * is its own work; listed at all so the list cannot grow quietly.
+   */
+  const NOT_GATHERED_YET = new Set(['prUrl', 'prState', 'risks', 'artifacts']);
+
+  function serverSources(dir: string, out: string[] = []): string[] {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) serverSources(full, out);
+      else if (entry.endsWith('.ts') && entry !== 'acceptance.ts') out.push(full);
+    }
+    return out;
+  }
+
+  it('names them all, and nothing writes only the ones we know about', () => {
+    const acceptance = readFileSync(join(SRC, 'fleet', 'acceptance.ts'), 'utf8');
+    const block = acceptance.slice(acceptance.indexOf('export interface Evidence'));
+    const fields = [...block.slice(0, block.indexOf('\n}')).matchAll(/^ {2}(\w+)\??:/gm)].map((m) => m[1] as string);
+    // If this ever comes back short, the interface moved and the rest of this
+    // test is reading nothing.
+    expect(fields.length).toBeGreaterThanOrEqual(8);
+
+    const server = serverSources(SRC)
+      .map((file) => readFileSync(file, 'utf8'))
+      .join('\n');
+    const dead = fields.filter((field) => !new RegExp(`\\b${field}\\b`).test(server));
+
+    expect(
+      dead.filter((field) => !NOT_GATHERED_YET.has(field)),
+      `nothing in server/src writes ${dead.join(', ')}. A field the judgement reads and nobody fills in ` +
+        'is a verdict that cannot be reached — which is what `tests` was until the verify command landed.',
+    ).toEqual([]);
+
+    // And the ledger stays honest in the other direction: a field that has
+    // since been wired should come off the list rather than sit there
+    // pretending to be dead.
+    const revived = [...NOT_GATHERED_YET].filter((field) => !dead.includes(field));
+    expect(revived, `${revived.join(', ')} is written now — take it out of NOT_GATHERED_YET.`).toEqual([]);
   });
 });

@@ -145,6 +145,12 @@ describe('a database written before missions had one', () => {
        VALUES ('m-old', 'old', '', 'active', 'paused', 60, 4, '/repo', 'claude', 1, 1)`,
     ).run();
 
+    // Proof that this really is an older database before anything is claimed
+    // about migrating one. The equivalent test for `agent` filtered its list
+    // by name rather than version, kept every later migration, and so opened
+    // at the newest schema and migrated nothing — passing without testing.
+    expect(schemaVersion(db)).toBeLessThan(version);
+
     applyMigrations(db);
     expect(schemaVersion(db)).toBe(MIGRATIONS[MIGRATIONS.length - 1]?.version);
     const row = db.prepare("SELECT verify FROM missions WHERE id = 'm-old'").get();

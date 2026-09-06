@@ -187,6 +187,22 @@ describe('judging a reported run', () => {
     expect(log.value.filter((e) => e.kind === 'task_judged')).toHaveLength(1);
   });
 
+  it('still judges it once on a mission with more history than one read returns', async () => {
+    // The skip was asked of `sinceForMission`, which returns the OLDEST 500
+    // events of a mission. Past that, a run judged seconds ago looked unjudged
+    // and every pulse paid for the evidence again — the git reads and the
+    // mission's verify command, which is the expensive half this check exists
+    // to avoid. The append is keyed on the run, so the log looked fine.
+    const { store, mission } = fixture({ work: true });
+    for (let i = 0; i < 520; i++) {
+      const filler = store.events.append({ missionId: mission.id, actor: 'system', kind: 'notice', payload: { i } });
+      if (!filler.ok) throw new Error(filler.message);
+    }
+
+    expect(await judgeReported(deps(store), mission)).toBe(1);
+    expect(await judgeReported(deps(store), mission)).toBe(0);
+  });
+
   it('leaves a run alone that has not reported', async () => {
     // Rewritten after CodeQL pointed at an unused variable here, which was the
     // symptom: the old version destructured a mission it never used, moved a

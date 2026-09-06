@@ -189,3 +189,100 @@ describe('over the wire', () => {
     expect(statusOf(store, taskId)).toBe('reported');
   });
 });
+
+/**
+ * A judgement describes the worktree of the run that made it, and nothing else.
+ *
+ * The verdict was found by task alone, so the newest one stood in for every
+ * attempt. The case that bites is the ordinary one: a task is sent back, runs
+ * again, and reports — and for the seconds before the pulse judges it, the
+ * board offered a plain `accept` backed by attempt 1's verdict, attempt 1's
+ * branch and attempt 1's tests. Nothing had looked at the work being accepted.
+ */
+function attemptOf(store: FleetStore, missionId: string, taskId: string): string {
+  const created = store.runs.create({ missionId, taskId, agent: 'claude' });
+  if (!created.ok) throw new Error(created.message);
+  return created.value.id;
+}
+
+function judged(store: FleetStore, missionId: string, taskId: string, runId: string, payload: Record<string, unknown>) {
+  const appended = store.events.append({
+    missionId,
+    taskId,
+    runId,
+    actor: 'system',
+    kind: 'task_judged',
+    payload,
+    idempotencyKey: `judged:${runId}`,
+  });
+  if (!appended.ok) throw new Error(appended.message);
+}
+
+describe('the attempt on the table', () => {
+  it('will not spend the first attempt\'s verdict on an unjudged second one', () => {
+    const { store, missionId, taskId } = fixture();
+    judged(store, missionId, taskId, attemptOf(store, missionId, taskId), GREEN);
+    // Sent back, ran again, reported. The pulse has not judged this one yet.
+    attemptOf(store, missionId, taskId);
+
+    const outcome = acceptTask(store, missionId, taskId);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.message).toMatch(/[Nn]othing has judged/);
+    expect(statusOf(store, taskId)).toBe('reported');
+  });
+
+  it('accepts on the current attempt, over a rejection of the one before it', () => {
+    const { store, missionId, taskId } = fixture();
+    judged(store, missionId, taskId, attemptOf(store, missionId, taskId), BAD);
+    judged(store, missionId, taskId, attemptOf(store, missionId, taskId), GREEN);
+
+    const outcome = acceptTask(store, missionId, taskId);
+    expect(outcome.ok, outcome.message).toBe(true);
+    // On the current verdict, and recorded as needing no override.
+    expect(accepted(store, missionId)?.['verdict']).toBe('needs_human');
+    expect(accepted(store, missionId)?.['overrode']).toBeUndefined();
+  });
+
+  it('names the run it accepted, so the log says which tree was signed off', () => {
+    const { store, missionId, taskId } = fixture();
+    const run = attemptOf(store, missionId, taskId);
+    judged(store, missionId, taskId, run, GREEN);
+    expect(acceptTask(store, missionId, taskId).ok).toBe(true);
+
+    const log = store.events.sinceForMission(missionId);
+    if (!log.ok) throw new Error(log.message);
+    expect(log.value.find((e) => e.kind === 'task_accepted')?.runId).toBe(run);
+  });
+
+  it('finds a verdict on a mission with more history than one read returns', () => {
+    // `sinceForMission(id)` is the OLDEST 500 events of a mission. Reading the
+    // verdict through it meant that on any mission long enough to matter, the
+    // judgement made seconds ago was outside the window and acceptance asked
+    // for an override forever — training the one habit this command exists to
+    // prevent.
+    const { store, missionId, taskId } = fixture();
+    for (let i = 0; i < 520; i++) {
+      const filler = store.events.append({ missionId, actor: 'system', kind: 'notice', payload: { i } });
+      if (!filler.ok) throw new Error(filler.message);
+    }
+    judged(store, missionId, taskId, attemptOf(store, missionId, taskId), GREEN);
+
+    const outcome = acceptTask(store, missionId, taskId);
+    expect(outcome.ok, outcome.message).toBe(true);
+    expect(outcome.message).toBe('Accepted.');
+  });
+
+  it('keeps a reason somebody wrote even when the evidence turned out to hold', () => {
+    // The board asks for a reason from the judgement IT holds, and it holds
+    // only the tail of a mission's log. So a human can write one against
+    // evidence the server can still see — and pinning the note to the blocker
+    // threw that reason away and recorded the acceptance as unhesitating.
+    const { store, missionId, taskId } = fixture();
+    judged(store, missionId, taskId, attemptOf(store, missionId, taskId), GREEN);
+
+    expect(acceptTask(store, missionId, taskId, 'accepting on the strength of the PR').ok).toBe(true);
+    const payload = accepted(store, missionId);
+    expect(payload?.['note']).toBe('accepting on the strength of the PR');
+    expect(payload?.['overrode']).toBeUndefined();
+  });
+});

@@ -16,12 +16,20 @@ import { runnable, runVerify } from '../src/fleet/verify.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'claudia-verify-'));
 afterAll(() => {
-  // Retried, and generously. Windows refuses to remove a directory anything
-  // still has open, and the timeout case below leaves a process holding this
-  // one for about a second after its shell is killed — the very limitation
-  // `verify.ts` documents, arriving in the suite's own clean-up. One second of
-  // retries was not enough on the runner; three is.
-  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  // Tolerated, uniquely in this suite, and said out loud when it happens.
+  //
+  // This is the one suite that writes executables and runs them, and on the
+  // Windows runner that directory would not go away: EBUSY first, then EPERM
+  // through three seconds of retries. Removing a temp directory is not what
+  // any of these tests assert, the runner reaps it either way, and a suite in
+  // which all 1,665 tests pass should not be reported as failing because a
+  // virus scanner still had a `.cmd` file open. The warning is there so a real
+  // handle leak is still visible rather than silently normal.
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  } catch (err) {
+    console.warn(`[test] could not remove ${dir}:`, err);
+  }
 });
 
 const WINDOWS = process.platform === 'win32';
@@ -178,11 +186,13 @@ describe('running it', () => {
     // stops one mission's checks stalling every other mission's.
     const outcome = await runVerify(
       dir,
-      // Ten times the timeout, and a second at most: the kill reaches the
-      // shell and not what the shell started, so this outlives the assertion
-      // by design and has to be gone before the clean-up above runs. `ping` is
-      // the Windows sleep — `-n 2` is one interval.
-      script('slow', { posix: 'sleep 1', windows: 'ping -n 2 127.0.0.1' }),
+      // A plain sleep, not a script: `exec` runs `sh -c`, which starts the
+      // script in a shell of its OWN, so the kill reaches the wrapper and the
+      // script's shell carries on — a busy loop written here to avoid an
+      // orphan produced four of them, spinning at 100% and outliving the run.
+      // What survives the kill is this one bounded second of `sleep`, which
+      // the clean-up's retries are sized for. `ping -n 2` is its Windows twin.
+      WINDOWS ? 'ping -n 2 127.0.0.1' : 'sleep 1',
       200,
     );
     expect(outcome.kind).toBe('unavailable');

@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { startFleet } from '../src/fleet/boot.js';
-import { FleetPulser, pulseFleet, type LaunchChild, type SessionFacts } from '../src/fleet/pulse.js';
+import { pulseFleet, type LaunchChild, type SessionFacts } from '../src/fleet/pulse.js';
+import { FleetPulser } from '../src/fleet/pulser.js';
 import type { FleetStore } from '../src/store/index.js';
 
 /**

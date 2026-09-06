@@ -80,6 +80,7 @@ const VALID: Array<[string, Record<string, unknown>]> = [
   ['list_missions', { type: 'list_missions' }],
   ['set_mission_watch', { type: 'set_mission_watch', missionId: 'm1', watch: 'paused' }],
   ['set_mission_verify', { type: 'set_mission_verify', missionId: 'm1', verify: 'npm test' }],
+  ['set_mission_budget', { type: 'set_mission_budget', missionId: 'm1', budgetSec: 7200, budgetTokens: null }],
   ['create_task', { type: 'create_task', missionId: 'm1', title: 't', description: '', cwd: '/repo' }],
   ['list_tasks', { type: 'list_tasks', missionId: 'm1' }],
   ['get_fleet_events', { type: 'get_fleet_events', missionId: 'm1', afterSeq: 0 }],

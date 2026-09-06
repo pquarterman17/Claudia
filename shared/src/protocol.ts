@@ -337,6 +337,12 @@ export type ClientCommand =
    * The store still decides which transitions are legal; this only asks.
    */
   | { type: 'set_task_status'; missionId: string; taskId: string; status: TaskStatus }
+  /**
+   * Acceptance, which is not a status change: the server reads the verdict the
+   * pulse recorded before it agrees. `override` is a reason, required to
+   * accept over a rejection or over incomplete evidence, and recorded with it.
+   */
+  | { type: 'accept_task'; missionId: string; taskId: string; override?: string }
   /** `afterSeq` is the client's high-water mark; 0 asks for the whole log. */
   | { type: 'get_fleet_events'; missionId: string; afterSeq?: number }
   /** Pending by default; pass a resolution to read what was already decided. */

@@ -64,6 +64,22 @@ function readJudgement(payload: unknown): Judgement | undefined {
   };
 }
 
+/**
+ * Whether this judgement supports an acceptance without an override.
+ *
+ * The same bar the server applies, computed from the judgement the board is
+ * already holding — so the button can say what it is going to do instead of
+ * asking and being refused. The server decides; this only chooses the wording.
+ *
+ * `needs_human` is not a blocker on its own: it is what a green run gets,
+ * because the policy will not accept on nobody's behalf. What blocks is a
+ * rejection, or evidence with holes in it.
+ */
+export function evidenceSupportsAcceptance(judgement: Judgement | undefined): boolean {
+  if (!judgement) return false;
+  return judgement.verdict !== 'reject' && judgement.missing.length === 0;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)

@@ -367,6 +367,7 @@ export interface TokenCounts {
 // and imports what it needs itself.
 export * from './usage.js';
 export * from './mission.js';
+export * from './transitions.js';
 export * from './orchestration.js';
 export * from './protocol.js';
 export * from './verify.js';

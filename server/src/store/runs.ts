@@ -23,7 +23,7 @@ export type NewChildRun = Omit<ChildRun, 'id' | 'attempt' | 'state' | 'startedAt
 };
 
 const RUN_COLUMNS =
-  'id, mission_id, task_id, session_id, worktree_id, agent, attempt, state, started_at, ended_at, terminal_reason';
+  'id, mission_id, task_id, session_id, worktree_id, agent, attempt, state, started_at, ended_at, terminal_reason, tokens';
 /**
  * The runs in a batch that can be read, rather than none of them.
  *
@@ -63,9 +63,13 @@ export class ChildRunRepo {
         attempt: input.attempt ?? this.nextAttempt(input.taskId),
         state: input.state ?? 'dispatched',
         startedAt: input.startedAt ?? Date.now(),
+        // Zero, and said so on the way out as well as in the row: nothing is
+        // spent before the child starts, and an object that omitted what it
+        // just wrote would disagree with the row on the next read.
+        tokens: input.tokens ?? 0,
       };
       this.db
-        .prepare(`INSERT INTO child_runs (${RUN_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .prepare(`INSERT INTO child_runs (${RUN_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           run.id,
           run.missionId,
@@ -78,6 +82,7 @@ export class ChildRunRepo {
           run.startedAt,
           null,
           null,
+          run.tokens ?? 0,
         );
       return run;
     });
@@ -267,6 +272,35 @@ export class ChildRunRepo {
     });
   }
 
+  /**
+   * Records what this attempt has spent so far.
+   *
+   * The column exists because a mission's token budget is spent by every
+   * attempt it has made, and a session that has ended has taken its counts
+   * with it. Until this, `spendOf` answered NaN for tokens and `overBudget`
+   * HELD every mission with a token budget — permanently, on the first pulse,
+   * which is the worst shape a limit can take: settable, visible, and
+   * enforcing a stop rather than a bound.
+   *
+   * NEVER DECREASES. The counts arrive from a session summary that is
+   * cumulative and updated at turn end, so a lower reading is a stale or
+   * partial observation rather than a refund — and letting one overwrite a
+   * higher number would make a budget cheaper the longer it is watched.
+   * Non-finite and negative are refused for the same reason: an unreadable
+   * count must stay unreadable rather than become a comfortable number.
+   */
+  recordTokens(id: string, tokens: number): StoreResult<ChildRun> {
+    return transact(this.db, 'record what the run has spent', () => {
+      const row = this.db.prepare(`SELECT ${RUN_COLUMNS} FROM child_runs WHERE id = ?`).get(id) as Row | undefined;
+      if (!row) refuse(`No child run with id ${id}.`);
+      const current = toRun(row);
+      if (!Number.isSafeInteger(tokens) || tokens < 0) refuse(`${tokens} is not a number of tokens.`);
+      if (current.tokens !== undefined && current.tokens >= tokens) return current;
+      this.db.prepare('UPDATE child_runs SET tokens = ? WHERE id = ?').run(tokens, id);
+      return { ...current, tokens };
+    });
+  }
+
   private nextAttempt(taskId: string): number {
     const row = this.db.prepare('SELECT MAX(attempt) AS highest FROM child_runs WHERE task_id = ?').get(taskId) as
       | Row
@@ -289,5 +323,6 @@ function toRun(row: Row): ChildRun {
     startedAt: int(row, 'started_at'),
     endedAt: optInt(row, 'ended_at'),
     terminalReason: optText(row, 'terminal_reason'),
+    ...(optInt(row, 'tokens') !== undefined ? { tokens: optInt(row, 'tokens') as number } : {}),
   };
 }

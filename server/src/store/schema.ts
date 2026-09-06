@@ -216,3 +216,16 @@ ALTER TABLE missions ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'
 export const MISSION_VERIFY = `
 ALTER TABLE missions ADD COLUMN verify TEXT;
 `;
+
+/**
+ * What one attempt spent. Migration 11.
+ *
+ * NULL rather than 0, and the reader keeps the difference: a run whose count
+ * nobody could read is not a run that spent nothing. `overBudget` holds a
+ * mission whose spend is unreadable, on the fleet's standing bias that an
+ * unknown is not permission — so a zero here would be a lie that reads as
+ * headroom.
+ */
+export const RUN_TOKENS = `
+ALTER TABLE child_runs ADD COLUMN tokens INTEGER;
+`;

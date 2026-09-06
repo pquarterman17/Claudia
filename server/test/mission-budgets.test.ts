@@ -141,13 +141,45 @@ describe('a mission with a time budget', () => {
 });
 
 describe('a mission with a token budget', () => {
-  it('is held rather than let through, because nothing can measure it yet', async () => {
-    // Token spend lives on a session, and a session that has ended has taken
-    // its counts with it — there is no per-run column to read. The reconciler
-    // was already written for exactly this: an unreadable spend is a hold with
-    // a reason, on the same bias the rest of the fleet takes. A zero would
-    // have been a lie that reads as headroom.
+  /**
+   * This used to assert the opposite, and correctly: token spend lived on a
+   * session, a session that ended took its counts with it, and `spendOf`
+   * answered NaN — so `overBudget` held every mission with a token budget on
+   * its first pulse, permanently. Settable, visible, and enforcing a stop
+   * rather than a bound, which is the worst shape a limit can take.
+   *
+   * The counts are on the run rows now, so the budget is a budget.
+   */
+  it('dispatches while the runs it has paid for are still under the budget', async () => {
     const { store, mission: m } = mission({ budgetTokens: 1_000_000 });
+    const spent = readyTask(store, m.id);
+    const past = pastRun(store, m.id, spent.id, Date.now() - 60_000);
+    const recorded = store.runs.recordTokens(past.id, 400_000);
+    if (!recorded.ok) throw new Error(recorded.message);
+    readyTask(store, m.id);
+
+    const launched: string[] = [];
+    await pulseMission(m, {
+      store,
+      policy: POLICY,
+      observeSessions: NO_SESSIONS,
+      launch: async (order) => {
+        launched.push(order.taskId);
+        return true;
+      },
+    });
+    // Both ready tasks: the one whose earlier attempt failed and spent the
+    // 400k, and the fresh one. Under the ceiling and under the budget, so
+    // nothing holds them.
+    expect(launched).toHaveLength(2);
+  });
+
+  it('holds once the budget is spent, and says so', async () => {
+    const { store, mission: m } = mission({ budgetTokens: 500_000 });
+    const spent = readyTask(store, m.id);
+    const past = pastRun(store, m.id, spent.id, Date.now() - 60_000);
+    const recorded = store.runs.recordTokens(past.id, 500_000);
+    if (!recorded.ok) throw new Error(recorded.message);
     readyTask(store, m.id);
 
     const launched: string[] = [];
@@ -162,6 +194,52 @@ describe('a mission with a token budget', () => {
     });
     expect(launched).toEqual([]);
     expect(result?.launched).toBe(0);
+    expect(kinds(store, m.id)).toContain('mission_held');
+  });
+
+  it('holds when even one of its runs cannot be measured', async () => {
+    // The fleet's standing bias, applied to arithmetic: a mission's budget is
+    // spent by every attempt it has made, so skipping the runs nobody could
+    // measure would report a spend that is definitely too low and call it a
+    // measurement. Rows written before the column existed are exactly this.
+    const { store, mission: m } = mission({ budgetTokens: 1_000_000 });
+    const spent = readyTask(store, m.id);
+    const past = pastRun(store, m.id, spent.id, Date.now() - 60_000);
+    store.db.prepare('UPDATE child_runs SET tokens = NULL WHERE id = ?').run(past.id);
+    readyTask(store, m.id);
+
+    const launched: string[] = [];
+    await pulseMission(m, {
+      store,
+      policy: POLICY,
+      observeSessions: NO_SESSIONS,
+      launch: async (order) => {
+        launched.push(order.taskId);
+        return true;
+      },
+    });
+    expect(launched).toEqual([]);
+  });
+
+  it('writes down what a live child has spent, so the count outlives its session', async () => {
+    // The whole reason for the column. A session that has ended has taken its
+    // counts with it, and the budget is spent by the attempt either way.
+    const { store, mission: m } = mission({ budgetTokens: 1_000_000 });
+    const task = readyTask(store, m.id);
+    const run = store.runs.create({ missionId: m.id, taskId: task.id, agent: 'claude', attempt: 1, state: 'dispatched' });
+    if (!run.ok) throw new Error(run.message);
+    const attached = store.runs.attachSession(run.value.id, 'sess-1');
+    if (!attached.ok) throw new Error(attached.message);
+
+    await pulseMission(m, {
+      store,
+      policy: POLICY,
+      observeSessions: () => new Map([['sess-1', { lastActivityAt: Date.now(), tokens: 12_345 }]]),
+      launch: async () => true,
+    });
+
+    const after = store.runs.get(run.value.id);
+    expect(after.ok && after.value?.tokens).toBe(12_345);
   });
 });
 

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { FLEET_META } from './path-platform.js';
-import { ESCALATION_KEYS, FLEET_CORE, MISSION_AGENT, MISSION_VERIFY } from './schema.js';
+import { ESCALATION_KEYS, FLEET_CORE, MISSION_AGENT, MISSION_VERIFY, RUN_TOKENS } from './schema.js';
 import {
   CANONICAL_WORKTREE_PATHS,
   canonicaliseWorktreePaths,
@@ -118,6 +118,14 @@ export const MIGRATIONS: readonly Migration[] = [
     // predates the column genuinely has no verify command, and absent is the
     // value that says so.
     up: (db) => db.exec(MISSION_VERIFY),
+  },
+  {
+    version: 11,
+    name: 'run-tokens',
+    // Nullable, so every run that predates it reads as unknown rather than as
+    // free — which is what it is: those sessions are gone and took their
+    // counts with them.
+    up: (db) => db.exec(RUN_TOKENS),
   },
 ];
 

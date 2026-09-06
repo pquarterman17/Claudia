@@ -2,6 +2,7 @@ import type { AgentKind, Mission, SessionState } from '@claudia/shared';
 import { transact } from '../store/db.js';
 import type { FleetStore } from '../store/index.js';
 import { judgeReported } from './evidence.js';
+import { retireWorktrees } from './worktree-retire.js';
 import { applyDecision, applyWatchdogOutcomes } from './pulse-apply.js';
 import { compensateLaunch } from './pulse-reserve.js';
 import { recovered, skipFleet, skipMission } from './pulse-report.js';
@@ -142,7 +143,8 @@ export interface PulseConfig extends Omit<PulseDeps, 'policy'> {
   policy: FleetPolicySource;
 }
 
-function readPolicy(config: PulseConfig): PulseDeps {
+/** Exported for `pulser.ts`, which reads the limits once per mission per tick. */
+export function readPolicy(config: PulseConfig): PulseDeps {
   return { ...config, policy: typeof config.policy === 'function' ? config.policy() : config.policy };
 }
 
@@ -154,6 +156,14 @@ export interface PulseResult {
   escalated: number;
   /** Runs whose child finished its turn and whose task now awaits a decision. */
   reported: number;
+  /**
+   * Worktrees this pulse stopped calling `active`.
+   *
+   * Reported alongside the launches because it is the same kind of fact: what
+   * the pulse did to the fleet's own records. Without it the pass is a column
+   * change nobody outside the store could observe.
+   */
+  retired: number;
   /**
    * What this pulse measured the mission to have spent.
    *
@@ -251,6 +261,7 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
     deferred: 0,
     escalated: 0,
     reported: 0,
+    retired: 0,
     spend,
   };
   // Collected, not executed. Everything inside the transaction is a durable
@@ -306,83 +317,11 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
   } catch (err) {
     console.error(`[claudia] could not judge reported runs for mission ${mission.id}:`, err);
   }
+  // After judging, not before: judging reads the worktree, so a report read on
+  // this same pulse leaves a directory the retire pass may then let go of.
+  // Nothing here touches the filesystem — it writes `idle` over a record that
+  // has been claiming `active` since the run that held it ended.
+  result.retired = retireWorktrees(store, mission.id);
   recovered(mission.id);
   return result;
-}
-
-/**
- * The clock, and the only thing in this module that remembers a decision.
- *
- * Each mission carries its own `pulseSec`, so one global interval cannot be the
- * cadence: a mission set to four hours must not be decided on every fifteen
- * seconds because another one is. The ticker fires often; this decides which
- * missions are actually due.
- *
- * Due times are in memory and not persisted, which means a restart pulses
- * everything once. That is the behaviour worth having — a fleet that has just
- * recovered its rows should look at them — and persisting it would buy a
- * suppressed first pulse in exchange for a column to keep in step.
- */
-export class FleetPulser {
-  private readonly lastPulsedAt = new Map<string, number>();
-  /** Missions with a pulse still awaiting its launchers. */
-  private readonly inFlight = new Set<string>();
-
-  constructor(private readonly config: PulseConfig) {}
-
-  /** Pulses every watched mission whose own interval has elapsed. */
-  async tick(): Promise<PulseResult[]> {
-    const missions = this.config.store.missions.list('active');
-    // The fleet's widest failure, and the quietest: an unreadable mission list
-    // is a tick that decides nothing for EVERY mission, and until this line it
-    // was indistinguishable from a tick with nothing due.
-    if (!missions.ok) return skipFleet(missions.message);
-    recovered('fleet');
-    const now = this.config.now?.() ?? Date.now();
-    const results: PulseResult[] = [];
-    for (const mission of missions.value) {
-      if (mission.watch !== 'watching') continue;
-      // Never two pulses of one mission at once. Found in review, and it is
-      // the cost of the previous round's fix: `setInterval` does not wait for
-      // the prior tick, and the cadence is now stamped only AFTER every
-      // launcher has been awaited — so a startup slower than the tick interval
-      // left a second tick reading the same ready task and the same
-      // no-run snapshot, and enqueueing the same paid launch again. Released
-      // in `finally`, or one thrown pulse would wedge the mission forever.
-      if (this.inFlight.has(mission.id)) continue;
-      const last = this.lastPulsedAt.get(mission.id);
-      if (last !== undefined && now - last < mission.pulseSec * 1000) continue;
-      this.inFlight.add(mission.id);
-      let result: PulseResult | undefined;
-      try {
-        // Read per mission, so a limit lowered mid-tick binds the next
-        // mission rather than none of them.
-        result = await pulseMission(mission, readPolicy(this.config));
-      } catch (err) {
-        // One mission's failure is not the fleet's. The production caller is a
-        // timer that discards this promise, so a rejection escaping here is an
-        // unhandled rejection AND a tick that silently abandoned every mission
-        // after this one. Left unstamped, so the next tick tries again.
-        console.error(`[claudia] pulse failed for mission ${mission.id}:`, err);
-      } finally {
-        this.inFlight.delete(mission.id);
-      }
-      // Stamped only after a pulse that actually landed. Found in review:
-      // stamping first meant one transient read or transaction failure
-      // suppressed every retry for the mission's whole interval — up to four
-      // hours of a fleet deciding nothing because one write lost a race.
-      if (result) {
-        this.lastPulsedAt.set(mission.id, now);
-        results.push(result);
-      }
-    }
-    return results;
-  }
-
-  /** Drops missions that no longer exist, so the map cannot grow forever. */
-  forget(missionIds: ReadonlySet<string>): void {
-    for (const id of this.lastPulsedAt.keys()) {
-      if (!missionIds.has(id)) this.lastPulsedAt.delete(id);
-    }
-  }
 }

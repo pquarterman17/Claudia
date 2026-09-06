@@ -73,6 +73,11 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
     // Asked for on expand, not held for every mission: a fleet of twenty
     // missions is twenty task lists and twenty logs nobody is looking at.
     if (next !== undefined) {
+      // The mission list too, for its spend. A mission's own pulse pushes that
+      // figure as it changes, but a PAUSED mission never pulses — and it is
+      // the one somebody is most likely to be looking at while deciding
+      // whether to start it. Bounded by the click rather than by a timer.
+      send({ type: 'list_missions' });
       send({ type: 'list_tasks', missionId: mission.id });
       send({ type: 'list_escalations', missionId: mission.id });
       // From what this client has already rendered, not from zero. A cursor of

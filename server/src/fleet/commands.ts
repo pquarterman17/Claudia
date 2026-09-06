@@ -8,7 +8,7 @@ import type {
 } from '@claudia/shared';
 import { DEFAULT_PAGE } from '../store/events.js';
 import { acceptTask } from './accept.js';
-import { spendOf } from './pulse-spend.js';
+import { reportOf, spendOf } from './pulse-spend.js';
 import { planResync, replayIsUsable } from './resync.js';
 import type { FleetStore } from '../store/index.js';
 
@@ -184,13 +184,7 @@ function spentByEach(store: FleetStore, missions: readonly Mission[]): MissionSp
   return missions.map((mission) => {
     const runs = store.runs.listByMission(mission.id);
     const spend = runs.ok ? spendOf(runs.value, now) : { elapsedSec: 0, tokens: Number.NaN };
-    return {
-      missionId: mission.id,
-      elapsedSec: spend.elapsedSec,
-      // JSON has no NaN, and `null` is the honest spelling of the thing NaN
-      // meant here: nobody could add these up.
-      tokens: Number.isFinite(spend.tokens) ? spend.tokens : null,
-    };
+    return reportOf(mission.id, spend);
   });
 }
 

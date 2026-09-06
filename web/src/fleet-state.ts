@@ -100,6 +100,15 @@ export function foldFleet(state: FleetState, event: ServerEvent): FleetState | u
         spend: new Map((event.spend ?? []).map((s) => [s.missionId, { elapsedSec: s.elapsedSec, tokens: s.tokens }])),
         unavailable: undefined,
       };
+    case 'mission_spend': {
+      // One mission's figure, replaced where it stands. Pushed by that
+      // mission's own pulse, which is when the number changes and when it is
+      // enforced — so between pushes the board holds the last measurement,
+      // which is also the last one anything decided on.
+      const spend = new Map(state.spend);
+      spend.set(event.spend.missionId, { elapsedSec: event.spend.elapsedSec, tokens: event.spend.tokens });
+      return { ...state, spend };
+    }
     case 'tasks':
       return { ...state, tasks: replace(state.tasks, event.missionId, event.tasks) };
     case 'escalations':
@@ -186,6 +195,7 @@ function unionOf(existing: readonly FleetEvent[], incoming: readonly FleetEvent[
 /** The events this fold owns, named once so the guard above can run first. */
 const FLEET_EVENTS = new Set<ServerEvent['type']>([
   'missions',
+  'mission_spend',
   'tasks',
   'escalations',
   'fleet_events',

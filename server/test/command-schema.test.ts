@@ -95,7 +95,11 @@ const VALID: Array<[string, Record<string, unknown>]> = [
 
 /** The `type: '...'` of every member of the ClientCommand union, from source. */
 function clientCommandTypes(): string[] {
-  const path = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'shared', 'src', 'protocol.ts');
+  // `commands.ts` since the wire contract was split at its own divider —
+  // server→client in `protocol.ts`, client→server here. Reading the wrong file
+  // would make this pin pass by finding nothing, which is the failure mode a
+  // source-reading test exists to avoid.
+  const path = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'shared', 'src', 'commands.ts');
   const source = readFileSync(path, 'utf8');
   const start = source.indexOf('export type ClientCommand =');
   expect(start).toBeGreaterThan(-1);

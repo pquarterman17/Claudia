@@ -370,6 +370,7 @@ export * from './mission.js';
 export * from './transitions.js';
 export * from './orchestration.js';
 export * from './protocol.js';
+export * from './commands.js';
 export * from './verify.js';
 
 export const CLIENT_PING_MS = 5_000;

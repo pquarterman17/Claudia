@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { startFleet } from '../src/fleet/boot.js';
 import { handleFleetCommand, isFleetCommand } from '../src/fleet/commands.js';
 import { pulseMission, type SessionFacts } from '../src/fleet/pulse.js';
+import { reportOf } from '../src/fleet/pulse-spend.js';
 import type { FleetStore } from '../src/store/index.js';
 
 /**
@@ -391,5 +392,71 @@ describe('showing what it has spent', () => {
     // The same number `overBudget` is about to hold this mission on.
     expect(spend?.tokens).toBe(500);
     expect(spend?.tokens).toBeGreaterThanOrEqual(m.budgetTokens ?? 0);
+  });
+});
+
+describe('refreshing it while work is running', () => {
+  /**
+   * The defect in the version that first showed spend: it arrived only with a
+   * mission list, and nothing sends one while work is running. A board left
+   * open showed the figure it had at connect, indefinitely — a live number
+   * that was live exactly once.
+   *
+   * The pulse answers with the spend it decided on, so what a board is shown
+   * is the number the budget decision was made against rather than a second
+   * measurement of a moving quantity taken a moment later.
+   */
+  it('answers each pulse with what it measured', async () => {
+    const { store, mission: m } = mission({ budgetTokens: 1_000_000 });
+    const task = readyTask(store, m.id);
+    const past = pastRun(store, m.id, task.id, Date.now() - 60_000);
+    const recorded = store.runs.recordTokens(past.id, 12_000);
+    if (!recorded.ok) throw new Error(recorded.message);
+
+    const result = await pulseMission(m, {
+      store,
+      policy: POLICY,
+      observeSessions: NO_SESSIONS,
+      launch: async () => true,
+    });
+    expect(result?.spend.tokens).toBe(12_000);
+    expect(result?.spend.elapsedSec).toBeGreaterThan(50);
+  });
+
+  it('moves as a live child spends, which is the whole point', async () => {
+    // Two pulses over one run whose session reports more each time. The second
+    // figure has to be larger, or a board fed by this would sit still while a
+    // child burned through the budget.
+    const { store, mission: m } = mission({ budgetTokens: 1_000_000 });
+    const task = readyTask(store, m.id);
+    const run = store.runs.create({ missionId: m.id, taskId: task.id, agent: 'claude', attempt: 1, state: 'dispatched' });
+    if (!run.ok) throw new Error(run.message);
+    const attached = store.runs.attachSession(run.value.id, 'sess-1');
+    if (!attached.ok) throw new Error(attached.message);
+
+    const pulse = async (tokens: number) =>
+      pulseMission(m, {
+        store,
+        policy: POLICY,
+        observeSessions: () => new Map([['sess-1', { lastActivityAt: Date.now(), tokens }]]),
+        launch: async () => true,
+      });
+
+    const first = await pulse(1_000);
+    const second = await pulse(9_000);
+    expect(first?.spend.tokens).toBe(1_000);
+    expect(second?.spend.tokens).toBe(9_000);
+  });
+
+  it('reports a spend it could not measure as null, not as nothing spent', () => {
+    // What crosses the wire, in the one place that decides it. JSON has no
+    // NaN, and zero is the wrong lie: that is the state in which the fleet
+    // refuses to dispatch.
+    expect(reportOf('m1', { elapsedSec: 12, tokens: Number.NaN })).toEqual({
+      missionId: 'm1',
+      elapsedSec: 12,
+      tokens: null,
+    });
+    expect(reportOf('m1', { elapsedSec: 12, tokens: 40 }).tokens).toBe(40);
   });
 });

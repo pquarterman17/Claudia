@@ -1,11 +1,12 @@
-import type { AgentKind, ChildRun, Mission, SessionState } from '@claudia/shared';
+import type { AgentKind, Mission, SessionState } from '@claudia/shared';
 import { transact } from '../store/db.js';
 import type { FleetStore } from '../store/index.js';
 import { judgeReported } from './evidence.js';
 import { applyDecision, applyWatchdogOutcomes } from './pulse-apply.js';
 import { compensateLaunch } from './pulse-reserve.js';
 import { recovered, skipFleet, skipMission } from './pulse-report.js';
-import { reconcile, type FleetPolicy, type MissionSpend } from './reconcile.js';
+import { reconcile, type FleetPolicy } from './reconcile.js';
+import { recordSpend, spendOf } from './pulse-spend.js';
 import { DEFAULT_WATCHDOG, type WatchdogPolicy } from './watchdog-policy.js';
 import type { RunObservation } from './watchdog.js';
 
@@ -91,6 +92,14 @@ export interface SessionFacts {
    * it is the child saying it is finished.
    */
   state?: SessionState;
+  /**
+   * Tokens this session has spent, input and output together.
+   *
+   * Optional, and absent means the observer could not say — which the run row
+   * keeps as an unknown rather than turning into a zero. Cumulative and
+   * updated at turn end, like the summary it comes from.
+   */
+  tokens?: number;
   /** Tool name it is parked on, when it is parked. */
   pendingApproval?: string;
   /** When it parked. */
@@ -180,15 +189,21 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
 
   const now = deps.now?.() ?? Date.now();
   const live = deps.observeSessions();
+  // Written down BEFORE anything is decided, so this pulse's budget check sees
+  // what the mission has actually spent — and so the count survives the
+  // session that knows it. A child observed once and then gone leaves its last
+  // reading on the row; a child never observed leaves an unknown, which is the
+  // honest answer and the one `overBudget` holds on.
+  const measured = recordSpend(store, runs.value, live);
   // The mission's own ceiling and the fleet's, whichever binds first. The
   // reconciler already takes the lower of the two; passing the fleet policy
   // alone would let a mission set to one child dispatch the fleet default.
   const decisions = reconcile({
     mission,
     tasks: tasks.value,
-    runs: runs.value,
+    runs: measured,
     policy: deps.policy,
-    spend: spendOf(runs.value, now),
+    spend: spendOf(measured, now),
   });
   // ONE bound on attempts, shared by the half that decides and the half that
   // spends. Found in review: `reconcile` was handed `deps.policy.maxAttempts`
@@ -200,7 +215,7 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
   // policy it cannot use, which is the right answer to a missing limit.
   const watchdogPolicy: WatchdogPolicy = { ...DEFAULT_WATCHDOG, maxAttempts: deps.policy.maxAttempts };
 
-  const observations = runs.value
+  const observations = measured
     .filter((run) => run.state === 'dispatched' || run.state === 'running')
     .map<RunObservation>((run) => {
       // The session's OWN account of itself, not merely that its id was in a
@@ -211,7 +226,7 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
         run,
         sessionAlive: facts !== undefined,
         ...(facts?.state !== undefined ? { state: facts.state } : {}),
-        attemptsSpent: Math.max(...runs.value.filter((r) => r.taskId === run.taskId).map((r) => r.attempt)),
+        attemptsSpent: Math.max(...measured.filter((r) => r.taskId === run.taskId).map((r) => r.attempt)),
         ...(facts?.lastActivityAt !== undefined ? { lastActivityAt: facts.lastActivityAt } : {}),
         ...(facts?.pendingApproval !== undefined ? { pendingApproval: facts.pendingApproval } : {}),
         ...(facts?.pendingSince !== undefined ? { pendingSince: facts.pendingSince } : {}),
@@ -282,41 +297,6 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
   }
   recovered(mission.id);
   return result;
-}
-
-/**
- * What the mission has spent, measured rather than assumed.
- *
- * `overBudget` was written with this and never given it: `reconcile` takes
- * `spend` as optional and `pulseMission` never passed one, so `if (!spend)
- * return undefined` meant a mission with a budget ran forever. A limit that is
- * persisted, settable and enforcing nothing is the worst shape a limit can
- * take — the comment on `overBudget` says so, about the version of this bug it
- * had already fixed one layer up.
- *
- * `elapsedSec` is WALL CLOCK from the moment this mission first started
- * spending, which is what `Mission.budgetSec` says it is. Not the sum of its
- * children's runtimes: that is a different and also useful bound — four
- * children for an hour is four hours of machine — but it is not what the field
- * promises, and quietly changing what a stored limit means is worse than not
- * enforcing it. Nothing has been spent before the first run, so a mission that
- * has never dispatched reads zero rather than its age.
- *
- * `tokens` is NOT measurable yet, and says so by being NaN rather than by
- * being a comfortable zero. Token spend lives on a session, and a session that
- * has ended has taken its counts with it; recording them per run needs a
- * column that does not exist. `overBudget` already handles exactly this: a
- * mission with `budgetTokens` set is HELD, with "cannot read its token spend"
- * as the reason, on the same bias the rest of the fleet takes — an unknown is
- * not permission. A zero would have been a lie that reads as headroom.
- */
-function spendOf(runs: readonly ChildRun[], now: number): MissionSpend {
-  const started = runs.map((run) => run.startedAt).filter((at) => Number.isFinite(at));
-  const from = started.length === 0 ? undefined : Math.min(...started);
-  return {
-    elapsedSec: from === undefined ? 0 : Math.max(0, (now - from) / 1000),
-    tokens: Number.NaN,
-  };
 }
 
 /**

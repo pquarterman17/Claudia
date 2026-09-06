@@ -187,6 +187,12 @@ function liveSessionFacts(): ReadonlyMap<string, SessionFacts> {
     if (!LIVE_SESSION_STATES.has(session.state)) continue;
     facts.set(session.id, {
       lastActivityAt: session.lastActivityAt,
+      // What it has cost so far, which the pulse writes onto the run row. The
+      // summary's own cumulative totals, updated at turn end — so a child
+      // between turns reports the last complete figure rather than a partial
+      // one, and a mission's budget is measured from numbers that outlive the
+      // sessions that produced them.
+      tokens: session.inputTokens + session.outputTokens,
       // Its own account of what it is doing. `idle` is the SDK reporting a
       // turn that ENDED, which for a fleet child given one brief is the child
       // saying the work is done.

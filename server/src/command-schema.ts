@@ -133,6 +133,7 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
         req('body', isText, 'a string'),
         req('cwd', isLabel, 'a string'),
         opt('agent', isAgentKind, 'a known agent kind'),
+        opt('verify', isText, 'a string'),
       ]);
     case 'list_missions':
       return runChecks(type, o, []);
@@ -140,6 +141,14 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
       return runChecks(type, o, [
         req('missionId', isLabel, 'a string'),
         req('watch', isMissionWatch, 'watching or paused'),
+      ]);
+    case 'set_mission_verify':
+      // Shape only. Whether the command is one this fleet will agree to run is
+      // the store's call, so there is one answer to that question and it is
+      // the one that also guards a direct write.
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        req('verify', isText, 'a string'),
       ]);
     case 'create_task':
       return runChecks(type, o, [

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -55,7 +55,24 @@ function repo(): string {
   return path;
 }
 
-function fixture(over: { work?: boolean } = {}) {
+/**
+ * A real script, because what is being tested is what a real process reports.
+ *
+ * Both dialects: `ls` does not exist on the Windows runner and `exit` there
+ * ends the shell rather than the script, so one dialect is a test that only
+ * runs on one platform.
+ */
+function script(name: string, body: { posix: string; windows: string }): string {
+  const windows = process.platform === 'win32';
+  const path = join(dir, windows ? `${name}.cmd` : `${name}.sh`);
+  const text = windows ? `@echo off\r\n${body.windows}\r\n` : `#!/bin/sh\n${body.posix}\n`;
+  writeFileSync(path, text, 'utf8');
+  if (!windows) chmodSync(path, 0o755);
+  // Quoted, so a temp path with a space survives the shell that runs it.
+  return `"${path}"`;
+}
+
+function fixture(over: { work?: boolean; verify?: string } = {}) {
   const path = repo();
   const baseSha = git(path, 'rev-parse', 'HEAD');
   if (over.work) {
@@ -69,7 +86,12 @@ function fixture(over: { work?: boolean } = {}) {
   const store = boot.store;
   opened.push(store);
 
-  const mission = store.missions.create({ name: 'm', body: '', cwd: path });
+  const mission = store.missions.create({
+    name: 'm',
+    body: '',
+    cwd: path,
+    ...(over.verify !== undefined ? { verify: over.verify } : {}),
+  });
   if (!mission.ok) throw new Error(mission.message);
   const task = store.tasks.create({ missionId: mission.value.id, title: 't', description: '', cwd: path });
   if (!task.ok) throw new Error(task.message);
@@ -229,7 +251,15 @@ describe('from the launch to the evidence, with nothing faked but the SDK', () =
     const store = boot.store;
     opened.push(store);
 
-    const mission = store.missions.create({ name: 'm', body: '', cwd: repoPath });
+    // With a check of its own, so the chain proves the last link too: the
+    // command has to run in the worktree the child was given, not in the
+    // repository and not in the server's own directory.
+    const mission = store.missions.create({
+      name: 'm',
+      body: '',
+      cwd: repoPath,
+      verify: script('e2e', { posix: 'ls hello.txt', windows: 'dir /b hello.txt' }),
+    });
     if (!mission.ok) throw new Error(mission.message);
     const watched = store.missions.setWatch(mission.value.id, 'watching');
     if (!watched.ok) throw new Error(watched.message);
@@ -305,5 +335,78 @@ describe('from the launch to the evidence, with nothing faked but the SDK', () =
     // Still a human's decision — nothing ran the tests — but now it is one
     // made in front of the facts instead of in front of an empty record.
     expect(payload?.['missing']).not.toContain('branch');
+    // `hello.txt` exists only in the worktree, and only because the child
+    // committed it there — so an exit of 0 is the command having run in the
+    // right directory, over the right work.
+    expect(payload?.['checks']).toMatch(/exit 0$/);
+    expect(payload?.['missing']).toEqual([]);
+  });
+});
+
+describe('checking the work, not just looking at it', () => {
+  /**
+   * The last gap in `acceptance.ts`, and the widest.
+   *
+   * Nothing ever wrote `evidence.tests`, so `missingEvidence` reported "test
+   * results" on every judgement, `judge`'s reject-on-failing-checks branch was
+   * unreachable by any input, and every verdict the fleet had ever recorded
+   * was `needs_human` — however good the work was. A mission can now say what
+   * "green" means for its repository, and the pulse runs it in the worktree
+   * the child actually worked in.
+   */
+  it('runs the mission command and records what it said', async () => {
+    const { store, mission } = fixture({ work: true, verify: script('green', { posix: 'exit 0', windows: 'exit /b 0' }) });
+    expect(await judgeReported(deps(store), mission)).toBe(1);
+
+    const payload = judged(store, mission.id);
+    const evidence = payload?.['evidence'] as Record<string, unknown>;
+    const tests = evidence['tests'] as Array<Record<string, unknown>>;
+    expect(tests).toHaveLength(1);
+    expect(tests[0]?.['exitCode']).toBe(0);
+    // The gap that closed: this list has said "test results" on every
+    // judgement the fleet has ever made.
+    expect(payload?.['missing']).not.toContain('test results');
+    expect(payload?.['missing']).toEqual([]);
+  });
+
+  it('rejects work whose checks failed, rather than asking a human about it', async () => {
+    // The branch no input could reach. A child that reports success over a
+    // failing suite is the case the whole `reported`/`accepted` split exists
+    // for, and until now it produced the same "check it" as every other run.
+    const { store, mission } = fixture({
+      work: true,
+      verify: script('red', { posix: 'echo boom\nexit 1', windows: 'echo boom\r\nexit /b 1' }),
+    });
+    await judgeReported(deps(store), mission);
+
+    const payload = judged(store, mission.id);
+    expect(payload?.['verdict']).toBe('reject');
+    expect(payload?.['reason']).toMatch(/failing check/);
+    expect(payload?.['checks']).toMatch(/exit 1$/);
+  });
+
+  it('says a command that could not run did not check anything', async () => {
+    // Not a failure. A missing binary is evidence about the environment, and
+    // reporting it as a non-zero exit would reject good work — so the verdict
+    // falls back to the one the fleet had before, with the reason attached.
+    const { store, mission } = fixture({ work: true, verify: join(dir, 'no-such-checker') });
+    await judgeReported(deps(store), mission);
+
+    const payload = judged(store, mission.id);
+    expect(payload?.['verdict']).toBe('needs_human');
+    expect(payload?.['missing']).toContain('test results');
+    expect(payload?.['checks']).toMatch(/could not run/);
+    const evidence = payload?.['evidence'] as Record<string, unknown>;
+    expect(evidence['tests']).toBeUndefined();
+  });
+
+  it('says nothing about checks for a mission that has none', async () => {
+    // The default, and every mission written before the column existed.
+    const { store, mission } = fixture({ work: true });
+    await judgeReported(deps(store), mission);
+
+    const payload = judged(store, mission.id);
+    expect(payload?.['checks']).toBeUndefined();
+    expect(payload?.['missing']).toContain('test results');
   });
 });

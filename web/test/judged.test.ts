@@ -78,6 +78,23 @@ describe('a payload that is not what it should be', () => {
     expect(found?.missing).toEqual(['tests']);
   });
 
+  it('carries what the mission\'s own checks said, including when they did not run', () => {
+    // `checks` sits outside `evidence` because it also describes the runs that
+    // produced none: a command that could not start and one that never
+    // finished both leave `tests` absent, and "no test results" alone does not
+    // say which — or that anything was attempted at all.
+    const ran = judgementFor([event({ payload: { ...GOOD, checks: 'npm test — exit 0' } })], 't1');
+    expect(ran?.checks).toBe('npm test — exit 0');
+
+    const missing = judgementFor([event({ payload: GOOD })], 't1');
+    expect(missing?.checks).toBeUndefined();
+
+    // Same rule as the evidence fields: the wrong type is absent, never a
+    // value the panel renders as though somebody had checked.
+    const wrong = judgementFor([event({ payload: { ...GOOD, checks: 7 } })], 't1');
+    expect(wrong?.checks).toBeUndefined();
+  });
+
   it('treats an evidence field of the wrong type as absent, not as a value', () => {
     // Absent means nobody checked. A `filesChanged` of "lots" must not become
     // a number the panel renders as if somebody had.

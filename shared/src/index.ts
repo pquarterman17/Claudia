@@ -369,6 +369,7 @@ export * from './usage.js';
 export * from './mission.js';
 export * from './orchestration.js';
 export * from './protocol.js';
+export * from './verify.js';
 
 export const CLIENT_PING_MS = 5_000;
 export const CLIENT_STALE_MS = 20_000;

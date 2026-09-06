@@ -319,9 +319,11 @@ export type ClientCommand =
    * reach past that and start something.
    */
   /** `agent` chooses the harness the mission's children run on; absent means Claude. */
-  | { type: 'create_mission'; name: string; body: string; cwd: string; agent?: AgentKind }
+  | { type: 'create_mission'; name: string; body: string; cwd: string; agent?: AgentKind; verify?: string }
   | { type: 'list_missions' }
   | { type: 'set_mission_watch'; missionId: string; watch: MissionWatch }
+  /** The empty string clears it, which is how a mission stops being checked. */
+  | { type: 'set_mission_verify'; missionId: string; verify: string }
   | { type: 'create_task'; missionId: string; title: string; description: string; cwd: string; dependsOn?: string[] }
   | { type: 'list_tasks'; missionId: string }
   /**

@@ -12,11 +12,12 @@ import {
   type MissionWatch,
   type Task,
   type TaskStatus,
+  verifyCommandProblem,
 } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { attempt, refuse, transact, type StoreResult } from './db.js';
-import { agentKind, idList, int, optInt, text, type Row } from './rows.js';
+import { agentKind, idList, int, optInt, optText, text, type Row } from './rows.js';
 
 /**
  * Missions and their tasks.
@@ -61,6 +62,21 @@ function dependencies(value: readonly string[] | undefined): string[] {
   return [...value];
 }
 
+/**
+ * Checked on the way IN, like `dependencies` above and for the same reason.
+ *
+ * A verify command that cannot mean what it says is worse than none: parsed as
+ * arguments, `npm test && npm run lint` hands npm four words it does not
+ * understand, npm exits non-zero, and every finished child is REJECTED for the
+ * rest of the mission's life. Refusing it here means the person who typed it
+ * finds out, rather than the work.
+ */
+function verifyCommand(value: string): string {
+  const problem = verifyCommandProblem(value);
+  if (problem !== undefined) refuse(problem);
+  return value.trim();
+}
+
 export type NewTask = Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'priority' | 'dependsOn' | 'acceptance'> & {
   id?: string;
   status?: TaskStatus;
@@ -74,7 +90,7 @@ export type NewTask = Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'status' | '
 const DEFAULT_AGENT: AgentKind = 'claude';
 
 const MISSION_COLUMNS =
-  'id, name, body, status, watch, pulse_sec, max_children, budget_sec, budget_tokens, cwd, agent, created_at, updated_at';
+  'id, name, body, status, watch, pulse_sec, max_children, budget_sec, budget_tokens, cwd, agent, verify, created_at, updated_at';
 const TASK_COLUMNS =
   'id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, created_at, updated_at';
 
@@ -98,11 +114,15 @@ export class MissionRepo {
         // Checked, not cast. The column has a CHECK too, but a refusal that
         // names the value beats a constraint violation that names the column.
         agent: agentKind(input.agent ?? DEFAULT_AGENT),
+        // Blank is not a command. A caller that sends an empty string means
+        // "nothing checks this", and storing it would make `verify` a value
+        // the runner has to defend against on every read instead of once here.
+        ...(input.verify?.trim() ? { verify: verifyCommand(input.verify) } : {}),
         createdAt: now,
         updatedAt: now,
       };
       this.db
-        .prepare(`INSERT INTO missions (${MISSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .prepare(`INSERT INTO missions (${MISSION_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           mission.id,
           mission.name,
@@ -115,6 +135,7 @@ export class MissionRepo {
           mission.budgetTokens ?? null,
           mission.cwd,
           mission.agent,
+          mission.verify ?? null,
           mission.createdAt,
           mission.updatedAt,
         );
@@ -170,6 +191,26 @@ export class MissionRepo {
       const current = this.load(id);
       if (current.watch === watch) return current;
       return { ...current, watch, updatedAt: this.touch(id, 'watch', watch) };
+    });
+  }
+
+  /**
+   * Sets, or clears, the command this mission's work is checked with.
+   *
+   * The empty string clears it, which is the only way back to "nobody checks":
+   * a mission whose command has become wrong is more dangerous than one with
+   * none, because a failing check that is failing for its own reasons rejects
+   * good work.
+   */
+  setVerify(id: string, verify: string): StoreResult<Mission> {
+    return transact(this.db, 'update the mission', () => {
+      const current = this.load(id);
+      const next = verify.trim() === '' ? undefined : verifyCommand(verify);
+      if (current.verify === next) return current;
+      const updatedAt = Date.now();
+      this.db.prepare('UPDATE missions SET verify = ?, updated_at = ? WHERE id = ?').run(next ?? null, updatedAt, id);
+      const { verify: _dropped, ...rest } = current;
+      return { ...rest, ...(next !== undefined ? { verify: next } : {}), updatedAt };
     });
   }
 
@@ -301,6 +342,7 @@ function toMission(row: Row): Mission {
     budgetTokens: optInt(row, 'budget_tokens'),
     cwd: text(row, 'cwd'),
     agent: agentKind(text(row, 'agent')),
+    ...(optText(row, 'verify') !== undefined ? { verify: optText(row, 'verify') as string } : {}),
     createdAt: int(row, 'created_at'),
     updatedAt: int(row, 'updated_at'),
   };

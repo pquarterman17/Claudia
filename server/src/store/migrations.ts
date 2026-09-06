@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { FLEET_META } from './path-platform.js';
-import { ESCALATION_KEYS, FLEET_CORE, MISSION_AGENT } from './schema.js';
+import { ESCALATION_KEYS, FLEET_CORE, MISSION_AGENT, MISSION_VERIFY } from './schema.js';
 import {
   CANONICAL_WORKTREE_PATHS,
   canonicaliseWorktreePaths,
@@ -110,6 +110,14 @@ export const MIGRATIONS: readonly Migration[] = [
     // off: the existing rows keep their identity and every child row keeps
     // pointing at them.
     up: (db) => db.exec(MISSION_AGENT),
+  },
+  {
+    version: 10,
+    name: 'mission-verify',
+    // A nullable ADD COLUMN: nothing to backfill, because a mission that
+    // predates the column genuinely has no verify command, and absent is the
+    // value that says so.
+    up: (db) => db.exec(MISSION_VERIFY),
   },
 ];
 

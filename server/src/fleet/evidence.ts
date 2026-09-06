@@ -2,6 +2,7 @@ import type { Mission } from '@claudia/shared';
 import { judge, missingEvidence, type Evidence } from './acceptance.js';
 import { gitLine, gitSays } from './git-facts.js';
 import type { PulseDeps } from './pulse.js';
+import { runVerify } from './verify.js';
 
 /**
  * What a finished child can actually show for itself.
@@ -37,7 +38,8 @@ export async function judgeReported(deps: PulseDeps, mission: Mission): Promise<
     // already judged is a no-op in the store. Checked here as well only to
     // avoid the git calls, which are the expensive half.
     if (alreadyJudged(deps, mission.id, run.id)) continue;
-    const evidence = await gatherEvidence(deps, run.worktreeId);
+    const gathered = await gatherEvidence(deps, run.worktreeId, mission.verify);
+    const { checks, ...evidence } = gathered;
     const verdict = judge(evidence);
     const appended = store.events.append({
       missionId: mission.id,
@@ -52,6 +54,12 @@ export async function judgeReported(deps: PulseDeps, mission: Mission): Promise<
         reason: verdict.reason,
         missing: missingEvidence(evidence),
         evidence,
+        // What the mission's own command said, in one line, including the
+        // cases that produced no test result: "could not run" and "did not
+        // finish" are the difference between work nobody checked and work
+        // that failed, and a verdict of `needs_human` alone does not say
+        // which.
+        ...(checks !== undefined ? { checks } : {}),
       },
       idempotencyKey: `judged:${encodeURIComponent(run.id)}`,
     });
@@ -73,14 +81,27 @@ function alreadyJudged(deps: PulseDeps, missionId: string, runId: string): boole
  * with no worktree — one whose claim came in before a directory existed —
  * produces nothing at all, and that is the honest answer.
  */
-async function gatherEvidence(deps: PulseDeps, worktreeId: string | undefined): Promise<Evidence> {
+async function gatherEvidence(
+  deps: PulseDeps,
+  worktreeId: string | undefined,
+  verify: string | undefined,
+): Promise<Evidence & { checks?: string }> {
   if (worktreeId === undefined) return {};
   const held = deps.store.worktrees.get(worktreeId);
   if (!held.ok || !held.value) return {};
   const { path, branch, baseSha } = held.value;
 
+  // Run in the worktree the child worked in, which is the only directory its
+  // claim is about. A mission with no command checks nothing, and the evidence
+  // then says so through `missingEvidence` rather than through silence.
+  const verified = verify === undefined ? undefined : await runVerify(path, verify);
+  const tests = verified?.kind === 'checked' ? [verified.result] : undefined;
+
+  const said = verified === undefined ? {} : { checks: verified.note };
+  const ran = tests === undefined ? {} : { tests };
+
   const headSha = await gitLine(path, ['rev-parse', 'HEAD']);
-  if (headSha === undefined) return { branch, baseSha };
+  if (headSha === undefined) return { branch, baseSha, ...ran, ...said };
 
   // `--numstat` over `--shortstat`: one line per file is a count that cannot be
   // misparsed, and zero lines is a real answer — an empty diff is a red flag,
@@ -95,5 +116,7 @@ async function gatherEvidence(deps: PulseDeps, worktreeId: string | undefined): 
     headSha,
     ...(filesChanged !== undefined ? { filesChanged } : {}),
     ...(descendsFromBase !== undefined ? { descendsFromBase } : {}),
+    ...ran,
+    ...said,
   };
 }

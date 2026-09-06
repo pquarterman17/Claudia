@@ -21,6 +21,7 @@ const FLEET_COMMANDS = new Set([
   'create_mission',
   'list_missions',
   'set_mission_watch',
+  'set_mission_verify',
   'create_task',
   'list_tasks',
   'set_task_status',
@@ -53,6 +54,7 @@ export function handleFleetCommand(cmd: ClientCommand, store: FleetStore | undef
         body: cmd.body,
         cwd: cmd.cwd,
         ...(cmd.agent ? { agent: cmd.agent } : {}),
+        ...(cmd.verify ? { verify: cmd.verify } : {}),
       });
       if (!created.ok) return [notice(created.message)];
       // The whole list, not just the new row: a client that has been away has
@@ -64,6 +66,14 @@ export function handleFleetCommand(cmd: ClientCommand, store: FleetStore | undef
     case 'set_mission_watch': {
       const moved = store.missions.setWatch(cmd.missionId, cmd.watch);
       if (!moved.ok) return [notice(moved.message)];
+      return listMissions(store);
+    }
+    case 'set_mission_verify': {
+      // The store refuses a command it could not run as written, and that
+      // refusal is the whole message: it names the operator it found and says
+      // what to do instead.
+      const set = store.missions.setVerify(cmd.missionId, cmd.verify);
+      if (!set.ok) return [notice(set.message)];
       return listMissions(store);
     }
     case 'create_task': {

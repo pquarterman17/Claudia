@@ -100,6 +100,20 @@ export interface Mission {
    * and the seam a retry on the other harness would use.
    */
   agent: AgentKind;
+  /**
+   * The command that decides whether a finished child's work is good.
+   *
+   * Absent means nobody checks, and that is the default: this is run
+   * unattended in a worktree, so it has to be a thing the human wrote down on
+   * purpose rather than something guessed from the repository. Without it the
+   * evidence carries no test results, `missingEvidence` reports the gap, and
+   * every verdict is `needs_human` — which is exactly what happened to every
+   * mission before this column existed.
+   *
+   * On the mission for the same reason `agent` is: it describes a repository's
+   * idea of "green", not one unit of work.
+   */
+  verify?: string;
   createdAt: number;
   updatedAt: number;
 }

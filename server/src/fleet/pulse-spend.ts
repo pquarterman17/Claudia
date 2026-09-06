@@ -1,5 +1,6 @@
 import type { ChildRun } from '@claudia/shared';
 import type { FleetStore } from '../store/index.js';
+import type { MissionSpendReport } from '@claudia/shared';
 import type { MissionSpend } from './reconcile.js';
 import type { SessionFacts } from './pulse.js';
 
@@ -84,4 +85,21 @@ export function recordSpend(
     }
     return written.value;
   });
+}
+
+/**
+ * A spend as the wire carries it.
+ *
+ * `null` where the sum is not a number, in ONE place: JSON has no NaN, and two
+ * conversions would eventually disagree about which way an unmeasurable spend
+ * leans. Zero is the wrong lie — that is the state in which the fleet refuses
+ * to dispatch, and a board drawing it as nothing spent would show headroom the
+ * mission does not have.
+ */
+export function reportOf(missionId: string, spend: MissionSpend): MissionSpendReport {
+  return {
+    missionId,
+    elapsedSec: spend.elapsedSec,
+    tokens: Number.isFinite(spend.tokens) ? spend.tokens : null,
+  };
 }

@@ -329,6 +329,75 @@ describe('what a mission has spent', () => {
     expect(state.spend.size).toBe(0);
   });
 
+  it('takes a pushed measurement while work is running', () => {
+    // The defect this closes: spend arrived only with a mission list, and
+    // nothing sends one while work is running — so a board left open showed
+    // the figure it had at connect, indefinitely.
+    const start = fold(NO_FLEET, {
+      type: 'missions',
+      missions: [mission('m1')],
+      spend: [{ missionId: 'm1', elapsedSec: 10, tokens: 100 }],
+    });
+    const moved = fold(start, { type: 'mission_spend', spend: { missionId: 'm1', elapsedSec: 70, tokens: 4_200 } });
+    expect(moved.spend.get('m1')).toEqual({ elapsedSec: 70, tokens: 4_200 });
+  });
+
+  it('leaves the other missions alone when one of them pulses', () => {
+    // Each mission pulses on its own cadence, so a push is about one of them.
+    const start = fold(NO_FLEET, {
+      type: 'missions',
+      missions: [mission('m1'), mission('m2')],
+      spend: [
+        { missionId: 'm1', elapsedSec: 10, tokens: 100 },
+        { missionId: 'm2', elapsedSec: 20, tokens: 200 },
+      ],
+    });
+    const moved = fold(start, { type: 'mission_spend', spend: { missionId: 'm1', elapsedSec: 11, tokens: 150 } });
+    expect(moved.spend.get('m2')).toEqual({ elapsedSec: 20, tokens: 200 });
+  });
+
+  it('holds the last measurement through an idle stretch', () => {
+    // No pulses means nothing spent and nothing to say. The figure must not
+    // decay to zero or vanish: it is still the last thing anything decided on.
+    const start = fold(NO_FLEET, {
+      type: 'missions',
+      missions: [mission('m1')],
+      spend: [{ missionId: 'm1', elapsedSec: 10, tokens: 100 }],
+    });
+    const later = fold(
+      start,
+      { type: 'fleet_event', event: fleetEvent(1) },
+      { type: 'tasks', missionId: 'm1', tasks: [task('t1', 'm1')] },
+    );
+    expect(later.spend.get('m1')).toEqual({ elapsedSec: 10, tokens: 100 });
+  });
+
+  it('takes the server\'s figure again on a reconnect', () => {
+    // A reconnect re-asks for the mission list, which carries spend — so a
+    // client that missed pushes while it was away is corrected rather than
+    // left holding what it had before.
+    const stale = fold(NO_FLEET, { type: 'mission_spend', spend: { missionId: 'm1', elapsedSec: 5, tokens: 5 } });
+    const fresh = fold(stale, {
+      type: 'missions',
+      missions: [mission('m1')],
+      spend: [{ missionId: 'm1', elapsedSec: 900, tokens: 90_000 }],
+    });
+    expect(fresh.spend.get('m1')).toEqual({ elapsedSec: 900, tokens: 90_000 });
+  });
+
+  it('takes a pushed unmeasurable spend as unmeasurable', () => {
+    // A run that stopped being readable between pulses. `null` has to survive
+    // the push, or the board would keep drawing a number that is no longer
+    // true — on the screen where somebody decides whether to raise the limit.
+    const start = fold(NO_FLEET, {
+      type: 'missions',
+      missions: [mission('m1')],
+      spend: [{ missionId: 'm1', elapsedSec: 10, tokens: 100 }],
+    });
+    const moved = fold(start, { type: 'mission_spend', spend: { missionId: 'm1', elapsedSec: 70, tokens: null } });
+    expect(moved.spend.get('m1')?.tokens).toBeNull();
+  });
+
   it('replaces the measurement rather than merging it', () => {
     // Spend only moves one way while a mission runs, but a mission removed
     // from the list must not leave its last figure behind to be drawn against

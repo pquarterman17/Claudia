@@ -7,6 +7,7 @@ import { MAX_FRAME_BYTES } from './command-fields.js';
 import { commitAndPush } from './commit-action.js';
 import { startFleet } from './fleet/boot.js';
 import { createLauncher } from './fleet/launcher.js';
+import { reportOf } from './fleet/pulse-spend.js';
 import { FleetPulser, type SessionFacts } from './fleet/pulse.js';
 import { Orchestrators } from './orchestrators.js';
 import { executeFinishAction, hostPlatform } from './finish-actions.js';
@@ -229,7 +230,22 @@ const pulser = fleet.store
       }),
     })
   : undefined;
-const pulseTicker = setInterval(() => void pulser?.tick(), 15_000);
+const pulseTicker = setInterval(() => {
+  // Published from the pulse, because that is both when a mission's spend
+  // CHANGES and when it is enforced — so a board fed by this shows the number
+  // the budget decision was made on rather than a second measurement taken a
+  // moment later. Until this existed, spend only arrived with a mission list,
+  // which nothing sends while work is running: a board left open showed the
+  // figure it had at connect, indefinitely.
+  void pulser
+    ?.tick()
+    .then((results) => {
+      for (const result of results) {
+        gateway.broadcast({ type: 'mission_spend', spend: reportOf(result.missionId, result.spend) });
+      }
+    })
+    .catch((err: unknown) => console.error('[claudia] pulse tick failed:', err));
+}, 15_000);
 pulseTicker.unref?.();
 
 // Mirrored transcripts, read only while somebody is watching one. Faster than

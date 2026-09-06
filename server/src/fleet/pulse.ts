@@ -5,7 +5,7 @@ import { judgeReported } from './evidence.js';
 import { applyDecision, applyWatchdogOutcomes } from './pulse-apply.js';
 import { compensateLaunch } from './pulse-reserve.js';
 import { recovered, skipFleet, skipMission } from './pulse-report.js';
-import { reconcile, type FleetPolicy } from './reconcile.js';
+import { reconcile, type FleetPolicy, type MissionSpend } from './reconcile.js';
 import { recordSpend, spendOf } from './pulse-spend.js';
 import { DEFAULT_WATCHDOG, type WatchdogPolicy } from './watchdog-policy.js';
 import type { RunObservation } from './watchdog.js';
@@ -154,6 +154,15 @@ export interface PulseResult {
   escalated: number;
   /** Runs whose child finished its turn and whose task now awaits a decision. */
   reported: number;
+  /**
+   * What this pulse measured the mission to have spent.
+   *
+   * Carried out rather than recomputed by the caller, so the number a board is
+   * shown is the number the budget decision was made on. Recomputing it a
+   * moment later would be a second measurement of a moving quantity, and the
+   * two would differ on exactly the ticks where a child was spending.
+   */
+  spend: MissionSpend;
 }
 
 /**
@@ -198,12 +207,13 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
   // The mission's own ceiling and the fleet's, whichever binds first. The
   // reconciler already takes the lower of the two; passing the fleet policy
   // alone would let a mission set to one child dispatch the fleet default.
+  const spend = spendOf(measured, now);
   const decisions = reconcile({
     mission,
     tasks: tasks.value,
     runs: measured,
     policy: deps.policy,
-    spend: spendOf(measured, now),
+    spend,
   });
   // ONE bound on attempts, shared by the half that decides and the half that
   // spends. Found in review: `reconcile` was handed `deps.policy.maxAttempts`
@@ -241,6 +251,7 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
     deferred: 0,
     escalated: 0,
     reported: 0,
+    spend,
   };
   // Collected, not executed. Everything inside the transaction is a durable
   // write that can roll back; a launched process cannot.

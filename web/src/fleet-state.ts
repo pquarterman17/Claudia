@@ -17,6 +17,15 @@ import type { Escalation, FleetEvent, Mission, ServerEvent, Task } from '@claudi
 
 export interface FleetState {
   missions: Mission[];
+  /**
+   * What each mission has spent, by mission id, as the server measured it.
+   *
+   * `tokens: null` means nobody could add them up — a run whose session ended
+   * before anything read it. Kept as null rather than folded into 0, because
+   * the fleet holds a mission it cannot measure and a board showing "0 spent"
+   * would draw headroom that is not there.
+   */
+  spend: ReadonlyMap<string, { elapsedSec: number; tokens: number | null }>;
   /** Tasks by mission id, as far as they have been asked for. */
   tasks: ReadonlyMap<string, Task[]>;
   /** Recent history by mission id, oldest first. */
@@ -58,6 +67,7 @@ export interface FleetState {
 
 export const NO_FLEET: FleetState = {
   missions: [],
+  spend: new Map(),
   tasks: new Map(),
   events: new Map(),
   pages: new Map(),
@@ -80,7 +90,16 @@ export function foldFleet(state: FleetState, event: ServerEvent): FleetState | u
       // An answer from the layer is proof it is there. A mission list that
       // arrives while `unavailable` is set would otherwise render under a
       // banner saying the database is closed.
-      return { ...state, missions: event.missions, unavailable: undefined };
+      return {
+        ...state,
+        missions: event.missions,
+        // Defensively, like everything else read off the socket. The field is
+        // required by the contract, so a list without one is a server older
+        // than this client — and a fold that threw there would take the whole
+        // board down over a number it only draws.
+        spend: new Map((event.spend ?? []).map((s) => [s.missionId, { elapsedSec: s.elapsedSec, tokens: s.tokens }])),
+        unavailable: undefined,
+      };
     case 'tasks':
       return { ...state, tasks: replace(state.tasks, event.missionId, event.tasks) };
     case 'escalations':

@@ -2,6 +2,12 @@ import { useState } from 'react';
 import type { Mission } from '@claudia/shared';
 import { send } from '../store';
 
+/** What the server measured, or nothing if this mission has not been read. */
+export interface Spend {
+  elapsedSec: number;
+  tokens: number | null;
+}
+
 /**
  * The ceilings a mission may spend against.
  *
@@ -15,7 +21,7 @@ import { send } from '../store';
  * mission that has hit a ceiling stops dispatching, and the person who has
  * decided to let it carry on needs a way to say so.
  */
-export function MissionBudget({ mission }: { mission: Mission }) {
+export function MissionBudget({ mission, spend }: { mission: Mission; spend: Spend | undefined }) {
   const [editing, setEditing] = useState(false);
   const [seconds, setSeconds] = useState('');
   const [tokens, setTokens] = useState('');
@@ -42,7 +48,7 @@ export function MissionBudget({ mission }: { mission: Mission }) {
   if (!editing) {
     return (
       <p style={{ fontSize: 10.5, color: '#595d6c', margin: '4px 0' }}>
-        {describe(mission)}{' '}
+        {describe(mission, spend)}{' '}
         <button onClick={open} className="btn btn-ghost" style={link}>
           {mission.budgetSec === undefined && mission.budgetTokens === undefined ? 'set a budget' : 'change'}
         </button>
@@ -90,17 +96,39 @@ export function MissionBudget({ mission }: { mission: Mission }) {
 }
 
 /**
- * What it is spending against, in words.
+ * What it has spent, and what it is spending against.
  *
  * The seconds are wall clock from the mission's first run — not the sum of its
  * children's runtimes, which is a different and also useful bound but not what
  * the field promises.
+ *
+ * A budget with no spend beside it is a number nobody can act on: the question
+ * anyone actually has is not "what is the limit" but "how close is it". And a
+ * spend nothing could measure says so in words, because that is the state in
+ * which the fleet refuses to dispatch — it would otherwise be unreadable from
+ * a limit alone, on the one screen where somebody decides whether to raise it.
  */
-function describe(mission: Mission): string {
+function describe(mission: Mission, spend: Spend | undefined): string {
   const parts: string[] = [];
-  if (mission.budgetSec !== undefined) parts.push(`${mission.budgetSec}s of wall clock`);
-  if (mission.budgetTokens !== undefined) parts.push(`${mission.budgetTokens.toLocaleString()} tokens`);
-  return parts.length === 0 ? 'No budget — it runs until you stop it.' : `Stops after ${parts.join(' or ')}.`;
+  if (mission.budgetSec !== undefined) {
+    const used = spend === undefined ? '' : `${Math.floor(spend.elapsedSec)}s of `;
+    parts.push(`${used}${mission.budgetSec}s`);
+  }
+  if (mission.budgetTokens !== undefined) {
+    const used = spend === undefined || spend.tokens === null ? '' : `${spend.tokens.toLocaleString()} of `;
+    parts.push(`${used}${mission.budgetTokens.toLocaleString()} tokens`);
+  }
+  if (parts.length > 0) {
+    const unmeasured =
+      mission.budgetTokens !== undefined && spend?.tokens === null ? ' Nothing can measure what it has spent.' : '';
+    return `Spending ${parts.join(' and ')}.${unmeasured}`;
+  }
+
+  // No budget: what it has spent is still worth knowing, and this is the only
+  // place the board says so at all.
+  if (spend === undefined) return 'No budget — it runs until you stop it.';
+  const tokens = spend.tokens === null ? 'tokens nothing can measure' : `${spend.tokens.toLocaleString()} tokens`;
+  return `No budget — ${Math.floor(spend.elapsedSec)}s and ${tokens} so far.`;
 }
 
 const link: React.CSSProperties = {

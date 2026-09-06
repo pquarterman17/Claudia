@@ -153,7 +153,7 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
                 {open === mission.id && (
                   <div style={{ paddingLeft: 16 }}>
                     <MissionVerify missionId={mission.id} verify={mission.verify} />
-                    <MissionBudget mission={mission} />
+                    <MissionBudget mission={mission} spend={fleet.spend.get(mission.id)} />
                     <MissionEscalations missionId={mission.id} escalations={fleet.escalations.get(mission.id)} />
                   </div>
                 )}

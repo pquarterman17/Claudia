@@ -214,6 +214,38 @@ export class MissionRepo {
     });
   }
 
+  /**
+   * The ceilings this mission may spend against, or none.
+   *
+   * Both at once, and `undefined` means NONE rather than unchanged: a caller
+   * that wants to clear one has to be able to say so, and a partial update
+   * would make "no time budget" indistinguishable from "do not touch the time
+   * budget". The board sends both because it is showing both.
+   *
+   * The same `ceiling` check `create` uses, so a limit written here cannot be
+   * a shape `create` would have refused — the two paths were reaching the same
+   * column and only one of them was checking.
+   */
+  setBudget(id: string, budget: { budgetSec?: number; budgetTokens?: number }): StoreResult<Mission> {
+    return transact(this.db, 'update the mission', () => {
+      const current = this.load(id);
+      const budgetSec = ceiling('time budget', budget.budgetSec);
+      const budgetTokens = ceiling('token budget', budget.budgetTokens);
+      if (current.budgetSec === budgetSec && current.budgetTokens === budgetTokens) return current;
+      const updatedAt = Date.now();
+      this.db
+        .prepare('UPDATE missions SET budget_sec = ?, budget_tokens = ?, updated_at = ? WHERE id = ?')
+        .run(budgetSec ?? null, budgetTokens ?? null, updatedAt, id);
+      const { budgetSec: _sec, budgetTokens: _tokens, ...rest } = current;
+      return {
+        ...rest,
+        ...(budgetSec !== undefined ? { budgetSec } : {}),
+        ...(budgetTokens !== undefined ? { budgetTokens } : {}),
+        updatedAt,
+      };
+    });
+  }
+
   private load(id: string): Mission {
     const row = this.db.prepare(`SELECT ${MISSION_COLUMNS} FROM missions WHERE id = ?`).get(id) as Row | undefined;
     if (!row) refuse(`No mission with id ${id}.`);

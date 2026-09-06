@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { startFleet } from '../src/fleet/boot.js';
+import { handleFleetCommand, isFleetCommand } from '../src/fleet/commands.js';
 import { pulseMission, type SessionFacts } from '../src/fleet/pulse.js';
 import type { FleetStore } from '../src/store/index.js';
 
@@ -262,5 +263,81 @@ describe('a mission with no budget at all', () => {
     });
     // Two ready tasks, a ceiling of four, and no budget in the way.
     expect(launched).toHaveLength(2);
+  });
+});
+
+describe('setting one, which nothing could do', () => {
+  /**
+   * The other half of a limit that enforces nothing: a limit nobody can set.
+   * `budgetSec` and `budgetTokens` were persisted from the first fleet PR and
+   * appeared nowhere in the app, so the only way to give a mission a budget
+   * was to edit the database by hand — which meant the enforcement fixed one
+   * PR earlier could not be reached either.
+   */
+  it('sets both ceilings, and answers with the missions', () => {
+    const { store, mission: m } = mission();
+    expect(isFleetCommand({ type: 'set_mission_budget', missionId: m.id, budgetSec: 1, budgetTokens: 1 })).toBe(true);
+
+    const events = handleFleetCommand(
+      { type: 'set_mission_budget', missionId: m.id, budgetSec: 7_200, budgetTokens: 500_000 },
+      store,
+    );
+    expect(events.some((e) => e.type === 'missions')).toBe(true);
+    const read = store.missions.get(m.id);
+    expect(read.ok && read.value?.budgetSec).toBe(7_200);
+    expect(read.ok && read.value?.budgetTokens).toBe(500_000);
+  });
+
+  it('clears one with null, which is the only way back to unlimited', () => {
+    // A mission that has hit a ceiling stops dispatching, so the person who
+    // decides to let it carry on needs a way to say so. `null` is a value the
+    // caller means, which is why both fields are required on the wire.
+    const { store, mission: m } = mission({ budgetSec: 60, budgetTokens: 1_000 });
+    handleFleetCommand({ type: 'set_mission_budget', missionId: m.id, budgetSec: null, budgetTokens: 2_000 }, store);
+    const read = store.missions.get(m.id);
+    expect(read.ok && read.value?.budgetSec).toBeUndefined();
+    expect(read.ok && read.value?.budgetTokens).toBe(2_000);
+  });
+
+  it('refuses a budget that is not one, in the store rather than only in the form', () => {
+    // The same `ceiling` check `create` uses. Two paths were reaching this
+    // column and only one of them was checking.
+    const { store, mission: m } = mission();
+    for (const bad of [0, -1, 1.5]) {
+      expect(store.missions.setBudget(m.id, { budgetSec: bad }).ok, `${bad}`).toBe(false);
+    }
+    const events = handleFleetCommand(
+      { type: 'set_mission_budget', missionId: m.id, budgetSec: 0, budgetTokens: null },
+      store,
+    );
+    const notice = events.find((e) => e.type === 'notice');
+    expect(notice && 'message' in notice ? notice.message : '').toMatch(/whole number above zero/);
+  });
+
+  it('is a budget the pulse then enforces, end to end', async () => {
+    // The loop closed: set from the wire, spent by a run, held by the pulse.
+    const { store, mission: m } = mission();
+    handleFleetCommand({ type: 'set_mission_budget', missionId: m.id, budgetSec: null, budgetTokens: 1_000 }, store);
+    const read = store.missions.get(m.id);
+    if (!read.ok || !read.value) throw new Error('the mission vanished');
+
+    const task = readyTask(store, m.id);
+    const past = pastRun(store, m.id, task.id, Date.now() - 60_000);
+    const recorded = store.runs.recordTokens(past.id, 1_000);
+    if (!recorded.ok) throw new Error(recorded.message);
+    readyTask(store, m.id);
+
+    const launched: string[] = [];
+    await pulseMission(read.value, {
+      store,
+      policy: POLICY,
+      observeSessions: NO_SESSIONS,
+      launch: async (order) => {
+        launched.push(order.taskId);
+        return true;
+      },
+    });
+    expect(launched).toEqual([]);
+    expect(kinds(store, m.id)).toContain('mission_held');
   });
 });

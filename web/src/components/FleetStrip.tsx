@@ -4,6 +4,7 @@ import type { FleetLimits } from '@claudia/shared';
 import { nextPageFrom, type FleetState } from '../fleet-state';
 import { send } from '../store';
 import { FleetLimitsControl } from './FleetLimits';
+import { MissionBudget } from './MissionBudget';
 import { MissionEscalations } from './MissionEscalations';
 import { MissionVerify } from './MissionVerify';
 import { MissionTasks } from './MissionTasks';
@@ -152,6 +153,7 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
                 {open === mission.id && (
                   <div style={{ paddingLeft: 16 }}>
                     <MissionVerify missionId={mission.id} verify={mission.verify} />
+                    <MissionBudget mission={mission} />
                     <MissionEscalations missionId={mission.id} escalations={fleet.escalations.get(mission.id)} />
                   </div>
                 )}

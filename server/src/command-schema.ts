@@ -15,7 +15,7 @@
 import { ESCALATION_RESOLUTIONS, HUMAN_RESOLUTIONS, TASK_TRANSITIONS, type ClientCommand } from '@claudia/shared';
 import {
   answersField, field, imagesField, isAgentKind, isBool, isBulkOp, isDebateSubject, isDirection,
-  isEffortLevel, isFinishAction, isLabel, isNullableLabel, isNum, isPermissionMode, isPlainObject,
+  isEffortLevel, isFinishAction, isLabel, isNullableLabel, isNullableNum, isNum, isPermissionMode, isPlainObject,
   isPlanTier, isText, isThinkingMode, runChecks, scanStructure, templateField, toolkitActionField,
   truncateForLog, workersField,
 } from './command-fields.js';
@@ -141,6 +141,15 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
       return runChecks(type, o, [
         req('missionId', isLabel, 'a string'),
         req('watch', isMissionWatch, 'watching or paused'),
+      ]);
+    case 'set_mission_budget':
+      // Nullable numbers: `null` is a real value here, meaning no budget.
+      // Whether a number is a legal ceiling is the store's call, so there is
+      // one answer to that and it also guards a direct write.
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        req('budgetSec', isNullableNum, 'a number or null'),
+        req('budgetTokens', isNullableNum, 'a number or null'),
       ]);
     case 'set_mission_verify':
       // Shape only. Whether the command is one this fleet will agree to run is

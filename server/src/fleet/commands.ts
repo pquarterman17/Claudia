@@ -23,6 +23,7 @@ const FLEET_COMMANDS = new Set([
   'list_missions',
   'set_mission_watch',
   'set_mission_verify',
+  'set_mission_budget',
   'create_task',
   'list_tasks',
   'set_task_status',
@@ -68,6 +69,16 @@ export function handleFleetCommand(cmd: ClientCommand, store: FleetStore | undef
     case 'set_mission_watch': {
       const moved = store.missions.setWatch(cmd.missionId, cmd.watch);
       if (!moved.ok) return [notice(moved.message)];
+      return listMissions(store);
+    }
+    case 'set_mission_budget': {
+      // `null` over the wire is `undefined` in the store: one means "no
+      // budget" and the other is how this codebase spells it.
+      const set = store.missions.setBudget(cmd.missionId, {
+        ...(cmd.budgetSec !== null ? { budgetSec: cmd.budgetSec } : {}),
+        ...(cmd.budgetTokens !== null ? { budgetTokens: cmd.budgetTokens } : {}),
+      });
+      if (!set.ok) return [notice(set.message)];
       return listMissions(store);
     }
     case 'set_mission_verify': {

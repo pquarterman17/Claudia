@@ -324,6 +324,12 @@ export type ClientCommand =
   | { type: 'set_mission_watch'; missionId: string; watch: MissionWatch }
   /** The empty string clears it, which is how a mission stops being checked. */
   | { type: 'set_mission_verify'; missionId: string; verify: string }
+  /**
+   * A mission's own ceilings. `null` clears one — which is the only way back to
+   * unlimited, and the reason both fields are required rather than optional:
+   * "absent" would otherwise mean both "leave it alone" and "remove it".
+   */
+  | { type: 'set_mission_budget'; missionId: string; budgetSec: number | null; budgetTokens: number | null }
   | { type: 'create_task'; missionId: string; title: string; description: string; cwd: string; dependsOn?: string[] }
   | { type: 'list_tasks'; missionId: string }
   /**

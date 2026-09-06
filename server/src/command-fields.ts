@@ -161,6 +161,8 @@ export function truncateForLog(s: string, max = 64): string {
 export const isLabel: Test = (v) => typeof v === 'string' && v.length <= MAX_LABEL_LEN;
 export const isText: Test = (v) => typeof v === 'string' && v.length <= MAX_TEXT_LEN;
 export const isNullableLabel: Test = (v) => v === null || isLabel(v);
+/** A number, or `null` where absent is a value the caller means rather than omits. */
+export const isNullableNum: Test = (v) => v === null || (typeof v === 'number' && Number.isFinite(v));
 export const isNum: Test = (v) => typeof v === 'number' && Number.isFinite(v);
 export const isBool: Test = (v) => typeof v === 'boolean';
 

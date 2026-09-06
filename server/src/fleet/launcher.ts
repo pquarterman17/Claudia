@@ -4,6 +4,7 @@ import type { FleetStore } from '../store/index.js';
 import { gitLine } from './git-facts.js';
 import { ensureWorktree, worktreePath } from '../worktree.js';
 import type { LaunchChild, LaunchOrder } from './pulse.js';
+import { REPORT_PATH } from './child-report.js';
 import { claimWorktree, type ObservedWorktree } from './worktree-owner.js';
 
 /**
@@ -211,10 +212,25 @@ export function branchFor(task: Pick<Task, 'id' | 'title'>): string {
   return `claudia/${slug || 'task'}-${task.id.slice(0, 8)}`;
 }
 
-/** What the child is told to do. */
+/**
+ * What the child is told to do, and how to say what it could not finish.
+ *
+ * The report file is mentioned because a field nobody is asked to fill in is a
+ * field nobody fills in: `risks` and `artifacts` were declared in `Evidence`
+ * from the first fleet PR and written by nothing, so a reviewer never saw a
+ * risk a child had noticed. It is OPTIONAL and it decides nothing — a child
+ * that admits a risk is behaving better than one that does not, and a child
+ * that skips the file is judged on the same observations as before.
+ */
 export function briefFor(task: Task): string {
   const parts = [`# ${task.title}`, task.description];
   if (task.acceptance) parts.push(`## Done when\n\n${task.acceptance}`);
+  parts.push(
+    `## Anything left over\n\nIf you finish with something unresolved, or produce a file worth pointing at, ` +
+      `write \`${REPORT_PATH}\` in this worktree:\n\n` +
+      '```json\n{ "risks": ["what you are unsure about"], "artifacts": ["path/to/thing"] }\n```\n\n' +
+      'Optional, and it decides nothing — it is shown to the person reviewing your work.',
+  );
   return parts.filter(Boolean).join('\n\n');
 }
 

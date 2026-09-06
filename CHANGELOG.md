@@ -49,6 +49,21 @@ show what it is saying.
 - Fleet-wide child and attempt ceilings as a stored preference, read at every
   pulse rather than pinned in source, and settable from the board
 
+- A mission says what "green" means for its repository: one verify command, run
+  in the worktree the child worked in once it reports, with the result carried
+  into the judgement. Without one nothing is checked and every verdict asks a
+  human, which is what every mission did before it existed
+- Acceptance judged from evidence observed server-side — the branch, the base,
+  the head, the diff, whether the head provably descends from its base, what
+  the checks said, and what the forge says about a pull request. Never taken
+  from the child's own account of itself, which is the reason `reported` and
+  `accepted` are different states
+- A person accepts what the evidence supports, or overrides it with a reason
+  that is recorded beside the verdict it overrode. Acceptance is its own
+  command rather than a status change, so it cannot skip the reading
+- What each attempt spent, recorded on its run, so a mission's token budget is
+  measured from numbers that outlive the sessions that produced them
+
 ### A board for the fleet
 
 - Missions created, listed, watched and paused from the browser. A new mission
@@ -59,7 +74,16 @@ show what it is saying.
   the same transaction, the second is the child's own claim
 - An inbox for the decisions a mission is blocked on, with approve, deny and
   withdraw, and a note kept with the decision
-- Per-mission timeline, read from the event log
+- Per-mission timeline, read from the event log, paged backwards through it a
+  window at a time with an honest count of what is not shown
+- A mission's verify command, set and cleared from the board, refused before
+  sending when it is not one command this fleet will run
+- A mission's own ceilings, set and cleared from the board. Blank is no budget,
+  and clearing one matters as much as setting it: a mission that has hit a
+  ceiling stops dispatching, and somebody has to be able to let it carry on
+- The judgement beside the task it belongs to: what changed, what nobody
+  checked, and what the mission's own checks said — including when they could
+  not run, which "no test results" alone does not distinguish
 
 ### Mirroring sessions Claudia did not launch
 
@@ -90,6 +114,28 @@ show what it is saying.
 - **Escalations went nowhere.** The watchdog filed them into a table with no
   wire surface and no note in the timeline, so a mission parked on a human
   simply stopped moving and said nothing about why
+- **Every verdict was `needs_human`.** Nothing had ever written a test result,
+  so the gate that reports missing evidence fired on every judgement and the
+  branch that rejects failing checks could not be reached by any input. The
+  fleet could see a diff; it could not tell whether the diff was any good
+- **The evidence ran against nothing.** A launched child's run never recorded
+  the worktree it was given — the launcher created it and dropped the id — so
+  the acceptance judgement had no directory to read for any child the fleet had
+  ever started
+- **Acceptance never read the verdict.** `reported -> accepted` was a plain
+  status move, so a task whose checks failed, whose diff was empty, or which
+  had never been judged at all could be accepted with one click
+- **Token budgets blocked rather than bound.** A mission with one was held on
+  its first pulse and every pulse after, because nothing could measure what it
+  had spent — and nothing in the app could set one either, so neither half of
+  the limit was reachable
+- **A worktree could never be adopted twice** when its repository was reached
+  by any other spelling — a symlinked directory, a Windows 8.3 short path. git
+  resolves a path before answering, so the second attempt at a task compared
+  two spellings of one directory and refused, and the two spellings would have
+  built two worktree trees over one checkout
+- **The timeline showed its oldest page as its newest**, and then reported the
+  number of hidden events going backwards as more of them arrived
 - `usage-reader` advanced its offset to the file size before reading, so a
   record split across two scans was lost permanently rather than re-read. Rare
   and small for token accounting; a dropped message for a mirror, and most
@@ -108,12 +154,19 @@ show what it is saying.
 - A pulse that decides nothing now says why, once per fault rather than every
   fifteen seconds, and a mission held by its own budget says so in its log
 - Test guardrails that read the source rather than a hand-maintained count: one
-  over the `ServerEvent` union, one over `ClientCommand`. Both were added after
-  the counted version failed to catch a real omission
+  over the `ServerEvent` union, one over `ClientCommand`, one over the fields
+  of the evidence — which named four that nothing wrote, and refused to pass
+  again until they were collected. Each was added after the version it replaced
+  failed to catch a real omission
+- Tests are held to running on every platform: a suite may only start programs
+  every runner has, and one that runs processes has to know which platform it
+  is on. Three Windows failures in one week were fixtures rather than code
+- `noUnusedLocals` and `noUnusedParameters` on, after five dead imports reached
+  the default branch and were found by a scanner rather than by the build
 
 ### Testing
 
-- 1,775 tests (1,603 server, 172 web) across 108 files, on the same
+- 2,149 tests (1,951 server, 198 web) across 118 files, on the same
   Ubuntu/Windows × Node 22/24 matrix
 
 ## [0.1.0] — 2026-09-01

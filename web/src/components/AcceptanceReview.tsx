@@ -3,7 +3,19 @@ import type { Task } from '@claudia/shared';
 import { evidenceSupportsAcceptance, type Judgement } from '../judged';
 import { send } from '../store';
 
-/** The evidence behind a child's completion claim, arranged for a decision. */
+/**
+ * The evidence behind a child's completion claim, arranged for a decision.
+ *
+ * These facts are observed by the server from git, the configured verification
+ * command, and the forge. They are not the child's prose account of itself;
+ * risks and artifacts are explicitly labeled self-reported exceptions. That
+ * trust boundary is why `reported` remains a claim and `accepted` a separate
+ * human decision.
+ *
+ * An override is an audit path, not a shortcut. Missing or failing evidence
+ * can describe good work when a check itself is wrong, but accepting it costs
+ * a reason that the server records beside the decision.
+ */
 export function AcceptanceReview({ missionId, task, judgement }: {
   missionId: string;
   task: Task;
@@ -14,6 +26,8 @@ export function AcceptanceReview({ missionId, task, judgement }: {
   const tone = judgement?.verdict === 'reject' ? '#e07070' : supported ? '#7ee0a3' : '#e0a34f';
 
   return (
+    // Acceptance deliberately lives inside the disclosure: opening the
+    // evidence is the small, explicit act that separates review from a click.
     <details style={panel}>
       <summary style={{ cursor: 'pointer', color: tone, fontSize: 11 }}>
         {summary(judgement)} <span style={{ color: '#75798c' }}>— review evidence</span>
@@ -25,7 +39,7 @@ export function AcceptanceReview({ missionId, task, judgement }: {
         </section>
 
         {!judgement ? (
-          <p role="status" style={{ ...copy, color: '#75798c' }}>The server has not judged this completion claim yet.</p>
+          <p role="status" style={{ ...copy, color: '#75798c' }}>No judgement for this claim has reached the board yet.</p>
         ) : (
           <>
             <section aria-label="Decision summary">
@@ -99,9 +113,14 @@ function Evidence({ judgement }: { judgement: Judgement }) {
               {test.exitCode === 0 ? 'passed' : `failed (${test.exitCode})`}
             </span>{' '}
             <code style={{ fontSize: 10.5, color: '#c8cadb' }}>{test.command}</code>
-            {test.summary && <div style={{ ...copy, color: '#75798c' }}>{test.summary}</div>}
+            {test.summary && <div style={{ ...copy, color: '#75798c', whiteSpace: 'pre-wrap' }}>{test.summary}</div>}
           </div>
         )) : <Missing>None recorded</Missing>}
+        {(judgement.unreadTests ?? 0) > 0 && (
+          <div style={{ ...copy, color: '#e0a34f' }}>
+            {judgement.unreadTests} test result{judgement.unreadTests === 1 ? '' : 's'} could not be read
+          </div>
+        )}
         {judgement.checks && <p style={{ ...copy, color: '#75798c' }}>{judgement.checks}</p>}
       </section>
       <section aria-label="Delivery evidence">
@@ -110,7 +129,7 @@ function Evidence({ judgement }: { judgement: Judgement }) {
           <a href={judgement.prUrl} target="_blank" rel="noreferrer" style={{ color: '#8ab4ff', fontSize: 10.5 }}>
             Pull request{judgement.prState ? ` — ${judgement.prState}` : ''}
           </a>
-        ) : <Missing>No pull request recorded</Missing>}
+        ) : judgement.prState ? <Fact name="Pull request" value={judgement.prState} /> : <Missing>No pull request recorded</Missing>}
         <List label="Artifacts" values={judgement.artifacts} empty="None reported" />
         <List label="Risks" values={judgement.risks} empty="None reported" risk />
       </section>
@@ -123,7 +142,7 @@ function Label({ children }: { children: React.ReactNode }) {
 }
 
 function Fact({ name, value, mono = false }: { name: string; value: string | undefined; mono?: boolean }) {
-  return <div style={copy}><span style={{ color: '#75798c' }}>{name}: </span><span style={{ fontFamily: mono ? 'ui-monospace, monospace' : undefined }}>{value ?? 'not recorded'}</span></div>;
+  return <div style={copy}><span style={{ color: '#75798c' }}>{name}: </span><span style={{ fontFamily: mono ? 'ui-monospace, monospace' : undefined }}>{value || 'not recorded'}</span></div>;
 }
 
 function List({ label, values, empty, risk = false }: { label: string; values: string[] | undefined; empty: string; risk?: boolean }) {
@@ -150,7 +169,8 @@ function shortSha(sha: string | undefined): string | undefined {
   return sha?.slice(0, 8);
 }
 
-const panel: React.CSSProperties = { flexBasis: '100%', marginLeft: 70, padding: '6px 8px', background: '#15172480', borderLeft: '2px solid #33364a' };
+// Aligns the review under the title, past the 62px status column and 8px gap.
+const panel: React.CSSProperties = { marginLeft: 70, padding: '6px 8px', background: '#15172480', borderLeft: '2px solid #33364a' };
 const copy: React.CSSProperties = { margin: 0, fontSize: 10.5, color: '#c8cadb', lineHeight: 1.45 };
 const action: React.CSSProperties = { fontSize: 10.5, padding: '3px 10px', border: '1px solid #33364a', borderRadius: 5, color: '#a8abbd', cursor: 'pointer' };
 const positive: React.CSSProperties = { ...action, color: '#7ee0a3', borderColor: '#2f5a44' };

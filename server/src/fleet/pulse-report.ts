@@ -77,17 +77,23 @@ export function note(
   taskId: string | undefined,
   kind: string,
   reason: string,
+  /** The attempt this note describes, when repeating it for a later run is meaningful. */
+  runId?: string,
 ): void {
   const appended = store.events.append({
     missionId,
     ...(taskId !== undefined ? { taskId } : {}),
+    ...(runId !== undefined ? { runId } : {}),
     actor: 'system',
     kind,
     payload: { reason },
     // Keyed on the mission alone when there is no task, rather than on the
     // string "undefined" — the exact shape of a bug this repository has
     // already had once, in an escalation key that read "escalation:r1:undefined".
-    idempotencyKey: escalationKey(taskId === undefined ? missionId : `${missionId}:${taskId}`, `${kind}:${reason}`),
+    idempotencyKey: escalationKey(
+      taskId === undefined ? missionId : `${missionId}:${taskId}${runId === undefined ? '' : `:${runId}`}`,
+      `${kind}:${reason}`,
+    ),
   });
   // A duplicate key means this exact note is already in the log, which is the
   // idempotency doing its job rather than a failure worth aborting the pulse.

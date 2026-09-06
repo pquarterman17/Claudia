@@ -104,6 +104,7 @@ export function handleFleetCommand(cmd: ClientCommand, store: FleetStore | undef
         description: cmd.description,
         cwd: cmd.cwd,
         dependsOn: cmd.dependsOn,
+        acceptance: cmd.acceptance,
       });
       if (!created.ok) return [notice(created.message)];
       return listTasks(store, cmd.missionId);

@@ -40,6 +40,8 @@ interface TaskIntent {
   /** Present only for a retry, and only then is a launch owed. */
   attempt?: number;
   key?: string;
+  /** The run making a completion claim, so later attempts get distinct notes. */
+  runId?: string;
 }
 
 export function applyDecision(
@@ -177,7 +179,7 @@ export function applyWatchdogOutcomes(
         // concurrency slot for the life of the mission.
         const ended = store.runs.setState(run.id, action.terminal, { terminalReason: action.reason });
         if (!ended.ok) throw new Error(ended.message);
-        wanted.set(run.taskId, worseOf(wanted.get(run.taskId), { to: 'reported', reason: action.reason }));
+        wanted.set(run.taskId, worseOf(wanted.get(run.taskId), { to: 'reported', reason: action.reason, runId: run.id }));
         continue;
       }
       case 'give_up':
@@ -271,7 +273,7 @@ function applyTaskIntent(
     // whole reason `reported` and `accepted` are separate states is that a
     // child saying it finished is not evidence that it did.
     result.reported += 1;
-    note(store, mission.id, taskId, 'task_reported', intent.reason);
+    note(store, mission.id, taskId, 'task_reported', intent.reason, intent.runId);
     return;
   }
   if (intent.attempt === undefined || intent.key === undefined) return;

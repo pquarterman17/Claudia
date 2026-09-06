@@ -75,11 +75,13 @@ describe('describing work over the wire', () => {
       title: 'do the thing',
       description: '',
       cwd: '/repo',
+      acceptance: 'the checks pass',
     });
     expect(tasksIn(created).map((t) => t.title)).toEqual(['do the thing']);
     // Proposed, not ready: a task arrives as a description of work, and only a
     // human or a policy moves it into the queue.
     expect(tasksIn(created)[0]?.status).toBe('proposed');
+    expect(tasksIn(created)[0]?.acceptance).toBe('the checks pass');
   });
 
   it('switches watch without touching mission status', () => {

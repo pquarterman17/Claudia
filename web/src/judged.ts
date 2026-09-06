@@ -26,6 +26,8 @@ export interface Judgement {
   prState?: 'draft' | 'open' | 'merged' | 'closed';
   risks?: string[];
   artifacts?: string[];
+  /** Results present in the event but too malformed to show as evidence. */
+  unreadTests?: number;
   /**
    * What the mission's own verify command did, in one line.
    *
@@ -44,7 +46,15 @@ const PR_STATES = new Set(['draft', 'open', 'merged', 'closed']);
 export function judgementFor(events: readonly FleetEvent[] | undefined, taskId: string): Judgement | undefined {
   let latest: Judgement | undefined;
   for (const event of events ?? []) {
-    if (event.kind !== 'task_judged' || event.taskId !== taskId) continue;
+    if (event.taskId !== taskId) continue;
+    // A fresh report supersedes every earlier attempt's evidence. The client
+    // does not hold run rows, but the timeline gives us the ordering needed to
+    // avoid putting attempt 1's verdict beside attempt 2's completion claim.
+    if (event.kind === 'task_reported') {
+      latest = undefined;
+      continue;
+    }
+    if (event.kind !== 'task_judged') continue;
     const read = readJudgement(event.payload);
     // Kept only if it parses. A malformed payload should leave the previous
     // good one standing rather than blanking the panel.
@@ -74,7 +84,8 @@ function readJudgement(payload: unknown): Judgement | undefined {
     ...(typeof evidence['descendsFromBase'] === 'boolean'
       ? { descendsFromBase: evidence['descendsFromBase'] }
       : {}),
-    ...(tests !== undefined ? { tests } : {}),
+    ...(tests !== undefined ? { tests: tests.values } : {}),
+    unreadTests: tests?.unread ?? 0,
     ...(prUrl !== undefined ? { prUrl } : {}),
     ...(typeof evidence['prState'] === 'string' && PR_STATES.has(evidence['prState'])
       ? { prState: evidence['prState'] as Judgement['prState'] }
@@ -85,19 +96,23 @@ function readJudgement(payload: unknown): Judgement | undefined {
   };
 }
 
-function readTests(value: unknown): Judgement['tests'] | undefined {
+function readTests(value: unknown): { values: NonNullable<Judgement['tests']>; unread: number } | undefined {
   if (!Array.isArray(value)) return undefined;
   const tests: NonNullable<Judgement['tests']> = [];
+  let unread = 0;
   for (const item of value) {
     const test = asRecord(item);
-    if (!test || typeof test['command'] !== 'string' || typeof test['exitCode'] !== 'number') continue;
+    if (!test || typeof test['command'] !== 'string' || typeof test['exitCode'] !== 'number') {
+      unread += 1;
+      continue;
+    }
     tests.push({
       command: test['command'],
       exitCode: test['exitCode'],
       ...(typeof test['summary'] === 'string' ? { summary: test['summary'] } : {}),
     });
   }
-  return tests;
+  return { values: tests, unread };
 }
 
 function readStrings(value: unknown): string[] | undefined {
@@ -109,7 +124,7 @@ function safeWebUrl(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' || url.protocol === 'http:' ? value : undefined;
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : undefined;
   } catch {
     return undefined;
   }

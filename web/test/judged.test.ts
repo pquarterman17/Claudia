@@ -67,6 +67,21 @@ describe('finding a verdict', () => {
     expect(found?.verdict).toBe('accept');
   });
 
+  it('does not show an earlier attempt after a new completion claim arrives', () => {
+    const found = judgementFor([
+      event({ runId: 'r1', payload: GOOD }),
+      event({ seq: 2, runId: 'r2', kind: 'task_reported', payload: { reason: 'the second attempt ended' } }),
+    ], 't1');
+    expect(found).toBeUndefined();
+
+    const judged = judgementFor([
+      event({ runId: 'r1', payload: GOOD }),
+      event({ seq: 2, runId: 'r2', kind: 'task_reported', payload: {} }),
+      event({ seq: 3, runId: 'r2', payload: { ...GOOD, reason: 'second attempt checked' } }),
+    ], 't1');
+    expect(judged?.reason).toBe('second attempt checked');
+  });
+
   it('answers nothing when there is nothing', () => {
     expect(judgementFor(undefined, 't1')).toBeUndefined();
     expect(judgementFor([], 't1')).toBeUndefined();
@@ -147,6 +162,7 @@ describe('a payload that is not what it should be', () => {
       evidence: { tests: [{ command: 3, exitCode: 'zero' }, null], risks: 'none', artifacts: [2], prState: 'maybe' },
     } })], 't1');
     expect(found?.tests).toEqual([]);
+    expect(found?.unreadTests).toBe(2);
     expect(found?.risks).toBeUndefined();
     expect(found?.artifacts).toEqual([]);
     expect(found?.prState).toBeUndefined();
@@ -155,5 +171,10 @@ describe('a payload that is not what it should be', () => {
   it('does not turn an unsafe PR URL from a malformed event into a link', () => {
     const found = judgementFor([event({ payload: { ...GOOD, evidence: { prUrl: 'javascript:alert(1)' } } })], 't1');
     expect(found?.prUrl).toBeUndefined();
+  });
+
+  it('returns the normalized URL that it actually validated', () => {
+    const found = judgementFor([event({ payload: { ...GOOD, evidence: { prUrl: ' https://example.com/review ' } } })], 't1');
+    expect(found?.prUrl).toBe('https://example.com/review');
   });
 });

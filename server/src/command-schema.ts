@@ -166,6 +166,7 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
         req('description', isText, 'a string'),
         req('cwd', isLabel, 'a string'),
         opt('dependsOn', isLabelList, 'an array of task ids'),
+        opt('acceptance', isText, 'a string'),
       ]);
     case 'accept_task':
       // `override` is a reason, and whether one is REQUIRED depends on the

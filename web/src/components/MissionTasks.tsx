@@ -46,6 +46,7 @@ export function MissionTasks({
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [acceptance, setAcceptance] = useState('');
 
   const add = (): void => {
     const trimmed = title.trim();
@@ -54,9 +55,17 @@ export function MissionTasks({
     // repository is a real thing to want, but it is not the common case and
     // making it the required case would put a path field in front of every
     // task somebody types.
-    send({ type: 'create_task', missionId, title: trimmed, description: description.trim(), cwd });
+    send({
+      type: 'create_task',
+      missionId,
+      title: trimmed,
+      description: description.trim(),
+      cwd,
+      ...(acceptance.trim() ? { acceptance: acceptance.trim() } : {}),
+    });
     setTitle('');
     setDescription('');
+    setAcceptance('');
   };
 
   return (
@@ -126,6 +135,16 @@ export function MissionTasks({
             if (e.key === 'Enter') add();
           }}
           placeholder="Detail (optional)"
+          style={field(240)}
+        />
+        <input
+          value={acceptance}
+          onChange={(e) => setAcceptance(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') add();
+          }}
+          placeholder="Done when… (optional)"
+          aria-label="Acceptance criteria"
           style={field(240)}
         />
         <button onClick={add} disabled={title.trim() === ''} className="btn btn-ghost" style={action}>

@@ -1,6 +1,6 @@
 import type { FleetEvent } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
-import { judgementFor } from '../src/judged';
+import { evidenceSupportsAcceptance, judgementFor } from '../src/judged';
 
 /**
  * Reading a verdict out of an event payload.
@@ -93,6 +93,25 @@ describe('a payload that is not what it should be', () => {
     // value the panel renders as though somebody had checked.
     const wrong = judgementFor([event({ payload: { ...GOOD, checks: 7 } })], 't1');
     expect(wrong?.checks).toBeUndefined();
+  });
+
+  it('says whether the evidence supports an acceptance', () => {
+    // The client's copy of the rule the server enforces, and it exists only so
+    // the button can say what it is going to do rather than being refused
+    // after the click. `needs_human` is NOT a blocker: it is what a green run
+    // gets, because the policy will not accept on nobody's behalf.
+    const green = judgementFor([event({ payload: { ...GOOD, verdict: 'needs_human', missing: [] } })], 't1');
+    expect(evidenceSupportsAcceptance(green)).toBe(true);
+
+    const holes = judgementFor([event({ payload: { ...GOOD, missing: ['test results'] } })], 't1');
+    expect(evidenceSupportsAcceptance(holes)).toBe(false);
+
+    const bad = judgementFor([event({ payload: { ...GOOD, verdict: 'reject', missing: [] } })], 't1');
+    expect(evidenceSupportsAcceptance(bad)).toBe(false);
+
+    // Nothing judged at all is the case the old one-click accept was blindest
+    // to, so it is the one to be sure of.
+    expect(evidenceSupportsAcceptance(undefined)).toBe(false);
   });
 
   it('treats an evidence field of the wrong type as absent, not as a value', () => {

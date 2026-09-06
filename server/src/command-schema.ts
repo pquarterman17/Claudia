@@ -158,6 +158,14 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
         req('cwd', isLabel, 'a string'),
         opt('dependsOn', isLabelList, 'an array of task ids'),
       ]);
+    case 'accept_task':
+      // `override` is a reason, and whether one is REQUIRED depends on the
+      // verdict — which is the server's to read, not a shape this can check.
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        req('taskId', isLabel, 'a string'),
+        opt('override', isText, 'a string'),
+      ]);
     case 'list_tasks':
       return runChecks(type, o, [req('missionId', isLabel, 'a string')]);
     case 'set_task_status':

@@ -108,6 +108,12 @@ describe('a database written before missions had an agent', () => {
        VALUES ('m-old', 'old', '', 'active', 'paused', 60, 4, '/repo', 1, 1)`,
     ).run();
 
+    // The fixture is only a fixture if it is actually older. Filtering the
+    // list by NAME left every later migration in it, so this file opened at
+    // the newest version with the agent column missing and `applyMigrations`
+    // had nothing to do — the test passed for a while by proving nothing.
+    expect(schemaVersion(db)).toBeLessThan(agentVersion);
+
     applyMigrations(db);
     expect(schemaVersion(db)).toBe(MIGRATIONS[MIGRATIONS.length - 1]?.version);
     const row = db.prepare("SELECT agent FROM missions WHERE id = 'm-old'").get();

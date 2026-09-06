@@ -1,5 +1,6 @@
 import type { ClientCommand, EscalationResolution, FleetEvent, ServerEvent } from '@claudia/shared';
 import { DEFAULT_PAGE } from '../store/events.js';
+import { acceptTask } from './accept.js';
 import { planResync, replayIsUsable } from './resync.js';
 import type { FleetStore } from '../store/index.js';
 
@@ -25,6 +26,7 @@ const FLEET_COMMANDS = new Set([
   'create_task',
   'list_tasks',
   'set_task_status',
+  'accept_task',
   'get_fleet_events',
   'list_escalations',
   'resolve_escalation',
@@ -88,11 +90,25 @@ export function handleFleetCommand(cmd: ClientCommand, store: FleetStore | undef
       return listTasks(store, cmd.missionId);
     }
     case 'set_task_status': {
+      // Every move but one. Acceptance reads the evidence, and a status change
+      // that skipped that reading was the hole this closes: the transition
+      // table allows `reported -> accepted`, so the board offered it and the
+      // store wrote it, and nothing on that path ever looked at the verdict.
+      if (cmd.status === 'accepted') {
+        return [notice('Acceptance goes through accept_task, which reads the judgement first.')];
+      }
       // The store owns which transitions are legal; this only asks for one, and
       // reports the refusal verbatim when the answer is no.
       const moved = store.tasks.setStatus(cmd.taskId, cmd.status);
       if (!moved.ok) return [notice(moved.message)];
       return listTasks(store, cmd.missionId);
+    }
+    case 'accept_task': {
+      const accepted = acceptTask(store, cmd.missionId, cmd.taskId, cmd.override);
+      if (!accepted.ok) return [notice(accepted.message)];
+      // The tasks AND a notice: an override that succeeded should say so out
+      // loud rather than looking like an ordinary acceptance.
+      return [...listTasks(store, cmd.missionId), notice(accepted.message)];
     }
     case 'list_tasks':
       return listTasks(store, cmd.missionId);

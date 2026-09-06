@@ -42,9 +42,20 @@ describe('the moves a person is offered', () => {
 
   it('lets a person promote, review and retry, which is the point of the surface', () => {
     expect(HUMAN_MOVES.proposed).toContain('ready');
-    expect(HUMAN_MOVES.reported).toContain('accepted');
     expect(HUMAN_MOVES.reported).toContain('ready');
     expect(HUMAN_MOVES.failed).toContain('ready');
+  });
+
+  it('does not offer acceptance as a status change', () => {
+    // The third move the fleet keeps for itself, and the newest. `reported ->
+    // accepted` is a real edge and a person's decision to make, but making it
+    // by setting a status skipped the verdict entirely: a task whose checks
+    // failed, whose diff was empty, or which had never been judged at all
+    // could be accepted with one click. It goes through `accept_task`, which
+    // reads the judgement first and takes a reason when it is overridden.
+    expect(HUMAN_MOVES.reported).not.toContain('accepted');
+    // Still a real edge — this is a subset, not a disagreement.
+    expect(TASK_TRANSITIONS.reported).toContain('accepted');
   });
 
   it('offers no way out of a terminal state', () => {

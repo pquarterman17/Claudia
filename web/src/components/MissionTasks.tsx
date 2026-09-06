@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { FleetEvent, Task, TaskStatus } from '@claudia/shared';
 import { send } from '../store';
-import { judgementFor, type Judgement } from '../judged';
+import { evidenceSupportsAcceptance, judgementFor, type Judgement } from '../judged';
 import { HUMAN_MOVES, MOVE_LABEL } from '../task-moves';
 
 /**
@@ -82,6 +82,9 @@ export function MissionTasks({
               </span>
               <span style={{ fontSize: 12, color: '#c8cadb', flex: 1, minWidth: 160 }}>{task.title}</span>
               {task.status === 'reported' && <Judged judgement={judgementFor(events, task.id)} />}
+              {task.status === 'reported' && (
+                <Accept missionId={missionId} taskId={task.id} judgement={judgementFor(events, task.id)} />
+              )}
               {HUMAN_MOVES[task.status].map((to) => (
                 <button
                   key={to}
@@ -148,6 +151,80 @@ export function MissionTasks({
         </details>
       )}
     </div>
+  );
+}
+
+/**
+ * The accept button, which is not a status change any more.
+ *
+ * `accept_task` reads the verdict the pulse recorded before it agrees, so what
+ * this has to get right is telling somebody, BEFORE they click, that the
+ * evidence will not support it — and giving them the way through when they
+ * know better than the checks do.
+ *
+ * The override is not a convenience. A verify command that is wrong rejects
+ * good work, and judging happens once per run, so nothing re-judges a task
+ * whose command has since been fixed: without a way to accept over a verdict,
+ * that task can never be accepted at all. It costs a reason, and the reason is
+ * recorded beside the verdict it overrode.
+ */
+function Accept({ missionId, taskId, judgement }: { missionId: string; taskId: string; judgement: Judgement | undefined }) {
+  const [reason, setReason] = useState<string | undefined>(undefined);
+  const supported = evidenceSupportsAcceptance(judgement);
+
+  if (supported) {
+    return (
+      <button
+        onClick={() => send({ type: 'accept_task', missionId, taskId })}
+        className="btn btn-ghost"
+        style={{ ...action, color: '#7ee0a3', border: '1px solid #2f5a44' }}
+        title="The evidence is complete and nothing failed. Recorded with the verdict it was made on."
+      >
+        accept
+      </button>
+    );
+  }
+
+  if (reason === undefined) {
+    return (
+      <button
+        onClick={() => setReason('')}
+        className="btn btn-ghost"
+        style={{ ...action, color: '#e0a34f', border: '1px solid #5a4a2f' }}
+        title={
+          judgement
+            ? 'The evidence does not support this. Accepting anyway takes a reason, which is recorded.'
+            : 'Nothing has judged this task yet. Accepting anyway takes a reason, which is recorded.'
+        }
+      >
+        accept anyway…
+      </button>
+    );
+  }
+
+  return (
+    <>
+      <input
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="Why, for the log"
+        style={{ ...field(160), minWidth: 120 }}
+      />
+      <button
+        onClick={() => {
+          send({ type: 'accept_task', missionId, taskId, override: reason });
+          setReason(undefined);
+        }}
+        disabled={reason.trim() === ''}
+        className="btn btn-ghost"
+        style={{ ...action, color: '#e0a34f', border: '1px solid #5a4a2f' }}
+      >
+        accept over the verdict
+      </button>
+      <button onClick={() => setReason(undefined)} className="btn btn-ghost" style={action}>
+        cancel
+      </button>
+    </>
   );
 }
 

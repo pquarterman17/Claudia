@@ -84,6 +84,7 @@ const VALID: Array<[string, Record<string, unknown>]> = [
   ['list_tasks', { type: 'list_tasks', missionId: 'm1' }],
   ['get_fleet_events', { type: 'get_fleet_events', missionId: 'm1', afterSeq: 0 }],
   ['set_task_status', { type: 'set_task_status', missionId: 'm1', taskId: 't1', status: 'ready' }],
+  ['accept_task', { type: 'accept_task', missionId: 'm1', taskId: 't1' }],
   ['mirror_session', { type: 'mirror_session', sessionId: 's1' }],
   ['close_mirror', { type: 'close_mirror', sessionId: 's1' }],
   ['set_fleet_limits', { type: 'set_fleet_limits', maxChildren: 4, maxAttempts: 3 }],

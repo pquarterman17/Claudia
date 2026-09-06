@@ -27,8 +27,12 @@ export const HUMAN_MOVES: Readonly<Record<TaskStatus, readonly TaskStatus[]>> = 
   // Stopping is a human decision. Declaring a live run failed is the
   // watchdog's, and it has evidence this button would not.
   running: ['cancelled'],
-  // Review, and its three honest outcomes: take it, reject it, send it back.
-  reported: ['accepted', 'failed', 'ready', 'cancelled'],
+  // Review, and its honest outcomes — minus acceptance, which is no longer a
+  // status change at all. `accept_task` reads the verdict the pulse recorded
+  // before it agrees, and offering `accepted` here would put back the one-click
+  // path that never looked at the evidence. The button is still on the board;
+  // it just sends a different command.
+  reported: ['failed', 'ready', 'cancelled'],
   failed: ['ready', 'cancelled'],
   accepted: [],
   cancelled: [],

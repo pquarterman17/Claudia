@@ -16,10 +16,12 @@ import { runnable, runVerify } from '../src/fleet/verify.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'claudia-verify-'));
 afterAll(() => {
-  // Retried, because Windows refuses to remove a directory anything still has
-  // open — and the timeout case below deliberately leaves a process running
-  // for a moment after its shell is killed.
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  // Retried, and generously. Windows refuses to remove a directory anything
+  // still has open, and the timeout case below leaves a process holding this
+  // one for about a second after its shell is killed — the very limitation
+  // `verify.ts` documents, arriving in the suite's own clean-up. One second of
+  // retries was not enough on the runner; three is.
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 });
 
 const WINDOWS = process.platform === 'win32';
@@ -176,11 +178,11 @@ describe('running it', () => {
     // stops one mission's checks stalling every other mission's.
     const outcome = await runVerify(
       dir,
-      // Long enough to outlive the timeout, short enough to be gone before the
-      // suite tries to delete the directory it is sitting in: the kill reaches
-      // the shell, not what the shell started, and Windows will not remove a
-      // directory a live process is holding. `ping` is its sleep.
-      script('slow', { posix: 'sleep 2', windows: 'ping -n 3 127.0.0.1' }),
+      // Ten times the timeout, and a second at most: the kill reaches the
+      // shell and not what the shell started, so this outlives the assertion
+      // by design and has to be gone before the clean-up above runs. `ping` is
+      // the Windows sleep — `-n 2` is one interval.
+      script('slow', { posix: 'sleep 1', windows: 'ping -n 2 127.0.0.1' }),
       200,
     );
     expect(outcome.kind).toBe('unavailable');

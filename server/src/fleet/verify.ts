@@ -1,6 +1,8 @@
 import { exec } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { delimiter, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { verifyCommandProblem } from '@claudia/shared';
+import { commandWords, verifyCommandProblem } from '@claudia/shared';
 import type { TestResult } from './acceptance.js';
 
 const run = promisify(exec);
@@ -66,6 +68,10 @@ const SUMMARY_CHARS = 300;
  * chose one of these as its own failure code would be read as unchecked rather
  * than as failed — `needs_human` instead of `reject`, which is the direction
  * to be wrong in.
+ *
+ * NOT sufficient on its own, which the Windows runner proved: cmd.exe answers
+ * a missing path with a plain exit 1, and 1 is also what every failing test
+ * suite in the world returns. `locate` below is what tells those apart.
  */
 const NEVER_RAN = new Set([126, 127, 9009]);
 
@@ -112,15 +118,53 @@ export async function runVerify(
     if (failure.killed === true || (failure.signal !== undefined && failure.signal !== null)) {
       return { kind: 'unavailable', note: `${command} — did not finish within ${Math.round(timeoutMs / 1000)}s` };
     }
-    // A numeric code IS the program's answer, unless it is one of the codes a
-    // shell uses to say it could not find a program to ask.
+    // A numeric code IS the program's answer — unless there was no program to
+    // ask. A shell says so with one of the codes above, and cmd.exe does not
+    // say it at all, so a non-zero exit from something that is not there is
+    // checked for directly.
     if (typeof failure.code === 'number') {
-      return NEVER_RAN.has(failure.code)
+      const missing = NEVER_RAN.has(failure.code) || !runnable(cwd, command);
+      return missing
         ? { kind: 'unavailable', note: `${command} — could not run: nothing to execute (exit ${failure.code})` }
         : checked(command, failure.code, summarise(failure.stdout, failure.stderr));
     }
     return { kind: 'unavailable', note: `${command} — could not run: ${String(failure.code ?? 'unknown error')}` };
   }
+}
+
+/**
+ * Whether the first word of the command names something that exists.
+ *
+ * Asked only AFTER a failure, never before running, and that ordering is the
+ * whole design. Asking first would refuse a shell builtin — `echo` is not a
+ * file on Windows — so a command that works fine would be reported as
+ * unrunnable. Asking afterwards means a builtin that succeeds is never
+ * questioned, and the only case this decides is the one that matters: a
+ * non-zero exit from a program that is not there.
+ *
+ * PATHEXT on Windows, because `npm` is `npm.cmd` and the bare name is not a
+ * file. A relative path resolves against the WORKTREE, which is where the
+ * command runs, not against the server's own directory.
+ *
+ * Exported because the platform it exists for is not the one the tests run on
+ * most of the time: on POSIX a missing program comes back as 127 and never
+ * reaches this, so the only way to hold it to its job on every platform is to
+ * ask it directly.
+ */
+export function runnable(cwd: string, command: string): boolean {
+  const program = commandWords(command)?.[0];
+  if (program === undefined) return false;
+  const extensions = process.platform === 'win32' ? ['', ...pathExtensions()] : [''];
+  const exists = (base: string): boolean => extensions.some((ext) => existsSync(base + ext));
+
+  if (program.includes('/') || program.includes('\\')) return exists(resolve(cwd, program));
+  return (process.env['PATH'] ?? '')
+    .split(delimiter)
+    .some((entry) => entry !== '' && exists(join(entry, program)));
+}
+
+function pathExtensions(): string[] {
+  return (process.env['PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD').split(';').filter((ext) => ext !== '');
 }
 
 function checked(command: string, exitCode: number, summary: string): VerifyOutcome {

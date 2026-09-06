@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { commandWords, verifyCommandProblem } from '@claudia/shared';
-import { runVerify } from '../src/fleet/verify.js';
+import { runnable, runVerify } from '../src/fleet/verify.js';
 
 /**
  * Running a mission's checks, and refusing the ones that cannot be run.
@@ -15,7 +15,12 @@ import { runVerify } from '../src/fleet/verify.js';
  */
 
 const dir = mkdtempSync(join(tmpdir(), 'claudia-verify-'));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => {
+  // Retried, because Windows refuses to remove a directory anything still has
+  // open — and the timeout case below deliberately leaves a process running
+  // for a moment after its shell is killed.
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+});
 
 const WINDOWS = process.platform === 'win32';
 
@@ -76,6 +81,33 @@ describe('refusing a command that cannot mean what it says', () => {
   });
 });
 
+describe('deciding whether there was anything to run', () => {
+  // The classification the Windows runner needs and POSIX never reaches: there
+  // a missing program is exit 127 and this is never consulted, so asking it
+  // directly is the only way it is held to its job on the platform it exists
+  // for.
+  it('finds a program on the PATH by its bare name', () => {
+    expect(runnable(dir, 'node')).toBe(true);
+    // With arguments, because it is the command that is stored, not the word.
+    expect(runnable(dir, 'node --version')).toBe(true);
+  });
+
+  it('resolves a relative program against the worktree, not the server', () => {
+    const where = mkdtempSync(join(dir, 'rel-'));
+    writeFileSync(join(where, 'check.sh'), '#!/bin/sh\nexit 0\n', 'utf8');
+    expect(runnable(where, './check.sh')).toBe(true);
+    // The same command from a different directory is a different answer, which
+    // is the whole reason the worktree is passed in.
+    expect(runnable(dir, './check.sh')).toBe(false);
+  });
+
+  it('says no to something that is not there, and to nothing at all', () => {
+    expect(runnable(dir, join(dir, 'no-such-program'))).toBe(false);
+    expect(runnable(dir, 'definitely-not-a-real-program-xyzzy')).toBe(false);
+    expect(runnable(dir, '   ')).toBe(false);
+  });
+});
+
 describe('running it', () => {
   it('reports the exit code of a command that passed', async () => {
     const outcome = await runVerify(dir, script('green', { posix: 'exit 0', windows: 'exit /b 0' }));
@@ -122,14 +154,33 @@ describe('running it', () => {
     expect(outcome.note).toMatch(/could not run/);
   });
 
+  it('tells a missing program from a failing one, whatever the shell answers', async () => {
+    // The Windows runner is what proved this necessary: cmd.exe answers a
+    // path that is not there with a plain exit 1, which is also what every
+    // failing test suite returns. Exit codes alone would have read a typo as a
+    // permanent reject on that platform — so the program is looked for.
+    const absent = await runVerify(dir, join(dir, 'nope', 'not-a-program'));
+    expect(absent.kind).toBe('unavailable');
+
+    // And the other direction, which is what the check must not break: a real
+    // program that really failed is a real failure.
+    const failed = await runVerify(dir, script('genuine', { posix: 'exit 1', windows: 'exit /b 1' }));
+    expect(failed.kind).toBe('checked');
+    if (failed.kind !== 'checked') throw new Error('unreachable');
+    expect(failed.result.exitCode).toBe(1);
+  });
+
   it('says a command that never finished could not run either', async () => {
     // A suite that hangs is not evidence the work is bad. It is also the case
     // that bounds the pulse: the tick is sequential, so this timeout is what
     // stops one mission's checks stalling every other mission's.
     const outcome = await runVerify(
       dir,
-      // `ping` is the Windows sleep: -n 31 waits thirty seconds between pings.
-      script('slow', { posix: 'sleep 30', windows: 'ping -n 31 127.0.0.1' }),
+      // Long enough to outlive the timeout, short enough to be gone before the
+      // suite tries to delete the directory it is sitting in: the kill reaches
+      // the shell, not what the shell started, and Windows will not remove a
+      // directory a live process is holding. `ping` is its sleep.
+      script('slow', { posix: 'sleep 2', windows: 'ping -n 3 127.0.0.1' }),
       200,
     );
     expect(outcome.kind).toBe('unavailable');

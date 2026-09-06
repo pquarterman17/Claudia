@@ -36,7 +36,7 @@ describe('what the fold owns', () => {
   });
 
   it('takes a mission list', () => {
-    const state = fold(NO_FLEET, { type: 'missions', missions: [mission('m1')] });
+    const state = fold(NO_FLEET, { type: 'missions', missions: [mission('m1')], spend: [] });
     expect(state.missions.map((m) => m.id)).toEqual(['m1']);
   });
 
@@ -276,7 +276,7 @@ describe('a mission layer that did not open', () => {
     const state = fold(
       NO_FLEET,
       { type: 'fleet_unavailable', reason: 'the file is locked' },
-      { type: 'missions', missions: [mission('m1')] },
+      { type: 'missions', missions: [mission('m1')], spend: [] },
     );
     expect(state.unavailable).toBeUndefined();
   });
@@ -284,8 +284,8 @@ describe('a mission layer that did not open', () => {
 
 describe('the state it hands back', () => {
   it('never mutates the state it was given', () => {
-    const before = fold(NO_FLEET, { type: 'missions', missions: [mission('m1')] });
-    const after = fold(before, { type: 'missions', missions: [mission('m1'), mission('m2')] });
+    const before = fold(NO_FLEET, { type: 'missions', missions: [mission('m1')], spend: [] });
+    const after = fold(before, { type: 'missions', missions: [mission('m1'), mission('m2')], spend: [] });
     expect(before.missions).toHaveLength(1);
     expect(after.missions).toHaveLength(2);
     expect(after).not.toBe(before);
@@ -298,5 +298,47 @@ describe('the state it hands back', () => {
     expect(state.tasks.get('__proto__')?.map((t) => t.id)).toEqual(['t1']);
     expect(({} as Record<string, unknown>)['t1']).toBeUndefined();
     expect(Object.prototype).not.toHaveProperty('t1');
+  });
+});
+
+describe('what a mission has spent', () => {
+  it('keeps the server\'s measurement, including the one it could not make', () => {
+    // `null` is not 0. The fleet holds a mission whose spend it cannot read,
+    // so a board that folded that into zero would draw headroom the mission
+    // does not have — on the one screen where somebody decides whether to
+    // raise the limit.
+    const state = fold(NO_FLEET, {
+      type: 'missions',
+      missions: [mission('m1'), mission('m2')],
+      spend: [
+        { missionId: 'm1', elapsedSec: 61, tokens: 4_200 },
+        { missionId: 'm2', elapsedSec: 5, tokens: null },
+      ],
+    });
+    expect(state.spend.get('m1')).toEqual({ elapsedSec: 61, tokens: 4_200 });
+    expect(state.spend.get('m2')?.tokens).toBeNull();
+    expect(state.spend.get('nobody')).toBeUndefined();
+  });
+
+  it('survives a mission list from a server that does not send one', () => {
+    // The contract requires the field, so this is a server older than the
+    // client — and a fold that threw there would take the whole board down
+    // over a number it only draws. Found by running exactly that pairing.
+    const state = fold(NO_FLEET, { type: 'missions', missions: [mission('m1')] } as unknown as ServerEvent);
+    expect(state.missions.map((m) => m.id)).toEqual(['m1']);
+    expect(state.spend.size).toBe(0);
+  });
+
+  it('replaces the measurement rather than merging it', () => {
+    // Spend only moves one way while a mission runs, but a mission removed
+    // from the list must not leave its last figure behind to be drawn against
+    // somebody else's budget.
+    const before = fold(NO_FLEET, {
+      type: 'missions',
+      missions: [mission('m1')],
+      spend: [{ missionId: 'm1', elapsedSec: 10, tokens: 100 }],
+    });
+    const after = fold(before, { type: 'missions', missions: [mission('m2')], spend: [] });
+    expect(after.spend.get('m1')).toBeUndefined();
   });
 });

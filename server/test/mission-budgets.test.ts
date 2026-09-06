@@ -341,3 +341,55 @@ describe('setting one, which nothing could do', () => {
     expect(kinds(store, m.id)).toContain('mission_held');
   });
 });
+
+describe('showing what it has spent', () => {
+  it('reports each mission\'s spend beside its budget', () => {
+    // A budget with no spend beside it is a number nobody can act on: the
+    // question anyone has is not "what is the limit" but "how close is it".
+    const { store, mission: m } = mission({ budgetTokens: 1_000_000 });
+    const task = readyTask(store, m.id);
+    const past = pastRun(store, m.id, task.id, Date.now() - 60_000);
+    const recorded = store.runs.recordTokens(past.id, 250_000);
+    if (!recorded.ok) throw new Error(recorded.message);
+
+    const events = handleFleetCommand({ type: 'list_missions' }, store);
+    const listed = events.find((e) => e.type === 'missions');
+    if (!listed || listed.type !== 'missions') throw new Error('no mission list');
+    const spend = listed.spend.find((s) => s.missionId === m.id);
+    expect(spend?.tokens).toBe(250_000);
+    expect(spend?.elapsedSec).toBeGreaterThan(50);
+  });
+
+  it('sends null, not zero, for a spend nobody could measure', () => {
+    // The state in which the fleet refuses to dispatch. Drawn as 0 it would
+    // show headroom the mission does not have, on the one screen where
+    // somebody decides whether to raise the limit — and JSON has no NaN.
+    const { store, mission: m } = mission({ budgetTokens: 1_000_000 });
+    const task = readyTask(store, m.id);
+    const past = pastRun(store, m.id, task.id, Date.now() - 60_000);
+    store.db.prepare('UPDATE child_runs SET tokens = NULL WHERE id = ?').run(past.id);
+
+    const events = handleFleetCommand({ type: 'list_missions' }, store);
+    const listed = events.find((e) => e.type === 'missions');
+    if (!listed || listed.type !== 'missions') throw new Error('no mission list');
+    expect(listed.spend.find((s) => s.missionId === m.id)?.tokens).toBeNull();
+  });
+
+  it('measures it the way the pulse does, rather than a second opinion', () => {
+    // Two counts of what a mission has spent would disagree on exactly the
+    // cases that matter, and the board would then contradict the hold.
+    const { store, mission: m } = mission({ budgetTokens: 500 });
+    const task = readyTask(store, m.id);
+    const past = pastRun(store, m.id, task.id, Date.now() - 60_000);
+    const recorded = store.runs.recordTokens(past.id, 500);
+    if (!recorded.ok) throw new Error(recorded.message);
+
+    const events = handleFleetCommand({ type: 'list_missions' }, store);
+    const listed = events.find((e) => e.type === 'missions');
+    if (!listed || listed.type !== 'missions') throw new Error('no mission list');
+    const spend = listed.spend.find((s) => s.missionId === m.id);
+    // The same number `overBudget` is about to hold this mission on.
+    expect(spend?.tokens).toBe(500);
+    expect(spend?.tokens).toBeGreaterThanOrEqual(m.budgetTokens ?? 0);
+  });
+});

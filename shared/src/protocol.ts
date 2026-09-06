@@ -34,6 +34,23 @@ import type { PlanTier, UsageSnapshot } from './usage.js';
 
 // ---------- server → client ----------
 
+/**
+ * What one mission has spent, as far as anything can tell.
+ *
+ * `tokens` is `null` when even one of its runs could not be measured — a run
+ * whose session ended before anything read it, or a row written before the
+ * column existed. NOT zero: the fleet holds a mission whose spend it cannot
+ * read, on the standing bias that an unknown is not permission, and a board
+ * that drew that as "0 spent" would show headroom the mission does not have.
+ * `null` rather than NaN because this crosses JSON, which has no other word
+ * for it.
+ */
+export interface MissionSpendReport {
+  missionId: string;
+  elapsedSec: number;
+  tokens: number | null;
+}
+
 export type ServerEvent =
   | {
       type: 'hello';
@@ -99,7 +116,7 @@ export type ServerEvent =
   /** Something worth telling the user that is NOT a failure — what was written
    * to their settings, and where the backup went. */
   | { type: 'notice'; message: string }
-  | { type: 'missions'; missions: Mission[] }
+  | { type: 'missions'; missions: Mission[]; spend: MissionSpendReport[] }
   | { type: 'tasks'; missionId: string; tasks: Task[] }
   /**
    * A page of history, in reply to `get_fleet_events`.

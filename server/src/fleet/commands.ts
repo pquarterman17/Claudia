@@ -1,6 +1,14 @@
-import type { ClientCommand, EscalationResolution, FleetEvent, ServerEvent } from '@claudia/shared';
+import type {
+  ClientCommand,
+  EscalationResolution,
+  FleetEvent,
+  Mission,
+  MissionSpendReport,
+  ServerEvent,
+} from '@claudia/shared';
 import { DEFAULT_PAGE } from '../store/events.js';
 import { acceptTask } from './accept.js';
+import { spendOf } from './pulse-spend.js';
 import { planResync, replayIsUsable } from './resync.js';
 import type { FleetStore } from '../store/index.js';
 
@@ -155,7 +163,35 @@ export function handleFleetCommand(cmd: ClientCommand, store: FleetStore | undef
 
 function listMissions(store: FleetStore): ServerEvent[] {
   const missions = store.missions.list();
-  return missions.ok ? [{ type: 'missions', missions: missions.value }] : [notice(missions.message)];
+  if (!missions.ok) return [notice(missions.message)];
+  return [{ type: 'missions', missions: missions.value, spend: spentByEach(store, missions.value) }];
+}
+
+/**
+ * What each mission has spent, measured the way the pulse measures it.
+ *
+ * `spendOf` and nothing else: a board that computed its own total would be a
+ * second opinion about the number a mission is held on, and the two would
+ * disagree on exactly the cases that matter — a run nobody could measure, a
+ * reservation that never started.
+ *
+ * A mission whose runs cannot be read reports its time and no tokens, rather
+ * than dropping out of the list: the budget is still worth showing, and "we
+ * could not tell" is the answer the rest of the fleet gives too.
+ */
+function spentByEach(store: FleetStore, missions: readonly Mission[]): MissionSpendReport[] {
+  const now = Date.now();
+  return missions.map((mission) => {
+    const runs = store.runs.listByMission(mission.id);
+    const spend = runs.ok ? spendOf(runs.value, now) : { elapsedSec: 0, tokens: Number.NaN };
+    return {
+      missionId: mission.id,
+      elapsedSec: spend.elapsedSec,
+      // JSON has no NaN, and `null` is the honest spelling of the thing NaN
+      // meant here: nobody could add these up.
+      tokens: Number.isFinite(spend.tokens) ? spend.tokens : null,
+    };
+  });
 }
 
 /**

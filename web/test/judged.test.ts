@@ -32,6 +32,25 @@ describe('finding a verdict', () => {
     expect(found?.descendsFromBase).toBe(true);
   });
 
+  it('carries the complete review evidence instead of reducing it to a badge', () => {
+    const found = judgementFor([event({ payload: {
+      ...GOOD,
+      evidence: {
+        branch: 'codex/review', baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40), filesChanged: 4,
+        descendsFromBase: true,
+        tests: [{ command: 'npm test', exitCode: 0, summary: '201 passed' }],
+        prUrl: 'https://github.com/example/repo/pull/12', prState: 'open',
+        risks: ['visual regression'], artifacts: ['dist/report.html'],
+      },
+    } })], 't1');
+    expect(found).toMatchObject({
+      baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40),
+      tests: [{ command: 'npm test', exitCode: 0, summary: '201 passed' }],
+      prUrl: 'https://github.com/example/repo/pull/12', prState: 'open',
+      risks: ['visual regression'], artifacts: ['dist/report.html'],
+    });
+  });
+
   it('ignores one belonging to another task', () => {
     expect(judgementFor([event({ payload: GOOD, taskId: 't2' })], 't1')).toBeUndefined();
   });
@@ -120,5 +139,21 @@ describe('a payload that is not what it should be', () => {
     const found = judgementFor([event({ payload: { ...GOOD, evidence: { filesChanged: 'lots', branch: 12 } } })], 't1');
     expect(found?.filesChanged).toBeUndefined();
     expect(found?.branch).toBeUndefined();
+  });
+
+  it('drops malformed nested review evidence', () => {
+    const found = judgementFor([event({ payload: {
+      ...GOOD,
+      evidence: { tests: [{ command: 3, exitCode: 'zero' }, null], risks: 'none', artifacts: [2], prState: 'maybe' },
+    } })], 't1');
+    expect(found?.tests).toEqual([]);
+    expect(found?.risks).toBeUndefined();
+    expect(found?.artifacts).toEqual([]);
+    expect(found?.prState).toBeUndefined();
+  });
+
+  it('does not turn an unsafe PR URL from a malformed event into a link', () => {
+    const found = judgementFor([event({ payload: { ...GOOD, evidence: { prUrl: 'javascript:alert(1)' } } })], 't1');
+    expect(found?.prUrl).toBeUndefined();
   });
 });

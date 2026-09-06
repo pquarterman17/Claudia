@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import type { FleetEvent, Task, TaskStatus } from '@claudia/shared';
 import { send } from '../store';
-import { evidenceSupportsAcceptance, judgementFor, type Judgement } from '../judged';
+import { judgementFor } from '../judged';
 import { HUMAN_MOVES, MOVE_LABEL } from '../task-moves';
+import { AcceptanceReview } from './AcceptanceReview';
 
 /**
  * One mission's tasks, and the decisions that are the human's to make.
@@ -68,40 +69,41 @@ export function MissionTasks({
       ) : (
         <ul style={{ listStyle: 'none', margin: '0 0 8px', padding: 0, display: 'grid', gap: 6 }}>
           {(tasks ?? []).map((task) => (
-            <li key={task.id} style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-              <span
-                style={{
-                  fontSize: 10,
-                  textTransform: 'uppercase',
-                  letterSpacing: 0.4,
-                  color: STATUS_COLOR[task.status],
-                  minWidth: 62,
-                }}
-              >
-                {task.status}
-              </span>
-              <span style={{ fontSize: 12, color: '#c8cadb', flex: 1, minWidth: 160 }}>{task.title}</span>
-              {task.status === 'reported' && <Judged judgement={judgementFor(events, task.id)} />}
-              {task.status === 'reported' && (
-                <Accept missionId={missionId} taskId={task.id} judgement={judgementFor(events, task.id)} />
-              )}
-              {HUMAN_MOVES[task.status].map((to) => (
-                <button
-                  key={to}
-                  className="btn btn-ghost"
-                  onClick={() => send({ type: 'set_task_status', missionId, taskId: task.id, status: to })}
+            <li key={task.id}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                <span
                   style={{
                     fontSize: 10,
-                    padding: '1px 7px',
-                    border: `1px solid ${to === 'cancelled' ? '#4a3038' : '#33364a'}`,
-                    borderRadius: 5,
-                    color: to === 'cancelled' ? '#c08a8a' : '#a8abbd',
-                    cursor: 'pointer',
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.4,
+                    color: STATUS_COLOR[task.status],
+                    minWidth: 62,
                   }}
                 >
-                  {MOVE_LABEL[to]}
-                </button>
-              ))}
+                  {task.status}
+                </span>
+                <span style={{ fontSize: 12, color: '#c8cadb', flex: 1, minWidth: 160 }}>{task.title}</span>
+                {HUMAN_MOVES[task.status].map((to) => (
+                  <button
+                    key={to}
+                    className="btn btn-ghost"
+                    onClick={() => send({ type: 'set_task_status', missionId, taskId: task.id, status: to })}
+                    style={{
+                      fontSize: 10,
+                      padding: '1px 7px',
+                      border: `1px solid ${to === 'cancelled' ? '#4a3038' : '#33364a'}`,
+                      borderRadius: 5,
+                      color: to === 'cancelled' ? '#c08a8a' : '#a8abbd',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {MOVE_LABEL[to]}
+                  </button>
+                ))}
+              </div>
+              {task.status === 'reported' && (
+                <AcceptanceReview missionId={missionId} task={task} judgement={judgementFor(events, task.id)} />
+              )}
             </li>
           ))}
         </ul>
@@ -151,112 +153,6 @@ export function MissionTasks({
         </details>
       )}
     </div>
-  );
-}
-
-/**
- * The accept button, which is not a status change any more.
- *
- * `accept_task` reads the verdict the pulse recorded before it agrees, so what
- * this has to get right is telling somebody, BEFORE they click, that the
- * evidence will not support it — and giving them the way through when they
- * know better than the checks do.
- *
- * The override is not a convenience. A verify command that is wrong rejects
- * good work, and judging happens once per run, so nothing re-judges a task
- * whose command has since been fixed: without a way to accept over a verdict,
- * that task can never be accepted at all. It costs a reason, and the reason is
- * recorded beside the verdict it overrode.
- */
-function Accept({ missionId, taskId, judgement }: { missionId: string; taskId: string; judgement: Judgement | undefined }) {
-  const [reason, setReason] = useState<string | undefined>(undefined);
-  const supported = evidenceSupportsAcceptance(judgement);
-
-  if (supported) {
-    return (
-      <button
-        onClick={() => send({ type: 'accept_task', missionId, taskId })}
-        className="btn btn-ghost"
-        style={{ ...action, color: '#7ee0a3', border: '1px solid #2f5a44' }}
-        title="The evidence is complete and nothing failed. Recorded with the verdict it was made on."
-      >
-        accept
-      </button>
-    );
-  }
-
-  if (reason === undefined) {
-    return (
-      <button
-        onClick={() => setReason('')}
-        className="btn btn-ghost"
-        style={{ ...action, color: '#e0a34f', border: '1px solid #5a4a2f' }}
-        title={
-          judgement
-            ? 'The evidence does not support this. Accepting anyway takes a reason, which is recorded.'
-            : 'Nothing has judged this task yet. Accepting anyway takes a reason, which is recorded.'
-        }
-      >
-        accept anyway…
-      </button>
-    );
-  }
-
-  return (
-    <>
-      <input
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-        placeholder="Why, for the log"
-        style={{ ...field(160), minWidth: 120 }}
-      />
-      <button
-        onClick={() => {
-          send({ type: 'accept_task', missionId, taskId, override: reason });
-          setReason(undefined);
-        }}
-        disabled={reason.trim() === ''}
-        className="btn btn-ghost"
-        style={{ ...action, color: '#e0a34f', border: '1px solid #5a4a2f' }}
-      >
-        accept over the verdict
-      </button>
-      <button onClick={() => setReason(undefined)} className="btn btn-ghost" style={action}>
-        cancel
-      </button>
-    </>
-  );
-}
-
-/**
- * What the server found in the worktree, next to the button that accepts it.
- *
- * The evidence is observed server-side and never taken from the child's own
- * account of itself — that separation is the reason `reported` and `accepted`
- * are different states at all. Nothing here decides anything: the policy ships
- * with `autoAcceptWhenGreen` off, on the argument that "nobody looked" is not
- * an auditable decision, so this exists to make sure somebody looked.
- */
-function Judged({ judgement }: { judgement: Judgement | undefined }) {
-  if (!judgement) {
-    // Judged on the pulse after the claim lands, so a gap of a few seconds is
-    // normal and saying "no evidence" would be wrong.
-    return <span style={{ fontSize: 10, color: '#4a4d5e' }}>checking…</span>;
-  }
-  const colour = judgement.verdict === 'accept' ? '#5fbf7f' : judgement.verdict === 'reject' ? '#e07070' : '#e0a34f';
-  const facts = [
-    judgement.filesChanged === undefined ? undefined : `${judgement.filesChanged} file${judgement.filesChanged === 1 ? '' : 's'}`,
-    judgement.descendsFromBase === false ? 'not on its base' : undefined,
-    judgement.missing.length > 0 ? `no ${judgement.missing.join(', ')}` : undefined,
-    // Last, and shown even when it produced no test result: a command that
-    // could not start is the reason the verdict says nobody checked.
-    judgement.checks,
-  ].filter((fact): fact is string => fact !== undefined);
-  return (
-    <span style={{ fontSize: 10, color: colour }} title={judgement.reason}>
-      {judgement.verdict === 'accept' ? 'evidence ok' : judgement.verdict === 'reject' ? 'evidence bad' : 'check it'}
-      {facts.length > 0 && <span style={{ color: '#75798c' }}> · {facts.join(' · ')}</span>}
-    </span>
   );
 }
 

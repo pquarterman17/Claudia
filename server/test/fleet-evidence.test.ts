@@ -411,6 +411,45 @@ describe('checking the work, not just looking at it', () => {
   });
 });
 
+describe('what the child said about its own work', () => {
+  it('carries the risks and artifacts it left behind into the judgement', async () => {
+    // The two fields that are the child's word rather than an observation, and
+    // the two nothing had ever written. They decide nothing — `judge` does not
+    // read them and `missingEvidence` never asked for them — which is the
+    // point: a child that admits a risk is behaving better than one that does
+    // not, and the person reviewing should see it either way.
+    const { store, mission, task } = fixture({ work: true });
+    const held = store.worktrees.listByMission(mission.id);
+    if (!held.ok) throw new Error(held.message);
+    const path = held.value[0]?.path;
+    if (path === undefined) throw new Error('the fixture has no worktree');
+
+    mkdirSync(join(path, '.claudia'), { recursive: true });
+    writeFileSync(
+      join(path, '.claudia', 'report.json'),
+      JSON.stringify({ risks: ['the migration is not reversible'], artifacts: ['docs/plan.md'] }),
+      'utf8',
+    );
+
+    expect(await judgeReported(deps(store), mission)).toBe(1);
+    const evidence = judged(store, mission.id)?.['evidence'] as Record<string, unknown>;
+    expect(evidence['risks']).toEqual(['the migration is not reversible']);
+    expect(evidence['artifacts']).toEqual(['docs/plan.md']);
+    // And the verdict is unchanged by them: they are not a way for a child to
+    // talk itself into being accepted.
+    expect(judged(store, mission.id)?.['verdict']).toBe('needs_human');
+    expect(task.id).toBeDefined();
+  });
+
+  it('is silent when the child left nothing, which is most of the time', async () => {
+    const { store, mission } = fixture({ work: true });
+    await judgeReported(deps(store), mission);
+    const evidence = judged(store, mission.id)?.['evidence'] as Record<string, unknown>;
+    expect(evidence['risks']).toBeUndefined();
+    expect(evidence['artifacts']).toBeUndefined();
+  });
+});
+
 describe('every field of the evidence has something that writes it', () => {
   /**
    * The shape of the bug this whole file exists because of.
@@ -430,13 +469,18 @@ describe('every field of the evidence has something that writes it', () => {
   const SRC = join(import.meta.dirname, '..', 'src');
 
   /**
-   * Declared, judged on, and still gathered by nothing. Each one is a live
-   * branch in `acceptance.ts` that no input can reach — `prState === 'closed'`
-   * rejects a run whose pull request was closed, and nothing has ever told it
-   * about a pull request. Listed rather than fixed here because gathering them
-   * is its own work; listed at all so the list cannot grow quietly.
+   * Empty, and it took work to get there.
+   *
+   * This held `prUrl`, `prState`, `risks` and `artifacts` — declared, judged
+   * on, and gathered by nothing, so `prState === 'closed'` was a rejection no
+   * input could reach. They are collected now: the first two from the forge,
+   * the last two from the report file the child is asked for in its brief.
+   *
+   * The ledger stays, empty, because it is checked in both directions: a new
+   * field nobody writes fails, and a listed field that gets wired fails until
+   * it comes off. That second half is what just emptied it.
    */
-  const NOT_GATHERED_YET = new Set(['prUrl', 'prState', 'risks', 'artifacts']);
+  const NOT_GATHERED_YET = new Set<string>([]);
 
   function serverSources(dir: string, out: string[] = []): string[] {
     for (const entry of readdirSync(dir)) {

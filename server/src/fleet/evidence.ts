@@ -1,6 +1,8 @@
 import type { Mission } from '@claudia/shared';
 import { judge, missingEvidence, type Evidence } from './acceptance.js';
+import { childReport } from './child-report.js';
 import { gitLine, gitSays } from './git-facts.js';
+import { pullRequestFor } from './pr-facts.js';
 import type { PulseDeps } from './pulse.js';
 import { runVerify } from './verify.js';
 
@@ -100,8 +102,16 @@ async function gatherEvidence(
   const said = verified === undefined ? {} : { checks: verified.note };
   const ran = tests === undefined ? {} : { tests };
 
+  // The forge, and the child's own account. Both answer nothing rather than
+  // guessing: no `gh` and no report file are absences, which `missingEvidence`
+  // never demanded and `judge` never blocks on — the point of collecting them
+  // is that a closed pull request is a real rejection and a flagged risk is
+  // something a reviewer should see, not that either is required.
+  const pr = branch === undefined ? {} : await pullRequestFor(path, branch);
+  const reported = await childReport(path);
+
   const headSha = await gitLine(path, ['rev-parse', 'HEAD']);
-  if (headSha === undefined) return { branch, baseSha, ...ran, ...said };
+  if (headSha === undefined) return { branch, baseSha, ...ran, ...said, ...pr, ...reported };
 
   // `--numstat` over `--shortstat`: one line per file is a count that cannot be
   // misparsed, and zero lines is a real answer — an empty diff is a red flag,
@@ -118,5 +128,7 @@ async function gatherEvidence(
     ...(descendsFromBase !== undefined ? { descendsFromBase } : {}),
     ...ran,
     ...said,
+    ...pr,
+    ...reported,
   };
 }

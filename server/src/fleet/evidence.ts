@@ -39,7 +39,7 @@ export async function judgeReported(deps: PulseDeps, mission: Mission): Promise<
     // The append below is keyed on the run, so a second pass over a run
     // already judged is a no-op in the store. Checked here as well only to
     // avoid the git calls, which are the expensive half.
-    if (alreadyJudged(deps, mission.id, run.id)) continue;
+    if (alreadyJudged(deps, run.taskId, run.id)) continue;
     const gathered = await gatherEvidence(deps, run.worktreeId, mission.verify);
     const { checks, ...evidence } = gathered;
     const verdict = judge(evidence);
@@ -70,8 +70,20 @@ export async function judgeReported(deps: PulseDeps, mission: Mission): Promise<
   return judged;
 }
 
-function alreadyJudged(deps: PulseDeps, missionId: string, runId: string): boolean {
-  const events = deps.store.events.sinceForMission(missionId);
+/**
+ * Whether this run's verdict is already in the log.
+ *
+ * Asked of the TASK's log, not the mission's. `sinceForMission(id)` is
+ * `seq > 0 ORDER BY seq LIMIT 500` — the OLDEST 500 events of the mission — so
+ * once a mission had that much history this answered `false` for a run judged
+ * seconds ago. The append is keyed on the run, so nothing was duplicated; what
+ * ran again, on every pulse, for as long as the run sat in `reported`, was the
+ * half this check exists to skip: the git reads and the mission's verify
+ * command, up to its 120-second timeout. A task's own log is bounded by its
+ * attempts, so the same read answers truthfully here.
+ */
+function alreadyJudged(deps: PulseDeps, taskId: string, runId: string): boolean {
+  const events = deps.store.events.sinceForTask(taskId);
   return events.ok && events.value.some((event) => event.kind === 'task_judged' && event.runId === runId);
 }
 

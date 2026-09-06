@@ -90,7 +90,13 @@ describe('a database written before missions had an agent', () => {
     // override on `openFleetDb` exists for: the real list up to the version
     // before, rather than a synthetic schema that only resembles it.
     const path = join(dir, 'older', 'fleet.db');
-    const before = MIGRATIONS.filter((m) => m.name !== 'mission-agent');
+    // By VERSION, not by name. Filtering the one migration out left every
+    // LATER migration in the list, so the file opened at the newest version
+    // with the agent column missing and `applyMigrations` then had nothing to
+    // do — the test broke the first time a tenth migration was added, and it
+    // broke by proving nothing rather than by failing on its subject.
+    const agentVersion = MIGRATIONS.find((m) => m.name === 'mission-agent')?.version ?? 0;
+    const before = MIGRATIONS.filter((m) => m.version < agentVersion);
     const opened = openFleetDb(path, before);
     if (!opened.ok) throw new Error(opened.message);
     const db = opened.value;

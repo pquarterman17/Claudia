@@ -171,6 +171,9 @@ function Judged({ judgement }: { judgement: Judgement | undefined }) {
     judgement.filesChanged === undefined ? undefined : `${judgement.filesChanged} file${judgement.filesChanged === 1 ? '' : 's'}`,
     judgement.descendsFromBase === false ? 'not on its base' : undefined,
     judgement.missing.length > 0 ? `no ${judgement.missing.join(', ')}` : undefined,
+    // Last, and shown even when it produced no test result: a command that
+    // could not start is the reason the verdict says nobody checked.
+    judgement.checks,
   ].filter((fact): fact is string => fact !== undefined);
   return (
     <span style={{ fontSize: 10, color: colour }} title={judgement.reason}>

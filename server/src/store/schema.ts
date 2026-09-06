@@ -200,3 +200,19 @@ export const MISSION_AGENT = `
 ALTER TABLE missions ADD COLUMN agent TEXT NOT NULL DEFAULT 'claude'
   CHECK (agent IN ('claude','codex'));
 `;
+
+/**
+ * The command a mission's work is checked with. Migration 10.
+ *
+ * NULL rather than a default, and the reader treats absent as "nobody checks":
+ * every mission written before this column existed had no such command, and
+ * inventing one — `npm test`, say — would have the fleet running something in
+ * a worktree that its owner never asked for.
+ *
+ * No CHECK, unlike `agent`. There is no set of legal values to enforce: it is
+ * a shell command, and the constraint that matters (a timeout, a bounded
+ * output) belongs to the thing that runs it, not to the column that holds it.
+ */
+export const MISSION_VERIFY = `
+ALTER TABLE missions ADD COLUMN verify TEXT;
+`;

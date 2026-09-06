@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { AGENT_KINDS, type AgentKind, type Mission } from '@claudia/shared';
+import { AGENT_KINDS, verifyCommandProblem, type AgentKind, type Mission } from '@claudia/shared';
 import type { FleetLimits } from '@claudia/shared';
 import { nextPageFrom, type FleetState } from '../fleet-state';
 import { send } from '../store';
 import { FleetLimitsControl } from './FleetLimits';
 import { MissionEscalations } from './MissionEscalations';
+import { MissionVerify } from './MissionVerify';
 import { MissionTasks } from './MissionTasks';
 
 /**
@@ -150,6 +151,7 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
                 </div>
                 {open === mission.id && (
                   <div style={{ paddingLeft: 16 }}>
+                    <MissionVerify missionId={mission.id} verify={mission.verify} />
                     <MissionEscalations missionId={mission.id} escalations={fleet.escalations.get(mission.id)} />
                   </div>
                 )}
@@ -177,12 +179,23 @@ function NewMission({ onDone }: { onDone: () => void }) {
   const [body, setBody] = useState('');
   const [cwd, setCwd] = useState('');
   const [agent, setAgent] = useState<AgentKind>('claude');
+  const [verify, setVerify] = useState('');
+  // The store refuses a command it could not run as written; saying so here
+  // means the person typing finds out before the mission exists.
+  const badVerify = verify.trim() === '' ? undefined : verifyCommandProblem(verify);
 
   const create = (): void => {
     const trimmed = name.trim();
     const dir = cwd.trim();
-    if (trimmed === '' || dir === '') return;
-    send({ type: 'create_mission', name: trimmed, body: body.trim(), cwd: dir, agent });
+    if (trimmed === '' || dir === '' || badVerify !== undefined) return;
+    send({
+      type: 'create_mission',
+      name: trimmed,
+      body: body.trim(),
+      cwd: dir,
+      agent,
+      ...(verify.trim() ? { verify: verify.trim() } : {}),
+    });
     onDone();
   };
 
@@ -196,6 +209,13 @@ function NewMission({ onDone }: { onDone: () => void }) {
         placeholder="The standing intention, in your words"
         style={field(240)}
       />
+      <input
+        value={verify}
+        onChange={(e) => setVerify(e.target.value)}
+        placeholder="Check with (optional) — npm test"
+        title="Run in the child’s worktree once it reports. One program, no shell. Without it every verdict is “check it”."
+        style={field(180)}
+      />
       <select value={agent} onChange={(e) => setAgent(e.target.value as AgentKind)} style={field(80)}>
         {AGENT_KINDS.map((kind) => (
           <option key={kind} value={kind}>
@@ -205,12 +225,15 @@ function NewMission({ onDone }: { onDone: () => void }) {
       </select>
       <button
         onClick={create}
-        disabled={name.trim() === '' || cwd.trim() === ''}
+        disabled={name.trim() === '' || cwd.trim() === '' || badVerify !== undefined}
         className="btn btn-ghost"
         style={ghost}
       >
         create — paused
       </button>
+      {badVerify !== undefined && (
+        <span style={{ fontSize: 10, color: '#c08a8a', flexBasis: '100%' }}>{badVerify}</span>
+      )}
     </div>
   );
 }

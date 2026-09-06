@@ -19,6 +19,15 @@ export interface Judgement {
   filesChanged?: number;
   branch?: string;
   descendsFromBase?: boolean;
+  /**
+   * What the mission's own verify command did, in one line.
+   *
+   * Sits outside `evidence` because it also describes the runs that produced
+   * NO evidence: a command that could not start and one that never finished
+   * both leave `tests` absent, and "no test results" alone does not say which
+   * — or that anything was even attempted.
+   */
+  checks?: string;
 }
 
 const VERDICTS = new Set(['accept', 'reject', 'needs_human']);
@@ -51,6 +60,7 @@ function readJudgement(payload: unknown): Judgement | undefined {
     ...(typeof evidence['descendsFromBase'] === 'boolean'
       ? { descendsFromBase: evidence['descendsFromBase'] }
       : {}),
+    ...(typeof record['checks'] === 'string' ? { checks: record['checks'] } : {}),
   };
 }
 

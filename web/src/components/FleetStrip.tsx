@@ -169,6 +169,7 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
                     tasks={fleet.tasks.get(mission.id)}
                     events={fleet.events.get(mission.id)}
                     elided={fleet.pages.get(mission.id)?.elided ?? 0}
+                    watch={mission.watch}
                   />
                 )}
               </div>

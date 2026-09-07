@@ -13,7 +13,8 @@ architecture does not. The Claude Design export that started this is deliberatel
 ## Strategic initiatives
 
 - [Argus-inspired mission orchestration](./ARGUS_PARITY_PLAN.md) — durable mission, task,
-  child-run, worktree, and fleet-event management. Planning complete; implementation not started.
+  child-run, worktree, and fleet-event management. Core orchestration and acceptance shipped;
+  mission visualization, recovery actions, cleanup preview, and release hardening remain.
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
 genuinely new work or was deliberately deferred for a decision. 847 tests, clean typecheck.

@@ -58,6 +58,65 @@ body,
   border: 0;
 }
 
+.mission-flow {
+  margin: 2px 0 12px;
+  padding: 9px 10px 10px;
+  border: 1px solid #2a2d40;
+  border-radius: 8px;
+  background: #15172480;
+}
+
+.mission-flow-heading,
+.mission-flow-counts {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mission-flow-next { color: #a8abbd; font-size: 11px; }
+.mission-flow-next > span { color: #75798c; margin-right: 4px; }
+.mission-flow-counts { margin-top: 6px; color: #75798c; font-size: 10px; }
+.mission-flow-counts strong { color: #c8cadb; font-weight: 600; }
+.mission-flow-counts [data-status='blocked'],
+.mission-flow-counts [data-status='failed'] { color: #c08a8a; }
+.mission-flow-counts [data-status='reported'] { color: #d2cefd; }
+
+.mission-flow-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 5px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mission-flow-task {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 7px;
+  row-gap: 2px;
+  padding: 6px 7px;
+  border-left: 2px solid #4a4d5e;
+  background: #1b1d2a;
+}
+
+.mission-flow-task[data-status='running'] { border-left-color: #7ee0a3; }
+.mission-flow-task[data-status='reported'] { border-left-color: #a99ce8; }
+.mission-flow-task[data-status='blocked'],
+.mission-flow-task[data-status='failed'] { border-left-color: #e07070; }
+.mission-flow-task[data-status='accepted'] { opacity: .65; }
+.mission-flow-status { color: #75798c; font-size: 9px; letter-spacing: .35px; text-transform: uppercase; }
+.mission-flow-title { min-width: 0; overflow: hidden; color: #c8cadb; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.mission-flow-dependencies { grid-column: 2; min-width: 0; overflow: hidden; color: #75798c; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 520px) {
+  .mission-flow { padding: 8px; }
+  .mission-flow-grid { grid-template-columns: 1fr; }
+  .mission-flow-next { flex-basis: 100%; }
+}
+
 .launch-mode select {
   min-height: 28px;
   padding: 4px 28px 4px 9px;

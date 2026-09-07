@@ -143,7 +143,11 @@ function safeWebUrl(value: unknown): string | undefined {
  */
 export function evidenceSupportsAcceptance(judgement: Judgement | undefined): boolean {
   if (!judgement) return false;
-  return judgement.verdict !== 'reject' && judgement.missing.length === 0;
+  // If this client could not read every result, it cannot honestly present the
+  // same plain-accept path as a complete green verdict. The server remains the
+  // authority; the reasoned override records why the human proceeded despite
+  // what this board could not show.
+  return judgement.verdict !== 'reject' && judgement.missing.length === 0 && (judgement.unreadTests ?? 0) === 0;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

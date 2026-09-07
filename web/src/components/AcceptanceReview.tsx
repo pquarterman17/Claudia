@@ -115,7 +115,7 @@ function Evidence({ judgement }: { judgement: Judgement }) {
             <code style={{ fontSize: 10.5, color: '#c8cadb' }}>{test.command}</code>
             {test.summary && <div style={{ ...copy, color: '#75798c', whiteSpace: 'pre-wrap' }}>{test.summary}</div>}
           </div>
-        )) : <Missing>None recorded</Missing>}
+        )) : (judgement.unreadTests ?? 0) === 0 ? <Missing>None recorded</Missing> : null}
         {(judgement.unreadTests ?? 0) > 0 && (
           <div style={{ ...copy, color: '#e0a34f' }}>
             {judgement.unreadTests} test result{judgement.unreadTests === 1 ? '' : 's'} could not be read

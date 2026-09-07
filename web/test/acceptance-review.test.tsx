@@ -28,6 +28,7 @@ describe('acceptance review evidence', () => {
     expect(html).toContain('All keyboard paths work.');
     expect(html).toContain('Missing: test results.');
     expect(html).toContain('1 test result');
+    expect(html).not.toContain('None recorded');
     expect(html).toContain('accept with override');
     expect(html).not.toContain('accept task');
   });

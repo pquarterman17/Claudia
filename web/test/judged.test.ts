@@ -143,6 +143,14 @@ describe('a payload that is not what it should be', () => {
     const bad = judgementFor([event({ payload: { ...GOOD, verdict: 'reject', missing: [] } })], 't1');
     expect(evidenceSupportsAcceptance(bad)).toBe(false);
 
+    const unread = judgementFor([event({ payload: {
+      ...GOOD,
+      missing: [],
+      evidence: { tests: [{ command: 'npm test', exitCode: 'unknown' }] },
+    } })], 't1');
+    expect(unread?.unreadTests).toBe(1);
+    expect(evidenceSupportsAcceptance(unread)).toBe(false);
+
     // Nothing judged at all is the case the old one-click accept was blindest
     // to, so it is the one to be sure of.
     expect(evidenceSupportsAcceptance(undefined)).toBe(false);

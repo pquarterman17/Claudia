@@ -99,7 +99,6 @@ body,
   background: #1b1d2a;
 }
 
-.mission-flow-task[data-status='accepted'] { opacity: .65; }
 .mission-flow-status { color: #75798c; font-size: 9px; letter-spacing: .35px; text-transform: uppercase; }
 .mission-flow-title { min-width: 0; overflow: hidden; color: #c8cadb; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .mission-flow-dependencies { grid-column: 2; min-width: 0; overflow: hidden; color: #75798c; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }

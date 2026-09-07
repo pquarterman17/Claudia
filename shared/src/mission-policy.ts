@@ -72,3 +72,28 @@ export function tasksInCycles(tasks: readonly Task[]): Set<string> {
   for (const task of tasks) visit(task.id);
   return cyclic;
 }
+
+/**
+ * Why one dependency does or does not let its dependent start.
+ *
+ * The fourth rule to move here, and the one that had drifted furthest: the
+ * reconciler classified dependencies to pick a block reason while the overview
+ * classified them again to draw an arrow, in different packages, in the same
+ * order. Adding a `TaskStatus` updated one of them.
+ *
+ * `unapproved` is separate from `waiting` because they ask opposite things of
+ * the person reading. A running dependency clears itself; a `proposed` one
+ * clears only when a human approves or cancels it, so telling them to wait for
+ * it is telling them to wait for themselves.
+ */
+export type DependencyState = 'satisfied' | 'waiting' | 'unapproved' | 'terminal' | 'missing' | 'cycle';
+
+export function dependencyState(owner: Task, dependencyId: string, byId: ReadonlyMap<string, Task>, cyclic: ReadonlySet<string>): DependencyState {
+  const dependency = byId.get(dependencyId);
+  if (dependency === undefined) return 'missing';
+  if (cyclic.has(owner.id) && cyclic.has(dependencyId)) return 'cycle';
+  if (dependency.status === 'accepted') return 'satisfied';
+  if (dependency.status === 'failed' || dependency.status === 'cancelled') return 'terminal';
+  if (dependency.status === 'proposed') return 'unapproved';
+  return 'waiting';
+}

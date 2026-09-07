@@ -1,4 +1,4 @@
-import { budgetHold, childCeiling, tasksInCycles, type ChildRun, type FleetLimits, type Mission, type Task, type TaskStatus } from '@claudia/shared';
+import { budgetHold, childCeiling, dependencyState, tasksInCycles, type ChildRun, type FleetLimits, type Mission, type Task, type TaskStatus } from '@claudia/shared';
 
 /**
  * What the fleet should do next, decided by arithmetic rather than by a model.
@@ -111,8 +111,10 @@ export function reconcile(input: ReconcileInput): Decision[] {
   const decisions: Decision[] = [];
   // The other half of the cost guard, and the same omission twice: `attempts >=
   // NaN` and `attempts >= Infinity` are both false, so a task could be
-  // re-dispatched without limit. Found in review, in the file where the child
-  // ceiling had just been given exactly this check.
+  // re-dispatched without limit. Found in review, alongside the child ceiling
+  // that had just been given exactly this check — the check that now lives on
+  // `childCeiling` in shared, while this one stayed here because only the
+  // reconciler spends an attempt.
   if (!Number.isSafeInteger(policy.maxAttempts) || policy.maxAttempts < 1) {
     decisions.push({ kind: 'hold', reason: 'cannot read how many attempts a task may spend' });
     return decisions;
@@ -130,7 +132,7 @@ export function reconcile(input: ReconcileInput): Decision[] {
       continue;
     }
 
-    const blocker = dependencyBlocker(task, byId);
+    const blocker = dependencyBlocker(task, byId, cyclic);
     if (blocker) {
       if (task.status !== 'blocked') decisions.push({ kind: 'block', taskId: task.id, reason: blocker });
       continue;
@@ -168,7 +170,7 @@ export function reconcile(input: ReconcileInput): Decision[] {
   // The LOWER of what the human set on this mission and what the server-wide
   // policy allows. Found by audit: `mission.maxChildren` was written, bounded
   // on the way in, and read by no production code — a mission set to one child
-  // dispatched eight. That is precisely the shape `overBudget` below has a
+  // dispatched eight. That is precisely the shape `budgetHold` carries a
   // comment about: visible in the UI, settable by a human, enforcing nothing.
   // Taking the minimum means neither ceiling can be exceeded by raising the
   // other.
@@ -250,18 +252,20 @@ export function dispatchKey(missionId: string, taskId: string, attempt: number):
 /**
  * The first reason a task cannot start, or undefined when it can.
  *
- * A dependency that FAILED is reported differently from one still running,
- * because they need different things from the human: one is patience, the
- * other is a decision.
+ * The classification is `dependencyState`; this only words it. A dependency
+ * that FAILED is reported differently from one still running, and differently
+ * again from one nobody has approved, because they need different things from
+ * the human: patience, a decision, or an approval.
  */
-function dependencyBlocker(task: Task, byId: Map<string, Task>): string | undefined {
+function dependencyBlocker(task: Task, byId: Map<string, Task>, cyclic: ReadonlySet<string>): string | undefined {
   for (const id of task.dependsOn) {
+    const state = dependencyState(task, id, byId, cyclic);
+    if (state === 'satisfied') continue;
     const dep = byId.get(id);
-    if (!dep) return `depends on ${id}, which does not exist`;
-    if (dep.status === 'accepted') continue;
-    if (dep.status === 'failed' || dep.status === 'cancelled') {
-      return `depends on "${dep.title}", which is ${dep.status}`;
-    }
+    if (dep === undefined) return `depends on ${id}, which does not exist`;
+    if (state === 'terminal') return `depends on "${dep.title}", which is ${dep.status}`;
+    if (state === 'unapproved') return `depends on "${dep.title}", which nobody has approved`;
+    if (state === 'cycle') return `depends on "${dep.title}" through a cycle`;
     return `waiting on "${dep.title}"`;
   }
   return undefined;

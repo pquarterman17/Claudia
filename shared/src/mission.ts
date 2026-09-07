@@ -131,6 +131,15 @@ export interface Task {
   dependsOn: string[];
   /** What "done" means, in terms a human can check against evidence. */
   acceptance: string;
+  /**
+   * The attempt whose claim put this task in `reported`, when it is there.
+   *
+   * Written by `setStatus` in the transaction that moves the status, because
+   * the board and `accept_task` both need to know which worktree the evidence
+   * on screen describes — and reconstructing it from the log meant every
+   * writer of `reported` had to remember to leave a note. Three did not.
+   */
+  currentRunId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -313,3 +322,30 @@ function clampLimit(value: unknown, fallback: number, ceiling: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return Math.min(ceiling, Math.max(1, Math.round(value)));
 }
+
+/**
+ * Whether one recorded test result can be read as a result at all.
+ *
+ * In `shared` because both ends have to agree on it. The server refuses
+ * evidence this rejects (`malformedEvidence` calls the run malformed and
+ * `judge` returns `reject`), and the board counts what it rejects as unread —
+ * which is what keeps the plain one-click accept off a result nobody could
+ * parse. Two copies of the rule, kept in step by a comment, is how the board
+ * ends up treating as readable something the server calls malformed.
+ *
+ * `command` must be a non-empty string and `exitCode` a safe integer:
+ * `typeof NaN` is 'number', so the looser check let `failed (NaN)` render as a
+ * result somebody had read.
+ */
+export function readableTest(value: unknown): { command: string; exitCode: number } | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const test = value as Record<string, unknown>;
+  const command = test['command'];
+  const exitCode = test['exitCode'];
+  if (typeof command !== 'string' || command.trim() === '') return undefined;
+  if (typeof exitCode !== 'number' || !Number.isSafeInteger(exitCode)) return undefined;
+  return { command, exitCode };
+}
+
+/** The three verdicts `judge` can reach, named once for both ends. */
+export const VERDICTS: ReadonlySet<string> = new Set(['accept', 'reject', 'needs_human']);

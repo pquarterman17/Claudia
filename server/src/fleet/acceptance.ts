@@ -1,3 +1,4 @@
+import { readableTest } from '@claudia/shared';
 /**
  * The difference between "the process stopped" and "the task is done".
  *
@@ -112,13 +113,15 @@ export function malformedEvidence(evidence: Evidence): string | undefined {
   if (evidence.headSha && evidence.baseSha && evidence.headSha === evidence.baseSha && (evidence.filesChanged ?? 0) > 0) {
     return 'the head commit is the base commit, so no files can have changed';
   }
+  // `readableTest` is the rule, and it lives in `shared` because the board
+  // counts as unread exactly what this refuses. Open-coding it here is how the
+  // two come to disagree about whether a result can be read at all.
   for (const test of evidence.tests ?? []) {
+    if (readableTest(test)) continue;
     if (typeof test?.command !== 'string' || test.command.trim() === '') {
       return 'a test result has no command';
     }
-    if (!Number.isSafeInteger(test.exitCode)) {
-      return `the exit code for ${test.command} is not a number`;
-    }
+    return `the exit code for ${test.command} is not a number`;
   }
   return undefined;
 }

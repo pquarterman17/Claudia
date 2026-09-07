@@ -175,7 +175,16 @@ export type ClientCommand =
    * "absent" would otherwise mean both "leave it alone" and "remove it".
    */
   | { type: 'set_mission_budget'; missionId: string; budgetSec: number | null; budgetTokens: number | null }
-  | { type: 'create_task'; missionId: string; title: string; description: string; cwd: string; dependsOn?: string[] }
+  | {
+      type: 'create_task';
+      missionId: string;
+      title: string;
+      description: string;
+      cwd: string;
+      dependsOn?: string[];
+      /** Human-authored definition of done, passed to the child and shown at review. */
+      acceptance?: string;
+    }
   | { type: 'list_tasks'; missionId: string }
   /**
    * Move a task through its lifecycle — chiefly `proposed -> ready`, which is

@@ -1,3 +1,4 @@
+import { VERDICTS, type FleetEvent } from '@claudia/shared';
 import type { FleetStore } from '../store/index.js';
 
 /**
@@ -46,10 +47,33 @@ export function acceptTask(store: FleetStore, missionId: string, taskId: string,
     return { ok: false, message: `A task that is ${task.value.status} has not reported anything to accept.` };
   }
 
-  const run = currentRunId(store, taskId);
-  const judged = latestJudgement(store, taskId, run);
+  // The attempt under review comes off the task row, written there by
+  // `setStatus` in the same transaction that moved the status. It used to be
+  // reconstructed by scanning the log for the newest run-scoped
+  // `task_reported`, which every writer of `reported` had to remember to
+  // append — and three writers existed, each found by a review noticing that
+  // acceptance had validated a second attempt against the first one's verdict.
+  const run = task.value.currentRunId;
+  const verdicts = store.events.latestForTask(taskId, 'task_judged', 8, run);
+  // No attempt recorded under review is a BLOCKER, not a licence to read any
+  // attempt's verdict. It means no run has claimed this task is done — a later
+  // attempt still writing to the worktree, or a record written before the
+  // column existed — and an unscoped read there authorised a live tree on a
+  // previous attempt's evidence, which is the whole failure this guards.
+
+  // Returned, not swallowed. An unreadable log is not evidence that nothing
+  // judged this task, and saying so would put a false sentence — "nothing has
+  // judged this task yet" — into the `overrode` field of the record this
+  // command exists to produce.
+  if (!verdicts.ok) return { ok: false, message: verdicts.message };
+  const judged = run === undefined ? undefined : latestJudgement(verdicts.value);
   const reason = (override ?? '').trim();
-  const blocker = judged === undefined ? 'nothing has judged this task yet' : refusalFor(judged);
+  const blocker =
+    run === undefined
+      ? 'no attempt is recorded as the one under review'
+      : judged === undefined
+        ? 'nothing has judged this task yet'
+        : refusalFor(judged);
 
   if (blocker !== undefined) {
     // An override with no reason is not an override. The point of the reason
@@ -125,48 +149,44 @@ function refusalFor(judged: Judgement): string | undefined {
  * Two narrowings, and both of them are the difference between a check and a
  * rubber stamp.
  *
- * By RUN, because a judgement describes the worktree of the run that produced
- * it. A task that was sent back to `ready` and ran again has an old verdict
+ * Scoped by RUN before it reaches here: the store is asked for `task_judged`
+ * events of one run, so nothing in this loop can pick another attempt's
+ * verdict. Which run that is comes off the task row, which the board reads
+ * too — so the two cannot answer it differently, rather than agreeing because
+ * two copies of a rule were kept in step.
+ *
+ * A task with no run named never reaches here at all: `acceptTask` treats that
+ * as its own blocker, because no attempt recorded under review means no run
+ * has claimed the task is done, and reading any attempt's verdict there is the
+ * substitution this command exists to refuse.
+ *
+ * A judgement describes the worktree of the run that produced it. A task that was sent back to `ready` and ran again has an old verdict
  * about a tree that no longer exists — and the case that matters is the second
  * attempt reporting BEFORE the pulse judges it, where taking the newest
  * verdict by sequence hands back attempt 1's `accept` and waves attempt 2
  * through without anything having looked at it. Unjudged has to read as
  * unjudged, which is what an override exists for.
  *
- * From the TASK's log, not the mission's. `sinceForMission(id)` is
- * `seq > 0 ORDER BY seq LIMIT 500` — the OLDEST 500 events of the mission. So
- * on any mission long enough to matter, the judgement made seconds ago was not
- * in the window and acceptance demanded an override forever, which trains the
- * one habit this whole command exists to prevent. A task's own log is bounded
- * by its attempts, so the same read is sound here.
+ * From the newest end of the TASK's log. Two window bugs, in sequence. The
+ * first read the MISSION's log through `sinceForMission`, which is
+ * `seq > 0 ORDER BY seq LIMIT 500` — the oldest 500 — so on any long mission
+ * the verdict made seconds ago was outside it. Narrowing to the task looked
+ * like the fix, on the reasoning that a task's log is bounded by its attempts.
+ * It is not: a stuck run escalates once a minute, because the reason text
+ * carries the elapsed minutes and the keyed note stops deduplicating. So the
+ * same trap sat one level down, and only `tailForTask` — newest first — is
+ * actually bounded by recency rather than by a hope about volume.
  */
-function latestJudgement(store: FleetStore, taskId: string, run: string | undefined): Judgement | undefined {
-  const events = store.events.sinceForTask(taskId);
-  if (!events.ok) return undefined;
+function latestJudgement(events: readonly FleetEvent[]): Judgement | undefined {
   let latest: Judgement | undefined;
-  for (const event of events.value) {
-    if (event.kind !== 'task_judged') continue;
-    // A judgement that does not say which run it describes cannot be shown to
-    // describe this one. Refusing it costs a reason; accepting it would spend
-    // the evidence of one attempt on another.
-    if (run !== undefined && event.runId !== run) continue;
+  // Newest first from the store, so the first that parses is the answer. A
+  // malformed payload leaves the previous good one standing rather than
+  // reading as "nothing judged this", which would demand an override.
+  for (const event of events) {
     const read = readJudgement(event.payload, event.seq);
     if (read && (latest === undefined || read.seq > latest.seq)) latest = read;
   }
   return latest;
-}
-
-/**
- * The attempt whose report is on the table, or nothing if the task never ran.
- *
- * `listByTask` is oldest attempt first, so the last row is the current one. A
- * task with no runs keeps the old unscoped behaviour: there is no attempt to
- * disagree with, and a judgement written by hand or by a test is all there is.
- */
-function currentRunId(store: FleetStore, taskId: string): string | undefined {
-  const runs = store.runs.listByTask(taskId);
-  if (!runs.ok || runs.value.length === 0) return undefined;
-  return runs.value[runs.value.length - 1]?.id;
 }
 
 /** The payload is JSON the log never reaches into, so nothing here is assumed. */
@@ -174,7 +194,12 @@ function readJudgement(payload: unknown, seq: number): Judgement | undefined {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return undefined;
   const record = payload as Record<string, unknown>;
   const verdict = record['verdict'];
-  if (typeof verdict !== 'string') return undefined;
+  // One of the three, not any string. `refusalFor` blocks only on `reject`, so
+  // an unrecognised verdict — an older or newer build, a hand-written event —
+  // read as "not a rejection" and permitted a plain accept, while the board
+  // guards the same field against the same set and treats it as unreadable.
+  // The two disagreed in the unsafe direction.
+  if (typeof verdict !== 'string' || !VERDICTS.has(verdict)) return undefined;
   return {
     verdict,
     reason: typeof record['reason'] === 'string' ? record['reason'] : '',

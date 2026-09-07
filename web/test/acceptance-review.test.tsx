@@ -1,0 +1,195 @@
+import type { Task } from '@claudia/shared';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { describe, expect, it } from 'vitest';
+import { AcceptanceReview, acceptCommand, summary } from '../src/components/AcceptanceReview';
+import { evidenceSupportsAcceptance } from '../src/judged';
+
+const task: Task = {
+  id: 't1', missionId: 'm1', title: 'Ship it', description: '', cwd: '/repo', status: 'reported',
+  priority: 0, dependsOn: [], acceptance: 'All keyboard paths work.', currentRunId: 'r1',
+  createdAt: 1, updatedAt: 1,
+};
+
+describe('acceptance review summary', () => {
+  it('distinguishes waiting, rejected, incomplete, and decision-ready claims', () => {
+    expect(summary(undefined)).toBe('Checking completion claim');
+    expect(summary({ verdict: 'reject', reason: 'tests failed', missing: [] })).toBe('Evidence needs work');
+    expect(summary({ verdict: 'needs_human', reason: '', missing: ['tests'] })).toBe('1 evidence gap');
+    expect(summary({ verdict: 'needs_human', reason: '', missing: ['tests', 'branch'] })).toBe('2 evidence gaps');
+    expect(summary({ verdict: 'needs_human', reason: 'green', missing: [] })).toBe('Ready for your decision');
+  });
+
+  it('does not promise a decision the panel below it will refuse', () => {
+    // `evidenceSupportsAcceptance` fails closed on unread results, so a
+    // headline that ignored them said "Ready for your decision" over a panel
+    // offering only the override — and the headline is the only text a
+    // reviewer who does not expand the disclosure ever reads.
+    const unread = { verdict: 'needs_human' as const, reason: 'green', missing: [], unreadTests: 1 };
+    expect(summary(unread)).toBe('Evidence could not be read');
+    expect(evidenceSupportsAcceptance(unread)).toBe(false);
+  });
+
+  it('says a check failed rather than promising a decision', () => {
+    // `evidenceSupportsAcceptance` gained a failing-test check; the headline
+    // did not, and the reader who never expands the disclosure sees only the
+    // headline. The two have now drifted twice, which is why they are asserted
+    // together.
+    const failed = {
+      verdict: 'needs_human' as const, reason: 'green', missing: [],
+      tests: [{ command: 'npm test', exitCode: 1 }],
+    };
+    expect(summary(failed)).toBe('A check failed');
+    expect(evidenceSupportsAcceptance(failed)).toBe(false);
+  });
+
+  it('will not promise a decision over a tree that is not the task\'s work', () => {
+    // `judge()` refuses outright on ancestry and the panel paints the fact in
+    // the failure colour, so a plain accept beside it would be the board
+    // contradicting itself. Reachable from a build judging under
+    // `allowUnverifiedAncestry`, which leaves the fact in the evidence while
+    // the verdict says nothing about it.
+    const adrift = {
+      verdict: 'needs_human' as const, reason: 'every check passed', missing: [], descendsFromBase: false,
+    };
+    expect(summary(adrift)).toBe('Not on its base');
+    expect(evidenceSupportsAcceptance(adrift)).toBe(false);
+  });
+
+  it('says it is recording a reason even before there is a verdict', () => {
+    expect(summary(undefined, true)).toBe('Recording a reason');
+  });
+
+  it('does not read green while a reason is still being written', () => {
+    // A verdict can turn green mid-sentence — a pulse re-judged, a page of
+    // history landed. The panel holds the override path so the typed reason is
+    // not lost, and the headline has to say the same thing the panel does.
+    const green = { verdict: 'needs_human' as const, reason: 'green', missing: [] };
+    expect(summary(green)).toBe('Ready for your decision');
+    expect(summary(green, true)).toBe('Recording a reason');
+  });
+});
+
+describe('the command each path sends', () => {
+  it('omits the override entirely unless a reason was written', () => {
+    // The difference between the two buttons, and nothing rendered to HTML
+    // shows it. An empty override on the plain path would record a decision
+    // as having been argued for when nobody argued anything.
+    expect(acceptCommand('m1', 't1')).toEqual({ type: 'accept_task', missionId: 'm1', taskId: 't1' });
+    expect(acceptCommand('m1', 't1', '   ')).toEqual({ type: 'accept_task', missionId: 'm1', taskId: 't1' });
+    expect(acceptCommand('m1', 't1', 'the check itself is wrong')).toEqual({
+      type: 'accept_task', missionId: 'm1', taskId: 't1', override: 'the check itself is wrong',
+    });
+  });
+});
+
+describe('a claim whose attempt the record does not name', () => {
+  it('shows the evidence but will not offer a plain accept', () => {
+    // No attempt under review means the record does not say which worktree the
+    // evidence describes — a later attempt still writing to it, or a row from
+    // before the column. The verdict is still readable, because a human can
+    // decide on it; what it cannot do is authorise a one-click accept, and the
+    // server refuses one for the same reason.
+    const unnamed: Task = { ...task, currentRunId: undefined };
+    const html = renderToStaticMarkup(<AcceptanceReview
+      missionId="m1"
+      task={unnamed}
+      judgement={{ verdict: 'needs_human', reason: 'green', missing: [], branch: 'claudia/x' }}
+    />);
+    expect(html).toContain('Attempt not recorded');
+    expect(html).toContain('does not say which attempt');
+    // And NOT another attempt's evidence dressed as this claim's.
+    expect(html).not.toContain('claudia/x');
+    expect(html).not.toContain('accept task');
+    expect(html).toContain('accept with override');
+  });
+});
+
+describe('acceptance review evidence', () => {
+  it('renders criteria, gaps, and only the reasoned override path for incomplete evidence', () => {
+    const html = renderToStaticMarkup(<AcceptanceReview
+      missionId="m1"
+      task={task}
+      judgement={{ verdict: 'needs_human', reason: 'no tests', missing: ['test results'], unreadTests: 1 }}
+    />);
+    expect(html).toContain('All keyboard paths work.');
+    expect(html).toContain('Missing: test results.');
+    expect(html).toContain('1 test result');
+    expect(html).not.toContain('None recorded');
+    expect(html).toContain('accept with override');
+    expect(html).not.toContain('accept task');
+  });
+
+  it('offers plain acceptance when the evidence is complete', () => {
+    const html = renderToStaticMarkup(<AcceptanceReview
+      missionId="m1"
+      task={task}
+      judgement={{ verdict: 'needs_human', reason: 'green', missing: [], tests: [{ command: 'npm test', exitCode: 0 }] }}
+    />);
+    expect(html).toContain('passed');
+    expect(html).toContain('npm test');
+    expect(html).toContain('accept task');
+    expect(html).not.toContain('accept with override');
+  });
+
+  it('will not report silence about risks it could not read', () => {
+    const html = renderToStaticMarkup(<AcceptanceReview
+      missionId="m1"
+      task={task}
+      judgement={{ verdict: 'needs_human', reason: 'green', missing: [], risks: [], unreadRisks: 1 }}
+    />);
+    // Scoped to the risks line: artifacts legitimately say "None reported"
+    // here, because nothing was reported and nothing failed to be read.
+    const risks = html.slice(html.indexOf('Risks'));
+    expect(risks).toContain('1 could not be read');
+    expect(risks).not.toContain('None reported');
+  });
+
+  it('gives a failed ancestry check the weight of the rejection it is', () => {
+    const html = renderToStaticMarkup(<AcceptanceReview
+      missionId="m1"
+      task={task}
+      judgement={{ verdict: 'reject', reason: 'not on its base', missing: [], descendsFromBase: false }}
+    />);
+    // The colour every other failure in the panel uses, on the fact itself —
+    // asserted as the pairing, since the rejected verdict tints its own line
+    // the same colour and a bare search for it would pass either way.
+    expect(html).toContain('<span style="color:#e07070">Does not descend from base</span>');
+  });
+
+  it('always leaves a route to recording a reason', () => {
+    // The server can refuse an accept this panel offered — the fallback
+    // asymmetry `accept.ts` documents — and the reason input used to be
+    // reachable only from the unsupported branch. A task in that state had no
+    // control that could supply what the server was asking for.
+    const html = renderToStaticMarkup(<AcceptanceReview
+      missionId="m1"
+      task={task}
+      judgement={{ verdict: 'needs_human', reason: 'green', missing: [] }}
+    />);
+    expect(html).toContain('accept task');
+    expect(html).toContain('with a reason');
+  });
+
+  it('reads a multi-line definition of done as written', () => {
+    // The field is a textarea and `briefFor` sends it to the child as a
+    // markdown block, so the panel must not run the bullets together.
+    const multi: Task = { ...task, acceptance: 'Keyboard works.\nScreen reader works.' };
+    const html = renderToStaticMarkup(<AcceptanceReview
+      missionId="m1"
+      task={multi}
+      judgement={{ verdict: 'needs_human', reason: 'green', missing: [] }}
+    />);
+    expect(html).toContain('pre-wrap');
+    expect(html).toContain('Screen reader works.');
+  });
+
+  it('shows PR state even when no safe link is available', () => {
+    const html = renderToStaticMarkup(<AcceptanceReview
+      missionId="m1"
+      task={task}
+      judgement={{ verdict: 'needs_human', reason: 'green', missing: [], prState: 'merged' }}
+    />);
+    expect(html).toContain('Pull request:');
+    expect(html).toContain('merged');
+  });
+});

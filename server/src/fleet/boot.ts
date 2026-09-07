@@ -1,4 +1,5 @@
 import { describeRecovery, planRecovery, type RunRecovery, type TaskRecovery } from './recovery.js';
+import { note } from './pulse-report.js';
 import { transact } from '../store/db.js';
 import { openFleetStore, type FleetStore, type StoreResult } from '../store/index.js';
 
@@ -129,6 +130,15 @@ function applyRecovery(
       for (const status of task.path) {
         const moved = store.tasks.setStatus(task.taskId, status);
         if (!moved.ok) throw new Error(moved.message);
+      }
+      // For the TIMELINE, not for acceptance. Which attempt is under review is
+      // on the task row, written by `setStatus` in the transaction just above
+      // — that is the point of the column, and it is why this note can be a
+      // note rather than a load-bearing fact somebody has to remember. What it
+      // buys is a line a human reading the log can see: the server came back
+      // up and this claim was still standing.
+      if (task.to === 'reported' && task.runId !== undefined) {
+        note(store, missionId, task.taskId, 'task_reported', task.reason, task.runId);
       }
     }
     const account = describeRecovery(plan.runs, plan.tasks);

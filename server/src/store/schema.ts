@@ -229,3 +229,52 @@ ALTER TABLE missions ADD COLUMN verify TEXT;
 export const RUN_TOKENS = `
 ALTER TABLE child_runs ADD COLUMN tokens INTEGER;
 `;
+
+/**
+ * The index `latestForTask` actually needs.
+ *
+ * `fleet_events_by_task` is `(task_id, seq)`, so a lookup filtered by `kind`
+ * walks every event the task has until it finds a match. The case that hurts
+ * is the NEGATIVE one — `hasJudgement` asking whether a freshly reported run
+ * has been judged, on every pulse, and the answer being "no" — which scanned
+ * the task's whole partition. Adding `kind` ahead of `seq` makes the walk stop
+ * at the first miss instead of at the last row.
+ */
+export const EVENTS_BY_TASK_KIND = `
+CREATE INDEX IF NOT EXISTS fleet_events_by_task_kind
+  ON fleet_events (task_id, kind, seq) WHERE task_id IS NOT NULL;
+`;
+
+/**
+ * Which attempt a reported task's claim belongs to, on the task row.
+ *
+ * It used to be reconstructed by scanning the log for the newest run-scoped
+ * `task_reported`, which meant every writer of the `reported` status had to
+ * remember to append one. Three writers existed — the pulse, crash recovery,
+ * and `set_task_status` over the wire — and each was found the same way: by a
+ * review noticing that acceptance had validated a second attempt against the
+ * first one's verdict. A fact every caller must remember is a fact that will
+ * be forgotten; `setStatus` writes this one itself, in the transaction that
+ * moves the status, so there is nothing to remember.
+ *
+ * Nullable: a task that has never reported has no attempt under review, and
+ * one carried over from before this column reads as unknown rather than as
+ * some particular run.
+ */
+export const TASK_CURRENT_RUN = `
+ALTER TABLE tasks ADD COLUMN current_run_id TEXT REFERENCES child_runs (id) ON DELETE SET NULL;
+
+-- Backfilled for tasks already under review, from the same rule setStatus
+-- applies: the task's newest attempt, and only if it has reported. Without
+-- this, every claim open at the moment of the upgrade loses its scoping and
+-- the newest verdict of ANY attempt authorises it — which is the hole this
+-- column exists to close, opened by the migration that closes it.
+UPDATE tasks
+   SET current_run_id = (
+     SELECT id FROM child_runs
+      WHERE child_runs.task_id = tasks.id AND child_runs.state = 'reported'
+      ORDER BY attempt DESC LIMIT 1
+   )
+ WHERE status = 'reported'
+   AND (SELECT state FROM child_runs WHERE child_runs.task_id = tasks.id ORDER BY attempt DESC LIMIT 1) = 'reported';
+`;

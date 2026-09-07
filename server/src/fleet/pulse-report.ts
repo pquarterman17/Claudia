@@ -69,6 +69,24 @@ export function skipMission(mission: Mission, reason: string): undefined {
   return undefined;
 }
 
+/**
+ * Up to three values as ONE key component, with none able to impersonate a join.
+ *
+ * Three FIXED slots, empty where a value is absent. Dropping absent parts made
+ * the join positional again: `(m1, -, r1)` and `(m1, r1, -)` both spelled
+ * `m1:r1`, so a run-scoped mission note and an ordinary task note whose task
+ * id happened to equal that run id shared a key — and `note` swallows a
+ * duplicate silently, so the loser simply never exists.
+ *
+ * Used for both halves of the key. `escalationKey` takes two components and
+ * this note needs five, so the second half — kind and reason — is built the
+ * same way rather than concatenated, which is the raw join this exists to
+ * refuse and would have been one `kind` containing a colon away from biting.
+ */
+function scopeOf(first: string, second: string | undefined, third: string | undefined): string {
+  return [first, second ?? '', third ?? ''].map(encodeURIComponent).join(':');
+}
+
 /** One line in the mission's timeline, keyed so a repeated tick cannot duplicate it. */
 export function note(
   store: FleetStore,
@@ -77,17 +95,38 @@ export function note(
   taskId: string | undefined,
   kind: string,
   reason: string,
+  /** The attempt this note describes, when repeating it for a later run is meaningful. */
+  runId?: string,
+  /**
+   * What makes this note the SAME note, when the reason text alone does not.
+   *
+   * An escalation's reason carries the elapsed minutes — `waiting 12m for
+   * approval of Bash` — so keying on it wrote a fresh line every minute, about
+   * sixty an hour, for as long as the run stayed stuck. `watchdog-action.ts`
+   * already solved this for the escalation ROW and says so: it keys on the
+   * tool rather than the message. The note ignored the stable key sitting on
+   * the same action object, and the unbounded log that produced is what made
+   * three separate read paths need a window fix.
+   */
+  dedupe?: string,
 ): void {
   const appended = store.events.append({
     missionId,
     ...(taskId !== undefined ? { taskId } : {}),
+    ...(runId !== undefined ? { runId } : {}),
     actor: 'system',
     kind,
     payload: { reason },
     // Keyed on the mission alone when there is no task, rather than on the
     // string "undefined" — the exact shape of a bug this repository has
     // already had once, in an escalation key that read "escalation:r1:undefined".
-    idempotencyKey: escalationKey(taskId === undefined ? missionId : `${missionId}:${taskId}`, `${kind}:${reason}`),
+    // Each part encoded before the join, not the join encoded as one part.
+    // `escalationKey` encodes precisely because a raw join collides — its own
+    // comment gives ('r1', 'a:b') against ('r1:a', 'b') — and building its
+    // first argument by concatenating three ids with colons handed that class
+    // straight back. A colliding key here is silent: `append` returns the
+    // duplicate and `note` swallows it, so the losing note is simply gone.
+    idempotencyKey: escalationKey(scopeOf(missionId, taskId, runId), scopeOf(kind, dedupe ?? reason, undefined)),
   });
   // A duplicate key means this exact note is already in the log, which is the
   // idempotency doing its job rather than a failure worth aborting the pulse.

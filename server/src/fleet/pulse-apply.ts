@@ -34,12 +34,21 @@ import type { LaunchOrder, PulseDeps, PulseResult } from './pulse.js';
  * the transaction rolled back, and NEITHER run was terminalized. The runs are
  * ended independently; the task moves once, after every run has been read.
  */
-interface TaskIntent {
+export interface TaskIntent {
   to: 'ready' | 'failed' | 'reported';
   reason: string;
   /** Present only for a retry, and only then is a launch owed. */
   attempt?: number;
   key?: string;
+  /**
+   * The run this intent came from.
+   *
+   * On EVERY intent, not only a completion claim. The board reads run identity
+   * off the notes to tell which attempt a verdict describes, and an intent
+   * that does not carry its run produces a note that does not either — which
+   * is a note the board cannot place.
+   */
+  runId?: string;
 }
 
 export function applyDecision(
@@ -163,7 +172,25 @@ export function applyWatchdogOutcomes(
         // could see — a watched mission simply stopped moving. The note is
         // idempotent on the same reason, so a fault that re-escalates does not
         // fill the log.
-        note(store, mission.id, run.taskId, 'escalated', `${action.request}: ${action.reason}`);
+        // Keyed on `action.key`, and the body is `action.reason` alone.
+        //
+        // `action.request` carries the elapsed minutes — `waiting 12m for
+        // approval of Bash` — so keying on it wrote a new line every minute
+        // for as long as the run stayed stuck, which is what grew a task's log
+        // without bound and forced a window fix into three separate reads.
+        // `watchdog-action.ts` records fixing exactly this for the escalation
+        // ROW and keys on the tool instead.
+        //
+        // Keying on the stable key alone would have frozen the first
+        // sentence — "waiting 1m" still on screen three hours later — so the
+        // changing quantity is left out of the note entirely. `reason` says
+        // what is wrong and why retrying will not clear it, the event's own
+        // `at` says when it started, and the escalation row carries the
+        // request for anyone who wants the elapsed figure.
+        //
+        // Named with its run as well, so two attempts stuck on the same tool
+        // are two lines rather than one swallowing the other.
+        note(store, mission.id, run.taskId, 'escalated', action.reason, run.id, action.key);
         result.escalated += 1;
         // An escalation does not end the run: it is still active, still
         // holding its task, and still occupying a slot.
@@ -177,7 +204,7 @@ export function applyWatchdogOutcomes(
         // concurrency slot for the life of the mission.
         const ended = store.runs.setState(run.id, action.terminal, { terminalReason: action.reason });
         if (!ended.ok) throw new Error(ended.message);
-        wanted.set(run.taskId, worseOf(wanted.get(run.taskId), { to: 'reported', reason: action.reason }));
+        wanted.set(run.taskId, worseOf(wanted.get(run.taskId), { to: 'reported', reason: action.reason, runId: run.id }));
         continue;
       }
       case 'give_up':
@@ -188,8 +215,8 @@ export function applyWatchdogOutcomes(
         if (!ended.ok) throw new Error(ended.message);
         const intent: TaskIntent =
           action.kind === 'retry'
-            ? { to: 'ready', reason: action.reason, attempt: action.attempt, key: action.key }
-            : { to: 'failed', reason: action.reason };
+            ? { to: 'ready', reason: action.reason, attempt: action.attempt, key: action.key, runId: run.id }
+            : { to: 'failed', reason: action.reason, runId: run.id };
         wanted.set(run.taskId, worseOf(wanted.get(run.taskId), intent));
         continue;
       }
@@ -201,22 +228,42 @@ export function applyWatchdogOutcomes(
   }
 }
 
+const COST: Readonly<Record<TaskIntent['to'], number>> = { failed: 2, reported: 1, ready: 0 };
+
 /**
- * `failed` beats `ready` when two runs of one task disagree.
+ * Which of two runs' intents the task defers to.
  *
- * They are computed from the same attempt count — `nextAction` measures spend
- * over the task, not the run — so disagreement means something has already
- * gone strange. Giving up is the answer that cannot overspend, and the bound
- * on spending is the property worth keeping when the inputs are confusing.
+ * `failed` beats everything, which is the rule this function already had: one
+ * run claiming to have finished does not answer another run of the same task
+ * having failed, and the answer that stops is the one to keep when two runs
+ * disagree. Note that this does cost something — a completion claim losing to
+ * a sibling's failure can only be recovered through `failed -> ready`, which
+ * pays for another child — but it is the existing bargain and not one to
+ * re-cut here.
+ *
+ * `reported` beats `ready` because a retry LAUNCHES another child and pays for
+ * it, while a claim already in hand waits on a human for free. That is the
+ * ordering the bound on spending actually implies, and the one this function
+ * was getting wrong. The claim is never lost either way: its run row records
+ * it, and only the task's status defers.
+ *
+ * This replaces two rules that were both wrong. "Keep the first" made the
+ * answer depend on the order `observations` happened to be walked in: the same
+ * pair of runs bought a retry or waited on a human depending on which started
+ * first. "Keep the later" — mine, and the worse of the two — discarded a
+ * completion claim in favour of a retry every time, which is exactly the
+ * overspend this function exists to bound.
+ *
+ * Between intents of EQUAL rank the later one wins, and that part is load
+ * bearing: `observations` is walked in started-at order and attempts are
+ * sequential, so the last intent of a rank belongs to the highest attempt.
+ * Keeping the first meant the note named attempt 1 while the board and
+ * `acceptTask` were talking about attempt 2.
  */
-function worseOf(existing: TaskIntent | undefined, next: TaskIntent): TaskIntent {
+export function worseOf(existing: TaskIntent | undefined, next: TaskIntent): TaskIntent {
   if (existing === undefined) return next;
-  // `failed` still wins, and now it wins over `reported` too: one run claiming
-  // to have finished does not answer another run of the same task having
-  // failed, and the answer that cannot overspend is still the one to keep when
-  // two runs of one task disagree. The claim is not lost — its run row records
-  // it — only the task's status defers to the worse news.
-  return existing.to === 'failed' ? existing : next.to === 'failed' ? next : existing;
+  if (COST[existing.to] > COST[next.to]) return existing;
+  return next;
 }
 
 function applyTaskIntent(
@@ -233,7 +280,13 @@ function applyTaskIntent(
     // Another run of this task is alive. Ending its sibling must not requeue
     // the task out from under it, or the survivor finishes into a task that
     // has already been handed to somebody else.
-    note(store, mission.id, taskId, 'run_ended_task_held', `${intent.reason}; another run of this task is still active`);
+    //
+    // Named with its run, like every other note here — for the LOG. Nothing
+    // decides anything from these any more: which attempt is under review is a
+    // column on the task, written with the status. What the run id buys is a
+    // timeline that says which attempt each line is about, and a key that
+    // keeps two attempts' notes from collapsing into one.
+    note(store, mission.id, taskId, 'run_ended_task_held', `${intent.reason}; another run of this task is still active`, intent.runId);
     return;
   }
   // Read from the STORE, not from the snapshot this pulse opened with. Found
@@ -255,7 +308,7 @@ function applyTaskIntent(
     // Blocked is also the correct state to leave it in: the reconciler
     // unblocks it when its dependencies resolve, and bounds the retry by the
     // same attempt count this did.
-    note(store, mission.id, taskId, 'task_left_as_is', `${intent.reason}; the task is ${from ?? 'unknown'}`);
+    note(store, mission.id, taskId, 'task_left_as_is', `${intent.reason}; the task is ${from ?? 'unknown'}`, intent.runId);
     return;
   }
   for (const status of route) {
@@ -263,7 +316,7 @@ function applyTaskIntent(
     if (!moved.ok) throw new Error(moved.message);
   }
   if (intent.to === 'failed') {
-    note(store, mission.id, taskId, 'task_given_up', intent.reason);
+    note(store, mission.id, taskId, 'task_given_up', intent.reason, intent.runId);
     return;
   }
   if (intent.to === 'reported') {
@@ -271,7 +324,7 @@ function applyTaskIntent(
     // whole reason `reported` and `accepted` are separate states is that a
     // child saying it finished is not evidence that it did.
     result.reported += 1;
-    note(store, mission.id, taskId, 'task_reported', intent.reason);
+    note(store, mission.id, taskId, 'task_reported', intent.reason, intent.runId);
     return;
   }
   if (intent.attempt === undefined || intent.key === undefined) return;
@@ -281,5 +334,5 @@ function applyTaskIntent(
   }
   result.deferred += 1;
   const why = deps.launch ? 'no free child slot; the reconciler will dispatch it when one opens' : 'no launcher is wired yet';
-  note(store, mission.id, taskId, 'retry_deferred', `${intent.reason} (${why})`);
+  note(store, mission.id, taskId, 'retry_deferred', `${intent.reason} (${why})`, intent.runId);
 }

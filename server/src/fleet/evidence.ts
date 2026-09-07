@@ -40,7 +40,9 @@ export async function judgeReported(deps: PulseDeps, mission: Mission): Promise<
     // The append below is keyed on the run, so a second pass over a run
     // already judged is a no-op in the store. Checked here as well only to
     // avoid the git calls, which are the expensive half.
-    if (hasJudgement(store, run.taskId, run.id)) continue;
+    // Unknown counts as judged here: the cost of being wrong is a pulse
+    // that skips work, not a pulse that repeats the expensive half forever.
+    if (hasJudgement(store, run.taskId, run.id) !== false) continue;
     const gathered = await gatherEvidence(deps, run.worktreeId, mission.verify);
     const { checks, ...evidence } = gathered;
     const verdict = judge(evidence);
@@ -78,18 +80,30 @@ export async function judgeReported(deps: PulseDeps, mission: Mission): Promise<
  * reason: judging READS the worktree, so a report nobody has read yet is a
  * directory still in use.
  *
- * Asked of the TASK's log, not the mission's. `sinceForMission(id)` is
- * `seq > 0 ORDER BY seq LIMIT 500` — the OLDEST 500 events of the mission — so
- * once a mission had that much history this answered `false` for a run judged
- * seconds ago. The append is keyed on the run, so nothing was duplicated; what
- * ran again, on every pulse, for as long as the run sat in `reported`, was the
- * half this check exists to skip: the git reads and the mission's verify
- * command, up to its 120-second timeout. A task's own log is bounded by its
- * attempts, so the same read answers truthfully here.
+ * An exact question, asked exactly: one indexed lookup for a `task_judged`
+ * naming this run. It was a scan of a page of the log twice over — first the
+ * mission's oldest 500, then the task's — and both windows could sit entirely
+ * newer than the verdict, because a task's log is not bounded by its attempts
+ * the way that read assumed.
+ *
+ * The append is keyed on the run, so a wrong answer duplicates nothing. What
+ * it costs is the half this check exists to skip — the git reads and the
+ * mission's verify command, up to its 120-second timeout, re-run on every
+ * pulse for as long as the run sits in `reported` — and it pins the task in
+ * `unreadTaskIds`, so its worktree is never retired.
  */
-export function hasJudgement(store: FleetStore, taskId: string, runId: string): boolean {
-  const events = store.events.sinceForTask(taskId);
-  return events.ok && events.value.some((event) => event.kind === 'task_judged' && event.runId === runId);
+export function hasJudgement(store: FleetStore, taskId: string, runId: string): boolean | undefined {
+  const judged = store.events.latestForTask(taskId, 'task_judged', 1, runId);
+  // `undefined` is UNKNOWN, and it is deliberately not collapsed into either
+  // answer, because the two callers need opposite ones. `judgeReported` treats
+  // unknown as judged — a false "no" re-runs the git reads and the mission's
+  // verify command on every pulse. `retireWorktrees` treats it as unread — a
+  // false "yes" retires the worktree holding the only evidence for a claim
+  // nobody has read, and `cleanupWorktree` only protects records still marked
+  // `active`. Answering `true` for both, which is what this did, made the
+  // second one fail OPEN toward deleting that directory.
+  if (!judged.ok) return undefined;
+  return judged.value.length > 0;
 }
 
 /**

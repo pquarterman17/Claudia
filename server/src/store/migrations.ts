@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { FLEET_META } from './path-platform.js';
-import { ESCALATION_KEYS, FLEET_CORE, MISSION_AGENT, MISSION_VERIFY, RUN_TOKENS } from './schema.js';
+import { ESCALATION_KEYS, EVENTS_BY_TASK_KIND, FLEET_CORE, MISSION_AGENT, MISSION_VERIFY, RUN_TOKENS, TASK_CURRENT_RUN } from './schema.js';
 import {
   CANONICAL_WORKTREE_PATHS,
   canonicaliseWorktreePaths,
@@ -126,6 +126,22 @@ export const MIGRATIONS: readonly Migration[] = [
     // free — which is what it is: those sessions are gone and took their
     // counts with them.
     up: (db) => db.exec(RUN_TOKENS),
+  },
+  {
+    version: 12,
+    name: 'events-by-task-kind',
+    // An index only. Acceptance and judging ask exact questions of one task's
+    // log — which run reported last, has this run been judged — and without
+    // `kind` in the index the miss case walked every event the task had.
+    up: (db) => db.exec(EVENTS_BY_TASK_KIND),
+  },
+  {
+    version: 13,
+    name: 'task-current-run',
+    // Nullable, and not backfilled. A task reported before this column has an
+    // attempt under review that the row cannot name, and guessing it from the
+    // highest attempt is the guess this column exists to stop making.
+    up: (db) => db.exec(TASK_CURRENT_RUN),
   },
 ];
 

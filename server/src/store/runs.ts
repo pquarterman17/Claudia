@@ -105,10 +105,20 @@ export class ChildRunRepo {
     });
   }
 
+  /**
+   * Oldest first, and DETERMINISTIC when two runs share a start.
+   *
+   * `started_at` alone left SQLite free to return same-millisecond rows in
+   * either order, and the pulse depends on the order: `worseOf` breaks a tie
+   * between two runs of one task by taking the later intent, on the stated
+   * reasoning that the later one is the higher attempt. Two runs recorded in
+   * the same millisecond made that false at random, putting attempt 1 into the
+   * note while the board and the judge were looking at attempt 2.
+   */
   listByMission(missionId: string): StoreResult<ChildRun[]> {
     return attempt('list the mission runs', () => {
       const rows = this.db
-        .prepare(`SELECT ${RUN_COLUMNS} FROM child_runs WHERE mission_id = ? ORDER BY started_at`)
+        .prepare(`SELECT ${RUN_COLUMNS} FROM child_runs WHERE mission_id = ? ORDER BY started_at, attempt`)
         .all(missionId) as Row[];
       return readable(rows);
     });

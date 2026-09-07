@@ -163,11 +163,14 @@ export class FleetEventLog {
   }
 
   /**
-   * One task's history: its dispatches, state changes and reports.
+   * One task's history from the beginning: its dispatches, state changes and
+   * reports, oldest first.
    *
-   * The narrowing a run needs goes through here too — a run's events are a
-   * subset of its task's, and filtering that small result in the caller costs
-   * less than a second index on every append.
+   * A PAGE FROM THE START, like `since` and `sinceForMission`, and that is the
+   * whole caveat. It used to say the narrowing a run needs goes through here,
+   * on the reasoning that a task's log is small — and a stuck run disproved
+   * that by escalating once a minute. Anything asking what a task did LATELY
+   * wants `latestForTask`; this is for reading a task's history in order.
    */
   sinceForTask(taskId: string, afterSeq = 0, limit: number = DEFAULT_PAGE): StoreResult<FleetEvent[]> {
     return attempt('read a task log', () => {
@@ -246,6 +249,42 @@ export class FleetEventLog {
         .prepare('SELECT COUNT(*) AS n FROM fleet_events WHERE mission_id = ?')
         .get(missionId) as Row | undefined;
       return { events, older: Math.max(0, seqOf(total?.['n']) - events.length) };
+    });
+  }
+
+  /**
+   * The newest events of one KIND for a task, newest first.
+   *
+   * Both questions acceptance asks are exact — "which run reported last" and
+   * "has this run been judged" — and both were being answered by reading a
+   * page of the log and scanning it. That is how the window bugs kept
+   * recurring: `sinceForMission` returns the oldest 500 of a mission, and
+   * narrowing to the task only moved the same trap down a level, because a
+   * task's log is not bounded by its attempts either.
+   *
+   * This asks the database instead. `fleet_events_by_task_kind` is
+   * `(task_id, kind, seq)`, so `ORDER BY seq DESC` walks the matching rows
+   * backwards from the newest and the limit stops it — no page to fall
+   * outside of, and a miss stops at the first row rather than at the last.
+   * The `(task_id, seq)` index alone was not enough: `kind` was a filter
+   * rather than a key, so the case that matters — `hasJudgement` answering
+   * "not yet" for a freshly reported run, every pulse — read the task's whole
+   * partition.
+   *
+   * A limit above one exists for the caller that wants the newest verdict THAT
+   * PARSES: a malformed payload should leave the previous good one standing
+   * rather than reading as "nothing judged this".
+   */
+  latestForTask(taskId: string, kind: string, limit = 8, runId?: string): StoreResult<FleetEvent[]> {
+    return attempt('read a task log', () => {
+      const scoped = runId === undefined ? '' : ' AND run_id = ?';
+      const args: unknown[] = runId === undefined ? [taskId, kind] : [taskId, kind, runId];
+      const rows = this.db
+        .prepare(
+          `SELECT ${COLUMNS} FROM fleet_events WHERE task_id = ? AND kind = ?${scoped} ORDER BY seq DESC LIMIT ?`,
+        )
+        .all(...(args as never[]), page(limit)) as Row[];
+      return rows.map(toEvent);
     });
   }
 

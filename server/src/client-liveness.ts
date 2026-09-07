@@ -64,6 +64,16 @@ export function busySessionIds(
   return busy;
 }
 
+/**
+ * The sessions a departing browser leaves behind that are nobody's any more.
+ *
+ * Already-stopped ones are skipped, and that is deliberate rather than left
+ * over from when this only stopped things. The reaper removes now, so a
+ * session it dealt with on an earlier tab close is gone rather than stopped —
+ * which means a `stopped` row is one a HUMAN stopped, or one that failed, and
+ * either way it is a tile they chose to leave on the board with a transcript
+ * they may want to read. It costs nothing to keep: no process, no tokens.
+ */
 export function sessionsToStop(
   sessions: ReadonlyArray<{ id: string; state: string }>,
   busy: ReadonlySet<string>,
@@ -72,16 +82,22 @@ export function sessionsToStop(
 }
 
 /**
- * How long a reload has to come back before sessions are stopped.
+ * How long a reload has to come back before sessions are closed.
  *
  * Only reached when a page ANNOUNCED it was unloading, which is the whole
  * point: without that, a dropped socket might be a closed tab, a sleeping
  * laptop or a page the browser froze, and the configured grace is what covers
  * the difference. An announcement collapses that to one question — is this a
- * reload? — and a reload reconnects to a server on the same machine in well
- * under a second.
+ * reload?
+ *
+ * Ten seconds, matching the floor `set_stop_on_close` already clamps the
+ * setting to, and for the reason written there: "a few seconds is not enough
+ * to survive a page reload". An announcement says the page is UNLOADING; it
+ * does not make a reload come back any faster, so the time a reload needs is
+ * the same question either way and this codebase has already answered it. A
+ * shorter value here would quietly undercut a clamp somebody added on purpose.
  */
-export const RELOAD_GRACE_MS = 3_000;
+export const RELOAD_GRACE_MS = 10_000;
 
 /** An announcement only speaks for the socket that closed right after it. */
 const ANNOUNCEMENT_WINDOW_MS = 5_000;

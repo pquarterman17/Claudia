@@ -143,7 +143,10 @@ export class Gateway {
   stop(): void {
     this.mirror.closeAll();
     if (this.sweepTimer) clearInterval(this.sweepTimer);
-    this.reaper.stop();
+    // Optional for the same reason `sweepTimer` is checked: both are created in
+    // `attach`, and a gateway torn down before it ever attached — a port
+    // already in use, say — must not fail on the way out.
+    this.reaper?.stop();
   }
 
   private broadcastSettings(): void {

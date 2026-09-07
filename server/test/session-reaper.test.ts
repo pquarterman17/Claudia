@@ -48,7 +48,7 @@ describe('SessionReaper', () => {
     const { r, removed } = reaper();
     r.announceClosing();
     r.check();
-    vi.advanceTimersByTime(3_100);
+    vi.advanceTimersByTime(10_100);
     expect(removed).toEqual(['s1']);
   });
 
@@ -58,7 +58,7 @@ describe('SessionReaper', () => {
     const { r, removed, setLive } = reaper();
     r.announceClosing();
     r.check();
-    vi.advanceTimersByTime(1_000);
+    vi.advanceTimersByTime(4_000);
     setLive(1);
     r.check(); // the reloaded page reconnects
     vi.advanceTimersByTime(60_000);
@@ -67,7 +67,7 @@ describe('SessionReaper', () => {
 
   it('forgets the announcement once a page is back, so a later drop waits in full', () => {
     // Otherwise a reload would leave the fleet on a hair trigger: the next
-    // network blip, hours later, would close everything in three seconds.
+    // network blip, hours later, would close everything in ten.
     const { r, removed, setLive } = reaper();
     r.announceClosing();
     r.check();
@@ -75,9 +75,9 @@ describe('SessionReaper', () => {
     r.check();
     setLive(0);
     r.check();
-    vi.advanceTimersByTime(4_000);
+    vi.advanceTimersByTime(11_000);
     expect(removed).toEqual([]);
-    vi.advanceTimersByTime(27_000);
+    vi.advanceTimersByTime(20_000);
     expect(removed).toEqual(['s1']);
   });
 

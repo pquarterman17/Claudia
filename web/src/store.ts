@@ -200,8 +200,10 @@ class Store {
    * a missed announcement just falls back to the server's full grace. */
   announceClosing(): void {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
+    // Typed, so it stays inside the suite's every-ClientCommand-has-a-row net.
+    const closing: ClientCommand = { type: 'closing' };
     try {
-      this.ws.send(JSON.stringify({ type: 'closing' }));
+      this.ws.send(JSON.stringify(closing));
     } catch {
       /* the socket went first */
     }

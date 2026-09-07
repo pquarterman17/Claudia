@@ -24,8 +24,17 @@ describe('stopDelayMs', () => {
 
   it('never waits longer than the setting asks for', () => {
     // Somebody who asked for one second asked for one second. An announcement
-    // is a reason to act sooner, not a licence to act later.
+    // is a reason to act sooner, not a licence to act later. (The wire clamps
+    // this to 0 or >= 10, so this is a floor on the function rather than a
+    // reachable setting — but the function must not invent time either way.)
     expect(stopDelayMs(1, NOW - 100, NOW)).toBe(1_000);
+  });
+
+  it('matches the floor the setting itself is clamped to', () => {
+    // `set_stop_on_close` refuses anything between 1 and 9 seconds because "a
+    // few seconds is not enough to survive a page reload". An announcement
+    // does not make a reload faster, so this must not go under that either.
+    expect(RELOAD_GRACE_MS).toBeGreaterThanOrEqual(10_000);
   });
 
   it('ignores an announcement too old to be about this socket', () => {

@@ -70,3 +70,38 @@ export function sessionsToStop(
 ): string[] {
   return sessions.filter((s) => s.state !== 'stopped' && !busy.has(s.id)).map((s) => s.id);
 }
+
+/**
+ * How long a reload has to come back before sessions are stopped.
+ *
+ * Only reached when a page ANNOUNCED it was unloading, which is the whole
+ * point: without that, a dropped socket might be a closed tab, a sleeping
+ * laptop or a page the browser froze, and the configured grace is what covers
+ * the difference. An announcement collapses that to one question — is this a
+ * reload? — and a reload reconnects to a server on the same machine in well
+ * under a second.
+ */
+export const RELOAD_GRACE_MS = 3_000;
+
+/** An announcement only speaks for the socket that closed right after it. */
+const ANNOUNCEMENT_WINDOW_MS = 5_000;
+
+/**
+ * The wait before stopping sessions, or `undefined` when the setting disables
+ * stopping altogether.
+ *
+ * Never LONGER than the configured value: somebody who asked for one second
+ * asked for one second, and an announcement is a reason to act sooner rather
+ * than a licence to act later.
+ */
+export function stopDelayMs(
+  configuredSec: number,
+  announcedAt: number | undefined,
+  now: number,
+): number | undefined {
+  if (!Number.isFinite(configuredSec) || configuredSec <= 0) return undefined;
+  const configured = configuredSec * 1000;
+  const announced = announcedAt !== undefined && now - announcedAt < ANNOUNCEMENT_WINDOW_MS;
+  return announced ? Math.min(configured, RELOAD_GRACE_MS) : configured;
+}
+

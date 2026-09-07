@@ -15,7 +15,8 @@ import { handleSavedSessionCommand } from './saved-session-commands.js';
 import { handleSessionSettingCommand } from './session-setting-commands.js';
 import { handleSettingsCommand } from './settings-commands.js';
 import type { HookMonitor } from './hook-monitor.js';
-import { busySessionIds, isClientLive, sessionsToStop } from './client-liveness.js';
+import { isClientLive } from './client-liveness.js';
+import { SessionReaper } from './session-reaper.js';
 import { pickFolders } from './folder-picker.js';
 import { launchSession } from './launch-session.js';
 import { decideRewind, describeRewind } from './rewind-flow.js';
@@ -37,9 +38,10 @@ export class Gateway {
   private monitoring = false;
   private orchestrators!: Orchestrators;
   private fleet: FleetStore | undefined;
-  private idleTimer: ReturnType<typeof setTimeout> | undefined;
   /** Last time each socket proved a live page was behind it. */
   private lastSeen = new WeakMap<WebSocket, number>();
+  /** Built in `attach`, which is where its dependencies arrive. */
+  private reaper!: SessionReaper;
   private sweepTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(
@@ -65,8 +67,19 @@ export class Gateway {
     this.settings = settings;
     this.monitor = monitor;
     this.orchestrators = orchestrators;
+    // Built here rather than in the constructor: every dependency it reads
+    // arrives with `attach`, and the accessors keep them read fresh — the
+    // grace is settable while the server runs, and `fleet` arrives later still.
+    this.reaper = new SessionReaper({
+      liveClients: () => this.liveClientCount(),
+      graceSec: () => this.settings.get().stopSessionsWhenClosedSec,
+      orchestrated: () => this.orchestrators.activeSessionIds(),
+      fleet: () => this.fleet,
+      summaries: () => this.manager.summaries(),
+      remove: (id) => this.manager.remove(id),
+    });
     // Re-evaluate periodically: a socket going stale produces no event of its own.
-    this.sweepTimer = setInterval(() => this.onClientCountChanged(), 5_000);
+    this.sweepTimer = setInterval(() => this.reaper.check(), 5_000);
     this.sweepTimer.unref?.();
     this.wss.on('connection', (socket) => {
       // .catch is not optional here: an unhandled rejection ends the process
@@ -88,8 +101,8 @@ export class Gateway {
         })
         .catch(() => undefined);
       this.lastSeen.set(socket, Date.now());
-      this.onClientCountChanged();
-      socket.on('close', () => this.onClientCountChanged());
+      this.reaper.check();
+      socket.on('close', () => this.reaper.check());
 
       socket.on('message', (raw) => {
         // Any message proves a page is running; ping just says so cheaply.
@@ -106,6 +119,7 @@ export class Gateway {
           return;
         }
         if (cmd.type === 'ping') return;
+        if (cmd.type === 'closing') return this.reaper.announceClosing();
         try {
           this.dispatch(cmd, socket);
         } catch (err) {
@@ -126,47 +140,10 @@ export class Gateway {
     return live;
   }
 
-  /**
-   * Stops sessions once the last live browser goes away.
-   *
-   * A session with no window on it is invisible work that still spends tokens,
-   * which is precisely what this app exists to prevent. The grace period keeps
-   * it safe: a page reload drops the socket for about a second, so reacting
-   * instantly would kill sessions on every refresh.
-   */
-  private onClientCountChanged(): void {
-    const connected = this.liveClientCount();
-
-    if (connected > 0) {
-      if (this.idleTimer !== undefined) {
-        clearTimeout(this.idleTimer);
-        this.idleTimer = undefined;
-        console.log('[claudia] browser reconnected — sessions kept');
-      }
-      return;
-    }
-
-    const graceSec = this.settings.get().stopSessionsWhenClosedSec;
-    if (graceSec <= 0) return; // disabled: leave sessions running
-    if (this.idleTimer !== undefined) return;
-
-    this.idleTimer = setTimeout(() => {
-      this.idleTimer = undefined;
-      const busy = busySessionIds(this.orchestrators.activeSessionIds(), this.fleet);
-      const stopping = sessionsToStop(this.manager.summaries(), busy);
-      if (stopping.length === 0) {
-        if (busy.size > 0) console.log(`[claudia] no browser, but ${busy.size} session(s) are mid-run — kept`);
-        return;
-      }
-      console.log(`[claudia] no browser for ${graceSec}s — stopping ${stopping.length} session(s)`);
-      for (const id of stopping) this.manager.get(id)?.stop();
-    }, graceSec * 1000);
-  }
-
   stop(): void {
     this.mirror.closeAll();
     if (this.sweepTimer) clearInterval(this.sweepTimer);
-    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.reaper.stop();
   }
 
   private broadcastSettings(): void {

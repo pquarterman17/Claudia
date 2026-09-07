@@ -176,6 +176,9 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
         req('taskId', isLabel, 'a string'),
         opt('override', isText, 'a string'),
       ]);
+    case 'closing':
+      // No fields: it says only that this page is going away.
+      return runChecks(type, o, []);
     case 'list_tasks':
     case 'preview_worktree_cleanup':
       return runChecks(type, o, [req('missionId', isLabel, 'a string')]);

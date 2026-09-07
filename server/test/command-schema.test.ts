@@ -82,6 +82,7 @@ const VALID: Array<[string, Record<string, unknown>]> = [
   ['set_mission_verify', { type: 'set_mission_verify', missionId: 'm1', verify: 'npm test' }],
   ['set_mission_budget', { type: 'set_mission_budget', missionId: 'm1', budgetSec: 7200, budgetTokens: null }],
   ['create_task', { type: 'create_task', missionId: 'm1', title: 't', description: '', cwd: '/repo' }],
+  ['closing', { type: 'closing' }],
   ['list_tasks', { type: 'list_tasks', missionId: 'm1' }],
   ['preview_worktree_cleanup', { type: 'preview_worktree_cleanup', missionId: 'm1' }],
   ['remove_worktrees', { type: 'remove_worktrees', missionId: 'm1', worktreeIds: ['w1'], confirmedUnmerged: ['w1'] }],

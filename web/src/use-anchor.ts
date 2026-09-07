@@ -11,12 +11,10 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
  * where the menu should have been. `z-index` cannot help: a clipped box is
  * clipped whatever it stacks above.
  *
- * `position: fixed` escapes an `overflow: hidden` ancestor entirely, as long as
- * nothing between it and the viewport establishes a containing block for fixed
- * elements — no `transform`, `filter`, `contain` or `will-change`, which this
- * stylesheet has none of. `repo-integrity.test.ts` asserts that, because the
- * day someone adds a transform to `.tile` for an animation, every menu on the
- * board silently goes back to being clipped.
+ * The returned coordinates use `position: fixed`. Callers inside a clipped
+ * tile should render the popover through a body-level portal as well: viewport
+ * coordinates decide where it goes, while the portal ensures no ancestor can
+ * clip or stack it behind the terminal.
  *
  * The rect is re-read while the popover is open. Tiles scroll inside the board
  * and the board reflows on resize, so a position measured once would leave the

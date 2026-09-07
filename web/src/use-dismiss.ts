@@ -16,11 +16,16 @@ import { useEffect, useRef, type RefObject } from 'react';
  * `mousedown` with `preventDefault` to keep the composer focused, which a
  * `click`-based dismissal would race.
  *
- * The ref goes on the element that wraps BOTH the trigger and the menu. A ref
- * on the menu alone closes it on the way down through the trigger and the
- * trigger's own handler immediately reopens it, so the button stops working.
+ * The returned ref goes on the trigger wrapper. Menus normally live inside
+ * that wrapper; a menu rendered through a portal must pass its own ref in
+ * `additionalInside` so choosing an item is not mistaken for an outside click.
  */
-export function useDismiss<T extends HTMLElement>(open: boolean, close: () => void): RefObject<T | null> {
+export function useDismiss<T extends HTMLElement>(
+  open: boolean,
+  close: () => void,
+  /** Popover roots rendered through a portal rather than inside the trigger wrapper. */
+  additionalInside: readonly RefObject<Node | null>[] = [],
+): RefObject<T | null> {
   const ref = useRef<T | null>(null);
   // Held in a ref so the effect below depends only on `open`. An inline arrow
   // passed by a component re-renders into a new identity every render, which
@@ -38,6 +43,7 @@ export function useDismiss<T extends HTMLElement>(open: boolean, close: () => vo
       // through handling.
       if (!(target instanceof Node) || !target.isConnected) return;
       if (ref.current?.contains(target)) return;
+      if (additionalInside.some((inside) => inside.current?.contains(target))) return;
       latest.current();
     };
     const onKeyDown = (event: KeyboardEvent) => {

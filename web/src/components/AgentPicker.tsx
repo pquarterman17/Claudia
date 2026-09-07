@@ -1,5 +1,6 @@
 import type { SessionSummary } from '@claudia/shared';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AGENT_KINDS } from '../agent-kinds';
 import { belowAnchor, useAnchor } from '../use-anchor';
 import { useDismiss } from '../use-dismiss';
@@ -38,10 +39,11 @@ function hasConversation(session: SessionSummary): boolean {
 export function AgentPicker({ session }: { session: SessionSummary }) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const menu = useRef<HTMLDivElement>(null);
   // Clearing `confirming` as well: a half-made switch left armed would fire on
   // the next single click, which is the one thing the confirm step exists to
   // stop happening by accident.
-  const wrap = useDismiss<HTMLSpanElement>(open, () => { setOpen(false); setConfirming(null); });
+  const wrap = useDismiss<HTMLSpanElement>(open, () => { setOpen(false); setConfirming(null); }, [menu]);
   // Anchored to the BUTTON and positioned against the viewport: this menu
   // hangs below a 34px header that clips what overflows it, so an absolutely
   // positioned one showed three pixels of itself and the terminal behind the
@@ -95,12 +97,17 @@ export function AgentPicker({ session }: { session: SessionSummary }) {
         {isCodex ? 'Codex' : 'Claude'}
       </button>
 
-      {open && anchor.rect && (
+      {open && anchor.rect && createPortal(
         <div
+          ref={menu}
           role="menu"
           style={{
             ...belowAnchor(anchor.rect),
-            zIndex: 20,
+            // A body-level portal is the boundary that matters. The previous
+            // fixed-position versions still painted inside the tile's clipped
+            // stacking subtree on the affected Chromium build, so raising a
+            // local z-index could never put the menu over the terminal.
+            zIndex: 1000,
             minWidth: 210,
             background: '#1a1c28',
             border: '1px solid #33364a',
@@ -144,7 +151,8 @@ export function AgentPicker({ session }: { session: SessionSummary }) {
               </button>
             );
           })}
-        </div>
+        </div>,
+        document.body,
       )}
     </span>
   );

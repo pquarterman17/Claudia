@@ -278,3 +278,41 @@ UPDATE tasks
  WHERE status = 'reported'
    AND (SELECT state FROM child_runs WHERE child_runs.task_id = tasks.id ORDER BY attempt DESC LIMIT 1) = 'reported';
 `;
+
+/**
+ * Capability grants, one per run.
+ *
+ * `capabilities.ts` has been able to grade a request against a grant since the
+ * capability work landed, and there was nowhere to keep one: no table, no
+ * issuer, no lookup. The module's own argument is that a grant is only ever
+ * reached by LOOKING IT UP for a run — "provenance that travels with the thing
+ * being checked is not provenance; it is a suggestion" — and a grant with no
+ * store cannot be looked up, so nothing checked anything.
+ *
+ * `run_id` is the primary key rather than an id of its own: the binding is per
+ * run by design, and a second grant for the same run is the standing
+ * permission the scope rule exists to prevent. `ON DELETE CASCADE` because a
+ * grant outliving its run is authority with nothing to bound it.
+ *
+ * `capabilities` is JSON text rather than a join table. It is a short list
+ * read whole, written once and never queried across — a table would buy a
+ * query nobody makes and cost a second write on the launch path.
+ */
+export const RUN_GRANTS = `
+CREATE TABLE IF NOT EXISTS grants (
+  run_id        TEXT    PRIMARY KEY REFERENCES child_runs (id) ON DELETE CASCADE,
+  id            TEXT    NOT NULL,
+  mission_id    TEXT    NOT NULL REFERENCES missions (id) ON DELETE CASCADE,
+  task_id       TEXT    NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
+  repo          TEXT    NOT NULL,
+  worktree_path TEXT    NOT NULL,
+  capabilities  TEXT    NOT NULL,
+  -- Recorded for the audit trail, never the basis of trust: checkCapability
+  -- reads it to REFUSE an untrusted issuer, not to believe a trusted one.
+  issued_by     TEXT    NOT NULL,
+  -- Null means the grant lasts as long as the run. An elevated capability with
+  -- no expiry is refused at check time, so this being null is not a loophole.
+  expires_at    INTEGER,
+  created_at    INTEGER NOT NULL
+) STRICT;
+`;

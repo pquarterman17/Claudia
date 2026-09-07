@@ -4,6 +4,7 @@ import { runBulkOp } from './bulk-ops.js';
 import { parseCommand } from './command-schema.js';
 import { buildHello, ownedSessionIds } from './hello-event.js';
 import { handleFleetCommand, isFleetCommand } from './fleet/commands.js';
+import { handleWorktreeCommand, isWorktreeCommand } from './fleet/worktree-commands.js';
 import { MirrorService } from './mirror.js';
 import { handleSessionActionCommand } from './session-actions.js';
 import { handleSessionQueryCommand } from './session-queries.js';
@@ -246,6 +247,16 @@ export class Gateway {
     // Answered to the asking socket, not broadcast: these are replies to a
     // question one client asked. The live `fleet_event` stream is the part
     // everyone hears, and that is published from the store's commit hook.
+    //
+    // The worktree pair comes first and is handled separately because it is
+    // the only asynchronous one: it reads git, so it answers later, and an
+    // unhandled rejection here would end the process rather than the command.
+    if (isWorktreeCommand(cmd)) {
+      void handleWorktreeCommand(cmd, this.fleet)
+        .then((events) => { for (const event of events) this.sendTo(socket, event); })
+        .catch((err) => this.sendTo(socket, { type: 'server_error', message: `worktree cleanup failed: ${String(err)}` }));
+      return;
+    }
     if (isFleetCommand(cmd)) {
       for (const event of handleFleetCommand(cmd, this.fleet)) this.sendTo(socket, event);
       return;

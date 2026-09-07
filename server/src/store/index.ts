@@ -5,6 +5,7 @@ import { FleetEventLog } from './events.js';
 import { MissionRepo } from './missions.js';
 import { TaskRepo } from './tasks.js';
 import { ChildRunRepo } from './runs.js';
+import { GrantRepo } from './grants.js';
 import { WorktreeRepo } from './worktrees.js';
 
 /**
@@ -20,6 +21,8 @@ export interface FleetStore {
   readonly tasks: TaskRepo;
   readonly runs: ChildRunRepo;
   readonly worktrees: WorktreeRepo;
+  /** Capability grants, one per run. The only way to obtain one. */
+  readonly grants: GrantRepo;
   readonly escalations: EscalationRepo;
   readonly events: FleetEventLog;
   close(): void;
@@ -42,6 +45,7 @@ export function openFleetStore(path: string = fleetDbPath()): StoreResult<FleetS
     tasks: new TaskRepo(db),
     runs: new ChildRunRepo(db),
     worktrees: new WorktreeRepo(db),
+    grants: new GrantRepo(db),
     escalations: new EscalationRepo(db),
     events: new FleetEventLog(db),
     close: () => closeFleetDb(db),

@@ -3,6 +3,7 @@ import { transact } from '../store/db.js';
 import type { FleetStore } from '../store/index.js';
 import { judgeReported } from './evidence.js';
 import { retireWorktrees } from './worktree-retire.js';
+import { expireEscalations } from './escalation-expiry.js';
 import { applyDecision, applyWatchdogOutcomes } from './pulse-apply.js';
 import { compensateLaunch } from './pulse-reserve.js';
 import { recovered, skipFleet, skipMission } from './pulse-report.js';
@@ -164,6 +165,8 @@ export interface PulseResult {
    * change nobody outside the store could observe.
    */
   retired: number;
+  /** Requests whose deadline passed with nobody answering them. */
+  expired: number;
   /**
    * What this pulse measured the mission to have spent.
    *
@@ -260,6 +263,7 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
     launched: 0,
     deferred: 0,
     escalated: 0,
+    expired: 0,
     reported: 0,
     retired: 0,
     spend,
@@ -322,6 +326,11 @@ export async function pulseMission(mission: Mission, deps: PulseDeps): Promise<P
   // Nothing here touches the filesystem — it writes `idle` over a record that
   // has been claiming `active` since the run that held it ended.
   result.retired = retireWorktrees(store, mission.id);
+  // The clock's pass, and the only writer of `expired`. Cheap — one indexed
+  // read of the pending inbox — and it runs regardless of what else this pulse
+  // decided, because a deadline passing is not conditional on the fleet having
+  // had work to do.
+  result.expired = expireEscalations(store, mission.id);
   recovered(mission.id);
   return result;
 }

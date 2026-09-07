@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { FLEET_META } from './path-platform.js';
-import { ESCALATION_KEYS, EVENTS_BY_TASK_KIND, FLEET_CORE, MISSION_AGENT, MISSION_VERIFY, RUN_TOKENS, TASK_CURRENT_RUN } from './schema.js';
+import { ESCALATION_KEYS, EVENTS_BY_TASK_KIND, FLEET_CORE, MISSION_AGENT, MISSION_VERIFY, RUN_GRANTS, RUN_TOKENS, TASK_CURRENT_RUN } from './schema.js';
 import {
   CANONICAL_WORKTREE_PATHS,
   canonicaliseWorktreePaths,
@@ -142,6 +142,14 @@ export const MIGRATIONS: readonly Migration[] = [
     // attempt under review that the row cannot name, and guessing it from the
     // highest attempt is the guess this column exists to stop making.
     up: (db) => db.exec(TASK_CURRENT_RUN),
+  },
+  {
+    version: 14,
+    name: 'run-grants',
+    // A new table, so nothing to backfill: a run that predates it has no grant
+    // and `checkCapability` refuses on "nothing has been granted to this run",
+    // which is the correct answer about a run nobody bounded.
+    up: (db) => db.exec(RUN_GRANTS),
   },
 ];
 

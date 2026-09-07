@@ -157,6 +157,20 @@ export class TaskRepo {
       //
       // The newest attempt that has reported, read inside this transaction:
       // the run is moved to `reported` before the task is, on every path.
+      // Leaving review CLEARS the attempt under review, for the two statuses a
+      // task can go on working from. `reported -> ready` is a requeue: the next
+      // attempt has not run yet, and a row still naming the last one says a
+      // claim is under review when none is. `failed` is the same shape.
+      //
+      // `accepted` and `cancelled` keep it, because there the field has stopped
+      // meaning "under review" and started meaning "the attempt this task ended
+      // on" — which is the only record of which of several attempts was the one
+      // that counted.
+      if (to === 'ready' || to === 'failed') {
+        this.db.prepare('UPDATE tasks SET status = ?, current_run_id = NULL, updated_at = ? WHERE id = ?').run(to, updatedAt, id);
+        const { currentRunId: _left, ...rest } = current;
+        return { ...rest, status: to, updatedAt };
+      }
       if (to !== 'reported') {
         this.db.prepare('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?').run(to, updatedAt, id);
         return { ...current, status: to, updatedAt };

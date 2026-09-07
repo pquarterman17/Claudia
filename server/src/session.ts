@@ -43,6 +43,8 @@ export class ClaudiaSession {
     feed: (step) => this.cb.onFeed(this.id, step),
     setState: (state) => this.setState(state),
     cwd: () => this.opts.cwd,
+    // Lazy like `cwd`: this initialiser runs before `opts` is assigned.
+    policy: (toolName, input) => this.opts.toolPolicy?.(toolName, input),
   });
   private readonly tools = new ToolTracker();
   private readonly touched = new TouchedFiles();

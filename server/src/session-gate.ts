@@ -1,6 +1,7 @@
 import type { FeedStep, PendingQuestion, SessionState } from '@claudia/shared';
 import { ApprovalGate } from './approval-gate.js';
 import * as gateActions from './gate-actions.js';
+import type { ToolPolicy } from './session-contract.js';
 
 /**
  * A session's decision surface: the parked `canUseTool` promise, the question
@@ -22,6 +23,7 @@ export class SessionGate {
       feed: (step: FeedStep) => void;
       setState: (state: SessionState) => void;
       cwd: () => string;
+      policy?: ToolPolicy;
     },
   ) {}
 
@@ -43,6 +45,7 @@ export class SessionGate {
   ctx(): gateActions.GateCtx {
     return {
       gate: this.gate,
+      ...(this.deps.policy ? { policy: this.deps.policy } : {}),
       feed: this.deps.feed,
       setState: this.deps.setState,
       getQuestion: () => this.question,

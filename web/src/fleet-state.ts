@@ -1,4 +1,4 @@
-import type { Escalation, FleetEvent, Mission, ServerEvent, Task } from '@claudia/shared';
+import type { Escalation, FleetEvent, Mission, ServerEvent, Task, WorktreeCleanupEntry } from '@claudia/shared';
 
 /**
  * What the client keeps for the mission layer.
@@ -56,6 +56,15 @@ export interface FleetState {
    */
   escalations: ReadonlyMap<string, Escalation[]>;
   /**
+   * The last worktree cleanup answer for a mission, preview or applied.
+   *
+   * Held rather than derived because nothing else can produce it: the plan is
+   * git's answer at a moment, and the mission's rows say nothing about what is
+   * on the disk. `phase` is kept with it so the panel can say whether the
+   * reasons beside each row are what WOULD happen or what did.
+   */
+  cleanup: ReadonlyMap<string, { phase: 'preview' | 'applied'; entries: WorktreeCleanupEntry[] }>;
+  /**
    * Set when the mission database would not open this run.
    *
    * The server says this once instead of refusing every command separately, so
@@ -72,6 +81,7 @@ export const NO_FLEET: FleetState = {
   events: new Map(),
   pages: new Map(),
   escalations: new Map(),
+  cleanup: new Map(),
 };
 
 /** As much history as one mission's timeline shows. A log is not a payload. */
@@ -113,6 +123,14 @@ export function foldFleet(state: FleetState, event: ServerEvent): FleetState | u
       return { ...state, tasks: replace(state.tasks, event.missionId, event.tasks) };
     case 'escalations':
       return { ...state, escalations: replace(state.escalations, event.missionId, event.escalations) };
+    case 'worktree_cleanup': {
+      // Replaced, never merged. Two plans are two observations of a disk that
+      // moved in between, and a row surviving from the older one would claim a
+      // directory is still there on evidence that has been superseded.
+      const cleanup = new Map(state.cleanup);
+      cleanup.set(event.missionId, { phase: event.phase, entries: event.entries });
+      return { ...state, cleanup };
+    }
     case 'fleet_events': {
       // `reset` means the client's cursor could not be replayed, so what it
       // holds never led to this page. Merging would splice one history onto
@@ -198,6 +216,7 @@ const FLEET_EVENTS = new Set<ServerEvent['type']>([
   'mission_spend',
   'tasks',
   'escalations',
+  'worktree_cleanup',
   'fleet_events',
   'fleet_event',
   'fleet_unavailable',

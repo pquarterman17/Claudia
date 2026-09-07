@@ -1,5 +1,6 @@
 import type { FeedStep, PendingQuestion, SessionState } from '@claudia/shared';
 import type { ApprovalGate, PermissionResult } from './approval-gate.js';
+import type { ToolPolicy } from './session-contract.js';
 import { approvalStep, infoStep, summarizeToolInput } from './feed.js';
 import { deriveAllowRule } from './permission-rules.js';
 import { parseQuestions } from './question-parser.js';
@@ -8,6 +9,8 @@ import { addAllowRule } from './settings-writer.js';
 /** The slice of a session the user-decision actions need. */
 export interface GateCtx {
   gate: ApprovalGate;
+  /** Refuses a tool before a human is asked about it. Absent for an unbounded session. */
+  policy?: ToolPolicy;
   feed: (step: FeedStep) => void;
   setState: (state: SessionState) => void;
   getQuestion: () => PendingQuestion | undefined;
@@ -29,6 +32,15 @@ export function openPermissionRequest(
   input: Record<string, unknown>,
 ): Promise<PermissionResult> {
   const summary = summarizeToolInput(toolName, input);
+  // Before the gate, not after it. A tool this session was never authorised to
+  // use must not become a banner: parking it would make the boundary a
+  // suggestion that a tired human clicking approve can lift, and for a fleet
+  // child the whole point of a capability grant is that nobody is watching.
+  const refusal = ctx.policy?.(toolName, input);
+  if (refusal !== undefined) {
+    ctx.feed(infoStep('Refused', `${summary} — ${refusal}`));
+    return Promise.resolve({ behavior: 'deny', message: refusal });
+  }
   const promise = ctx.gate.request(toolName, summary, input);
 
   const questions = toolName === 'AskUserQuestion' ? parseQuestions(input) : null;

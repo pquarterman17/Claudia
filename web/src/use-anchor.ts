@@ -27,7 +27,13 @@ export function useAnchor<T extends HTMLElement>(open: boolean): { ref: RefObjec
   const [rect, setRect] = useState<DOMRect | undefined>(undefined);
 
   const measure = useCallback(() => {
-    setRect(ref.current?.getBoundingClientRect());
+    const next = ref.current?.getBoundingClientRect();
+    // Bail out when the trigger has not actually moved. The scroll listener is
+    // capture-phase over the whole document, so a session streaming output
+    // scrolls its own feed and fires this on every frame — and a fresh DOMRect
+    // is never `===` the last one, so without this the tile re-renders
+    // continuously for as long as a menu is open next to a working session.
+    setRect((prev) => (prev && next && sameSpot(prev, next) ? prev : next));
   }, []);
 
   // Layout effect so the first paint already has the position. A plain effect
@@ -85,3 +91,8 @@ export function belowAnchor(
 
 /** Enough for two rows and the hint under them. */
 const MIN_MENU_HEIGHT = 80;
+
+/** Only the corner the menu is hung from matters; size changes do not move it. */
+function sameSpot(a: DOMRect, b: DOMRect): boolean {
+  return a.bottom === b.bottom && a.left === b.left && a.right === b.right;
+}

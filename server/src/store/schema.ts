@@ -263,4 +263,18 @@ CREATE INDEX IF NOT EXISTS fleet_events_by_task_kind
  */
 export const TASK_CURRENT_RUN = `
 ALTER TABLE tasks ADD COLUMN current_run_id TEXT REFERENCES child_runs (id) ON DELETE SET NULL;
+
+-- Backfilled for tasks already under review, from the same rule setStatus
+-- applies: the task's newest attempt, and only if it has reported. Without
+-- this, every claim open at the moment of the upgrade loses its scoping and
+-- the newest verdict of ANY attempt authorises it — which is the hole this
+-- column exists to close, opened by the migration that closes it.
+UPDATE tasks
+   SET current_run_id = (
+     SELECT id FROM child_runs
+      WHERE child_runs.task_id = tasks.id AND child_runs.state = 'reported'
+      ORDER BY attempt DESC LIMIT 1
+   )
+ WHERE status = 'reported'
+   AND (SELECT state FROM child_runs WHERE child_runs.task_id = tasks.id ORDER BY attempt DESC LIMIT 1) = 'reported';
 `;

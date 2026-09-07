@@ -92,7 +92,14 @@ export async function judgeReported(deps: PulseDeps, mission: Mission): Promise<
  */
 export function hasJudgement(store: FleetStore, taskId: string, runId: string): boolean {
   const judged = store.events.latestForTask(taskId, 'task_judged', 1, runId);
-  return judged.ok && judged.value.length > 0;
+  // A read that FAILED answers "already judged", not "not yet". `accept.ts`
+  // refuses to make the opposite substitution on this same query and says why:
+  // an unreadable log is not evidence about what is in it. Here the safe
+  // direction is the other one — a false "no" re-runs the git reads and the
+  // mission's verify command every pulse, and pins the task's worktree — so
+  // the pass is skipped until the log can be read again.
+  if (!judged.ok) return true;
+  return judged.value.length > 0;
 }
 
 /**

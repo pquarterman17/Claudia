@@ -273,13 +273,11 @@ function applyTaskIntent(
     // the task out from under it, or the survivor finishes into a task that
     // has already been handed to somebody else.
     //
-    // Named with its run, like every other note here — for the LOG, not for
-    // the board. `currentRunFor` reads `task_reported` and nothing else, on
-    // purpose: these notes name the run that ended, not the one holding the
-    // task, and a board that read them would scope to an attempt nobody is
-    // reviewing. What the run id buys here is a timeline that says which
-    // attempt each line is about, and a key that keeps two attempts' notes
-    // from collapsing into one.
+    // Named with its run, like every other note here — for the LOG. Nothing
+    // decides anything from these any more: which attempt is under review is a
+    // column on the task, written with the status. What the run id buys is a
+    // timeline that says which attempt each line is about, and a key that
+    // keeps two attempts' notes from collapsing into one.
     note(store, mission.id, taskId, 'run_ended_task_held', `${intent.reason}; another run of this task is still active`, intent.runId);
     return;
   }

@@ -60,27 +60,23 @@ describe('run identity on the notes a pulse writes', () => {
     expect(events.value.map((event) => event.runId)).toEqual([run.value.id, run.value.id, run.value.id]);
   });
 
-  it('refuses on the verdict of the attempt the fallback picks when no note names one', () => {
+  it('refuses when no attempt is recorded as the one under review', () => {
+    // There is no fallback any more. A task moved to `reported` with no run
+    // having claimed it — a later attempt still running, or a record from
+    // before the column — has no attempt under review, and reading any
+    // attempt's verdict there authorised a tree nobody had judged.
     const mission = store.missions.create({ name: 'm3', body: '', cwd: '/repo' });
     if (!mission.ok) throw new Error(mission.message);
     const task = store.tasks.create({ missionId: mission.value.id, title: 't', description: '', cwd: '/repo' });
     if (!task.ok) throw new Error(task.message);
-    const first = store.runs.create({ missionId: mission.value.id, taskId: task.value.id, agent: 'claude' });
-    const second = store.runs.create({ missionId: mission.value.id, taskId: task.value.id, agent: 'claude' });
-    if (!first.ok || !second.ok) throw new Error('could not create runs');
-
-    // No `task_reported` here, so this is the FALLBACK path: `currentRunFor`
-    // answers nothing and `currentRunId` takes the highest attempt. The rule
-    // itself is covered in accept-task.test.ts, where a report note names the
-    // run; this pins what happens when the log will not say.
     const judged = store.events.append({
       missionId: mission.value.id,
       taskId: task.value.id,
-      runId: second.value.id,
+      runId: 'some-run',
       actor: 'system',
       kind: 'task_judged',
-      payload: { verdict: 'reject', reason: 'the checks failed', missing: [] },
-      idempotencyKey: `judged:${second.value.id}`,
+      payload: { verdict: 'needs_human', reason: 'green', missing: [] },
+      idempotencyKey: 'judged:some-run',
     });
     if (!judged.ok) throw new Error(judged.message);
     for (const status of ['ready', 'running', 'reported'] as const) {
@@ -90,7 +86,7 @@ describe('run identity on the notes a pulse writes', () => {
 
     const outcome = acceptTask(store, mission.value.id, task.value.id);
     expect(outcome.ok).toBe(false);
-    expect(outcome.message).toMatch(/the checks failed/);
+    expect(outcome.message).toMatch(/[Nn]o attempt is recorded/);
   });
 });
 

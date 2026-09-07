@@ -39,9 +39,6 @@ export type NewTask = Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'status' | '
   acceptance?: string;
 };
 
-/** What a mission runs on unless it says otherwise, and what every mission
- * written before the column existed was in fact running on. */
-
 const TASK_COLUMNS =
   'id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, current_run_id, created_at, updated_at';
 /**
@@ -111,6 +108,27 @@ export class TaskRepo {
   }
 
   /**
+   * The attempt whose claim puts this task under review, or nothing.
+   *
+   * The task's NEWEST attempt, and only if it has reported. Asking for the
+   * newest run in state `reported` is not the same question and gets a
+   * dangerous answer: nothing moves a run out of `reported`, so a task whose
+   * attempt 1 reported and was sent back, and which is then forced to
+   * `reported` while attempt 2 is still writing to the worktree, answered with
+   * attempt 1 — signing off a live tree on a previous attempt's evidence.
+   *
+   * Nothing means nothing: no run has claimed this task is done, so there is
+   * no evidence to accept against and `acceptTask` asks for a reason.
+   */
+  private reportedRun(taskId: string): string | undefined {
+    const row = this.db
+      .prepare('SELECT id, state FROM child_runs WHERE task_id = ? ORDER BY attempt DESC LIMIT 1')
+      .get(taskId) as Row | undefined;
+    if (row === undefined || text(row, 'state') !== 'reported') return undefined;
+    return text(row, 'id');
+  }
+
+  /**
    * Moves a task, refusing anything the contract's table does not allow.
    *
    * Read and write share a transaction so the status a decision was made
@@ -119,14 +137,6 @@ export class TaskRepo {
    * movement and has no self-loops, while a reducer replaying its own events
    * has to be able to arrive at the same state twice.
    */
-  /** The task's newest attempt that has reported, by attempt number. */
-  private reportedRun(taskId: string): string | undefined {
-    const row = this.db
-      .prepare("SELECT id FROM child_runs WHERE task_id = ? AND state = 'reported' ORDER BY attempt DESC LIMIT 1")
-      .get(taskId) as Row | undefined;
-    return row === undefined ? undefined : text(row, 'id');
-  }
-
   setStatus(id: string, to: TaskStatus): StoreResult<Task> {
     return transact(this.db, 'move the task', () => {
       const row = this.db.prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`).get(id) as Row | undefined;
@@ -147,25 +157,26 @@ export class TaskRepo {
       //
       // The newest attempt that has reported, read inside this transaction:
       // the run is moved to `reported` before the task is, on every path.
-      const run = to === 'reported' ? this.reportedRun(id) : undefined;
-      if (to === 'reported') {
-        this.db
-          .prepare('UPDATE tasks SET status = ?, current_run_id = ?, updated_at = ? WHERE id = ?')
-          .run(to, run ?? null, updatedAt, id);
-      } else {
+      if (to !== 'reported') {
         this.db.prepare('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?').run(to, updatedAt, id);
+        return { ...current, status: to, updatedAt };
       }
-      return { ...current, status: to, updatedAt, ...(run === undefined ? {} : { currentRunId: run }) };
+      const run = this.reportedRun(id);
+      this.db
+        .prepare('UPDATE tasks SET status = ?, current_run_id = ?, updated_at = ? WHERE id = ?')
+        .run(to, run ?? null, updatedAt, id);
+      // The absent case CLEARS the field rather than omitting it from the
+      // spread: `...current` would carry a previous attempt's id on an object
+      // whose row now says NULL, and anything trusting the returned Task would
+      // scope acceptance to an attempt the record says is not under review.
+      const { currentRunId: _was, ...rest } = current;
+      return { ...rest, status: to, updatedAt, ...(run === undefined ? {} : { currentRunId: run }) };
     });
   }
 }
 
-/**
- * A budget is optional, and a zero or fractional one is a mistake rather than
- * an unlimited mission — those are two different things, and quietly treating
- * one as the other would give a mission no ceiling at all.
- */
 function toTask(row: Row): Task {
+  const currentRun = optText(row, 'current_run_id');
   return {
     id: text(row, 'id'),
     missionId: text(row, 'mission_id'),
@@ -176,7 +187,7 @@ function toTask(row: Row): Task {
     priority: int(row, 'priority'),
     dependsOn: idList(row, 'depends_on'),
     acceptance: text(row, 'acceptance'),
-    ...(optText(row, 'current_run_id') === undefined ? {} : { currentRunId: optText(row, 'current_run_id') }),
+    ...(currentRun === undefined ? {} : { currentRunId: currentRun }),
     createdAt: int(row, 'created_at'),
     updatedAt: int(row, 'updated_at'),
   };

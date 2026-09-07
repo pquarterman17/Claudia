@@ -21,6 +21,11 @@ export function AcceptanceReview({ missionId, task, judgement }: {
   task: Task;
   judgement: Judgement | undefined;
 }) {
+  // No attempt recorded under review means the record does not say which
+  // worktree the evidence below describes. The verdict is still shown — a
+  // human can read it and decide — but it cannot support a plain accept, and
+  // the server refuses one for the same reason.
+  const attributed = task.currentRunId !== undefined;
   const [override, setOverride] = useState<string | undefined>();
   // A reason already being typed keeps the override open even if a fresh
   // verdict would otherwise offer the plain button. `accept.ts` spends a long
@@ -28,7 +33,7 @@ export function AcceptanceReview({ missionId, task, judgement }: {
   // the input down under somebody mid-sentence — a pulse re-judged, a page of
   // history landed — loses it silently and unsent.
   const writing = override !== undefined && override.trim() !== '';
-  const supported = evidenceSupportsAcceptance(judgement) && !writing;
+  const supported = attributed && evidenceSupportsAcceptance(judgement) && !writing;
   const tone = judgement?.verdict === 'reject' ? '#e07070' : supported ? '#7ee0a3' : '#e0a34f';
 
   // The reason survives the send. `send` is fire-and-forget over a socket and
@@ -46,7 +51,8 @@ export function AcceptanceReview({ missionId, task, judgement }: {
     // evidence is the small, explicit act that separates review from a click.
     <details style={panel}>
       <summary style={{ cursor: 'pointer', color: tone, fontSize: 11 }}>
-        {summary(judgement, writing)} <span style={{ color: '#75798c' }}>— review evidence</span>
+        {attributed ? summary(judgement, writing) : 'Attempt not recorded'}{' '}
+        <span style={{ color: '#75798c' }}>— review evidence</span>
       </summary>
       <div style={{ display: 'grid', gap: 10, paddingTop: 10 }}>
         <section aria-label="Acceptance criteria">

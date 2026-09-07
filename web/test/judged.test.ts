@@ -63,6 +63,7 @@ describe('finding a verdict', () => {
     const found = judgementFor(
       [event({ payload: GOOD }), event({ seq: 2, payload: { ...GOOD, verdict: 'accept', reason: 'all green' } })],
       't1',
+      undefined,
     );
     expect(found?.verdict).toBe('accept');
   });

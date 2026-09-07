@@ -55,14 +55,25 @@ export function acceptTask(store: FleetStore, missionId: string, taskId: string,
   // acceptance had validated a second attempt against the first one's verdict.
   const run = task.value.currentRunId;
   const verdicts = store.events.latestForTask(taskId, 'task_judged', 8, run);
+  // No attempt recorded under review is a BLOCKER, not a licence to read any
+  // attempt's verdict. It means no run has claimed this task is done — a later
+  // attempt still writing to the worktree, or a record written before the
+  // column existed — and an unscoped read there authorised a live tree on a
+  // previous attempt's evidence, which is the whole failure this guards.
+
   // Returned, not swallowed. An unreadable log is not evidence that nothing
   // judged this task, and saying so would put a false sentence — "nothing has
   // judged this task yet" — into the `overrode` field of the record this
   // command exists to produce.
   if (!verdicts.ok) return { ok: false, message: verdicts.message };
-  const judged = latestJudgement(verdicts.value);
+  const judged = run === undefined ? undefined : latestJudgement(verdicts.value);
   const reason = (override ?? '').trim();
-  const blocker = judged === undefined ? 'nothing has judged this task yet' : refusalFor(judged);
+  const blocker =
+    run === undefined
+      ? 'no attempt is recorded as the one under review'
+      : judged === undefined
+        ? 'nothing has judged this task yet'
+        : refusalFor(judged);
 
   if (blocker !== undefined) {
     // An override with no reason is not an override. The point of the reason

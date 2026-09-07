@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import { AGENT_KINDS, MAX_CHILDREN_CEILING, PULSE_MAX_SEC, PULSE_MIN_SEC } from '@claudia/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import { closeFleetDb, openFleetDb } from '../src/store/db.js';
@@ -727,5 +727,50 @@ describe('a worktree path cannot drift from its key', () => {
     expect(fleet.value.worktrees.setState(made.value.id, 'idle').ok).toBe(true);
     const after = fleet.value.worktrees.get(made.value.id);
     expect(after.ok && after.value?.path).toBe('/a');
+  });
+});
+
+describe('the attempt under review survives the upgrade', () => {
+  it('backfills a task already in review from its newest reported attempt', () => {
+    // Without the backfill, every claim open at the moment of the upgrade
+    // reads as unscoped and the newest verdict of ANY attempt authorises it —
+    // the hole the column exists to close, opened by the migration that
+    // closes it.
+    const db = new DatabaseSync(':memory:');
+    applyMigrations(db, MIGRATIONS.filter((m) => m.version < 13));
+
+    db.exec(`INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+             VALUES ('m1', 'm', '', 'active', 'paused', 30, 4, '/repo', 1, 1)`);
+    db.exec(`INSERT INTO tasks (id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, created_at, updated_at)
+             VALUES ('t1', 'm1', 't', '', '/repo', 'reported', 0, '[]', '', 1, 1)`);
+    for (const [id, attempt, state] of [['r1', 1, 'failed'], ['r2', 2, 'reported']] as const) {
+      db.exec(`INSERT INTO child_runs (id, mission_id, task_id, agent, attempt, state, started_at)
+               VALUES ('${id}', 'm1', 't1', 'claude', ${attempt}, '${state}', 1)`);
+    }
+
+    applyMigrations(db, MIGRATIONS);
+    const row = db.prepare('SELECT current_run_id FROM tasks WHERE id = ?').get('t1');
+    expect(row?.['current_run_id']).toBe('r2');
+    db.close();
+  });
+
+  it('leaves a task alone whose newest attempt has not reported', () => {
+    // A later attempt still writing to the worktree is not a claim, and
+    // guessing one would sign off a live tree on older evidence.
+    const db = new DatabaseSync(':memory:');
+    applyMigrations(db, MIGRATIONS.filter((m) => m.version < 13));
+    db.exec(`INSERT INTO missions (id, name, body, status, watch, pulse_sec, max_children, cwd, created_at, updated_at)
+             VALUES ('m1', 'm', '', 'active', 'paused', 30, 4, '/repo', 1, 1)`);
+    db.exec(`INSERT INTO tasks (id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, created_at, updated_at)
+             VALUES ('t1', 'm1', 't', '', '/repo', 'reported', 0, '[]', '', 1, 1)`);
+    for (const [id, attempt, state] of [['r1', 1, 'reported'], ['r2', 2, 'running']] as const) {
+      db.exec(`INSERT INTO child_runs (id, mission_id, task_id, agent, attempt, state, started_at)
+               VALUES ('${id}', 'm1', 't1', 'claude', ${attempt}, '${state}', 1)`);
+    }
+
+    applyMigrations(db, MIGRATIONS);
+    const row = db.prepare('SELECT current_run_id FROM tasks WHERE id = ?').get('t1');
+    expect(row?.['current_run_id']).toBeNull();
+    db.close();
   });
 });

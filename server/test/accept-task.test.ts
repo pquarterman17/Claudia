@@ -38,6 +38,19 @@ function fixture(judgements: Array<Record<string, unknown>> = []) {
   if (!mission.ok) throw new Error(mission.message);
   const task = store.tasks.create({ missionId: mission.value.id, title: 't', description: '', cwd: '/repo' });
   if (!task.ok) throw new Error(task.message);
+  // One attempt that ran and reported, because that is what a `reported` task
+  // is in production — and `setStatus` records it as the attempt under review.
+  const run = store.runs.create({
+    missionId: mission.value.id,
+    taskId: task.value.id,
+    agent: 'claude',
+    state: 'dispatched',
+  });
+  if (!run.ok) throw new Error(run.message);
+  for (const state of ['running', 'reported'] as const) {
+    const moved = store.runs.setState(run.value.id, state);
+    if (!moved.ok) throw new Error(moved.message);
+  }
   for (const status of ['ready', 'running', 'reported'] as const) {
     const moved = store.tasks.setStatus(task.value.id, status);
     if (!moved.ok) throw new Error(moved.message);
@@ -46,6 +59,7 @@ function fixture(judgements: Array<Record<string, unknown>> = []) {
     const appended = store.events.append({
       missionId: mission.value.id,
       taskId: task.value.id,
+      runId: run.value.id,
       actor: 'system',
       kind: 'task_judged',
       payload,
@@ -53,7 +67,7 @@ function fixture(judgements: Array<Record<string, unknown>> = []) {
     });
     if (!appended.ok) throw new Error(appended.message);
   });
-  return { store, missionId: mission.value.id, taskId: task.value.id };
+  return { store, missionId: mission.value.id, taskId: task.value.id, runId: run.value.id };
 }
 
 const GREEN = { verdict: 'needs_human', reason: 'every check passed; acceptance is yours to give', missing: [] };
@@ -164,6 +178,31 @@ describe('overriding it, which has to be possible', () => {
 });
 
 describe('over the wire', () => {
+  it('names no attempt while a later one is still writing to the worktree', () => {
+    // Asking for the newest run in state `reported` is not the same question
+    // as "whose claim put this task under review": nothing moves a run out of
+    // `reported`, so a task whose attempt 1 reported and was sent back, then
+    // forced to `reported` while attempt 2 is running, answered with attempt 1
+    // — signing off a live tree on a previous attempt's evidence.
+    const { store, missionId, taskId } = fixture();
+    const first = attemptOf(store, missionId, taskId);
+    judged(store, missionId, taskId, first, GREEN);
+
+    const live = store.runs.create({ missionId, taskId, agent: 'claude', state: 'dispatched' });
+    if (!live.ok) throw new Error(live.message);
+    const running = store.runs.setState(live.value.id, 'running');
+    if (!running.ok) throw new Error(running.message);
+    for (const status of ['ready', 'running', 'reported'] as const) {
+      const moved = store.tasks.setStatus(taskId, status);
+      if (!moved.ok) throw new Error(moved.message);
+    }
+
+    const read = store.tasks.get(taskId);
+    if (!read.ok) throw new Error(read.message);
+    expect(read.value?.currentRunId).toBeUndefined();
+    expect(acceptTask(store, missionId, taskId).ok).toBe(false);
+  });
+
   it('records the attempt however the task reached `reported`', () => {
     // `set_task_status` is a third writer of `reported`, after the pulse and
     // crash recovery. Each of the first two was found by a review noticing

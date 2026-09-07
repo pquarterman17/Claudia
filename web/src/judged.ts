@@ -68,16 +68,15 @@ export function judgementFor(
   taskId: string,
   currentRunId: string | undefined,
 ): Judgement | undefined {
-  const mine = (events ?? []).filter((event) => event.taskId === taskId);
-  const current = currentRunId;
   let latest: Judgement | undefined;
   let latestSeq = Number.NEGATIVE_INFINITY;
-  for (const event of mine) {
+  for (const event of events ?? []) {
+    if (event.taskId !== taskId) continue;
     if (event.kind !== 'task_judged') continue;
     // A judgement that does not name the current run cannot be shown to
     // describe it. Refusing it costs an override, with its reason; accepting
     // it would spend one attempt's evidence on another.
-    if (current !== undefined && event.runId !== current) continue;
+    if (currentRunId !== undefined && event.runId !== currentRunId) continue;
     const read = readJudgement(event.payload);
     // By SEQUENCE, like `latestJudgement` server-side, rather than by position
     // in the array. The two agreed only because `fleet-state.ts` happens to

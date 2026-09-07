@@ -6,7 +6,8 @@ import { evidenceSupportsAcceptance } from '../src/judged';
 
 const task: Task = {
   id: 't1', missionId: 'm1', title: 'Ship it', description: '', cwd: '/repo', status: 'reported',
-  priority: 0, dependsOn: [], acceptance: 'All keyboard paths work.', createdAt: 1, updatedAt: 1,
+  priority: 0, dependsOn: [], acceptance: 'All keyboard paths work.', currentRunId: 'r1',
+  createdAt: 1, updatedAt: 1,
 };
 
 describe('acceptance review summary', () => {
@@ -78,6 +79,26 @@ describe('the command each path sends', () => {
     expect(acceptCommand('m1', 't1', 'the check itself is wrong')).toEqual({
       type: 'accept_task', missionId: 'm1', taskId: 't1', override: 'the check itself is wrong',
     });
+  });
+});
+
+describe('a claim whose attempt the record does not name', () => {
+  it('shows the evidence but will not offer a plain accept', () => {
+    // No attempt under review means the record does not say which worktree the
+    // evidence describes — a later attempt still writing to it, or a row from
+    // before the column. The verdict is still readable, because a human can
+    // decide on it; what it cannot do is authorise a one-click accept, and the
+    // server refuses one for the same reason.
+    const unnamed: Task = { ...task, currentRunId: undefined };
+    const html = renderToStaticMarkup(<AcceptanceReview
+      missionId="m1"
+      task={unnamed}
+      judgement={{ verdict: 'needs_human', reason: 'green', missing: [] }}
+    />);
+    expect(html).toContain('Attempt not recorded');
+    expect(html).toContain('green');
+    expect(html).not.toContain('accept task');
+    expect(html).toContain('accept with override');
   });
 });
 

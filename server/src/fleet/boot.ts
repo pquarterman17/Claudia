@@ -131,12 +131,12 @@ function applyRecovery(
         const moved = store.tasks.setStatus(task.taskId, status);
         if (!moved.ok) throw new Error(moved.message);
       }
-      // A recovered claim is still a claim, and everything downstream reads
-      // WHICH attempt is under review from a run-scoped `task_reported`. The
-      // pulse writes one when it moves a task into `reported`; this is the
-      // only other path that does, and without a note here a task recovered
-      // after a crash was reviewed against whichever earlier attempt had last
-      // left one — the board and `accept_task` both.
+      // For the TIMELINE, not for acceptance. Which attempt is under review is
+      // on the task row, written by `setStatus` in the transaction just above
+      // — that is the point of the column, and it is why this note can be a
+      // note rather than a load-bearing fact somebody has to remember. What it
+      // buys is a line a human reading the log can see: the server came back
+      // up and this claim was still standing.
       if (task.to === 'reported' && task.runId !== undefined) {
         note(store, missionId, task.taskId, 'task_reported', task.reason, task.runId);
       }

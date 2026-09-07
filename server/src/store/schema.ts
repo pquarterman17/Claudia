@@ -154,7 +154,6 @@ CREATE INDEX fleet_events_by_mission ON fleet_events (mission_id, seq);
 -- Run-level filtering rides on this one: a run's events are a subset of its
 -- task's, and a second index on the append path is not worth that narrowing.
 CREATE INDEX fleet_events_by_task ON fleet_events (task_id, seq) WHERE task_id IS NOT NULL;
-CREATE INDEX fleet_events_by_task_kind ON fleet_events (task_id, kind, seq) WHERE task_id IS NOT NULL;
 `;
 
 /**
@@ -244,4 +243,24 @@ ALTER TABLE child_runs ADD COLUMN tokens INTEGER;
 export const EVENTS_BY_TASK_KIND = `
 CREATE INDEX IF NOT EXISTS fleet_events_by_task_kind
   ON fleet_events (task_id, kind, seq) WHERE task_id IS NOT NULL;
+`;
+
+/**
+ * Which attempt a reported task's claim belongs to, on the task row.
+ *
+ * It used to be reconstructed by scanning the log for the newest run-scoped
+ * `task_reported`, which meant every writer of the `reported` status had to
+ * remember to append one. Three writers existed — the pulse, crash recovery,
+ * and `set_task_status` over the wire — and each was found the same way: by a
+ * review noticing that acceptance had validated a second attempt against the
+ * first one's verdict. A fact every caller must remember is a fact that will
+ * be forgotten; `setStatus` writes this one itself, in the transaction that
+ * moves the status, so there is nothing to remember.
+ *
+ * Nullable: a task that has never reported has no attempt under review, and
+ * one carried over from before this column reads as unknown rather than as
+ * some particular run.
+ */
+export const TASK_CURRENT_RUN = `
+ALTER TABLE tasks ADD COLUMN current_run_id TEXT REFERENCES child_runs (id) ON DELETE SET NULL;
 `;

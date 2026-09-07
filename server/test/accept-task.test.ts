@@ -164,6 +164,34 @@ describe('overriding it, which has to be possible', () => {
 });
 
 describe('over the wire', () => {
+  it('records the attempt however the task reached `reported`', () => {
+    // `set_task_status` is a third writer of `reported`, after the pulse and
+    // crash recovery. Each of the first two was found by a review noticing
+    // acceptance validating a second attempt against the first one's verdict;
+    // this one is covered without being remembered, because `setStatus`
+    // records the attempt with the status move.
+    const { store, missionId, taskId } = fixture();
+    const first = attemptOf(store, missionId, taskId);
+    judged(store, missionId, taskId, first, GREEN);
+
+    const second = store.runs.create({ missionId, taskId, agent: 'claude', state: 'dispatched' });
+    if (!second.ok) throw new Error(second.message);
+    for (const state of ['running', 'reported'] as const) {
+      const moved = store.runs.setState(second.value.id, state);
+      if (!moved.ok) throw new Error(moved.message);
+    }
+    // Sent back and reported again over the wire, not by the pulse.
+    for (const status of ['ready', 'running'] as const) {
+      handleFleetCommand({ type: 'set_task_status', missionId, taskId, status }, store);
+    }
+    handleFleetCommand({ type: 'set_task_status', missionId, taskId, status: 'reported' }, store);
+
+    const events = handleFleetCommand({ type: 'accept_task', missionId, taskId }, store);
+    const notice = events.find((e) => e.type === 'notice');
+    expect(notice && 'message' in notice ? notice.message : '').toMatch(/[Nn]othing has judged/);
+    expect(statusOf(store, taskId)).toBe('reported');
+  });
+
   it('will not accept through a status change any more', () => {
     // The hole itself. The transition is legal and the store would write it,
     // so the refusal has to be at the boundary the board talks to.
@@ -199,10 +227,33 @@ describe('over the wire', () => {
  * board offered a plain `accept` backed by attempt 1's verdict, attempt 1's
  * branch and attempt 1's tests. Nothing had looked at the work being accepted.
  */
+/**
+ * One attempt that ran and reported, in the order production does it.
+ *
+ * The run reaches `reported` first and the task follows, because that is what
+ * `setStatus` reads to write `current_run_id` — the attempt under review is
+ * recorded with the status move rather than reconstructed afterwards.
+ */
 function attemptOf(store: FleetStore, missionId: string, taskId: string): string {
-  const created = store.runs.create({ missionId, taskId, agent: 'claude' });
+  const created = store.runs.create({ missionId, taskId, agent: 'claude', state: 'dispatched' });
   if (!created.ok) throw new Error(created.message);
+  for (const state of ['running', 'reported'] as const) {
+    const moved = store.runs.setState(created.value.id, state);
+    if (!moved.ok) throw new Error(moved.message);
+  }
+  reopen(store, taskId);
   return created.value.id;
+}
+
+/** Walk the task back to `reported` so the newest attempt is the one on the table. */
+function reopen(store: FleetStore, taskId: string): void {
+  const read = store.tasks.get(taskId);
+  if (!read.ok) throw new Error(read.message);
+  const route = read.value?.status === 'reported' ? (['ready', 'running', 'reported'] as const) : (['reported'] as const);
+  for (const status of route) {
+    const moved = store.tasks.setStatus(taskId, status);
+    if (!moved.ok) throw new Error(moved.message);
+  }
 }
 
 function judged(store: FleetStore, missionId: string, taskId: string, runId: string, payload: Record<string, unknown>) {
@@ -251,20 +302,11 @@ describe('the attempt on the table', () => {
     // reading the same log — answered with the one they are.
     const { store, missionId, taskId } = fixture();
     const first = attemptOf(store, missionId, taskId);
-    const second = attemptOf(store, missionId, taskId);
     judged(store, missionId, taskId, first, GREEN);
-    judged(store, missionId, taskId, second, BAD);
-    // Attempt 1's claim is the one that moved the task.
-    const reported = store.events.append({
-      missionId,
-      taskId,
-      runId: first,
-      actor: 'system',
-      kind: 'task_reported',
-      payload: { reason: 'the child ended its turn' },
-      idempotencyKey: `reported:${first}`,
-    });
-    if (!reported.ok) throw new Error(reported.message);
+    // A second run exists but never reported, so it is not the one under
+    // review — reading the highest attempt answered with it anyway.
+    const idle = store.runs.create({ missionId, taskId, agent: 'claude' });
+    if (!idle.ok) throw new Error(idle.message);
 
     const outcome = acceptTask(store, missionId, taskId);
     expect(outcome.ok, outcome.message).toBe(true);
@@ -280,17 +322,9 @@ describe('the attempt on the table', () => {
     // that was supposed to make it robust.
     const { store, missionId, taskId } = fixture();
     const first = attemptOf(store, missionId, taskId);
-    const second = attemptOf(store, missionId, taskId);
-    const report = (runId: string, reason: string) => {
-      const appended = store.events.append({
-        missionId, taskId, runId, actor: 'system', kind: 'task_reported',
-        payload: { reason }, idempotencyKey: `reported:${runId}`,
-      });
-      if (!appended.ok) throw new Error(appended.message);
-    };
-    report(first, 'attempt 1 ended');
     judged(store, missionId, taskId, first, GREEN);
-    report(second, 'attempt 2 ended');
+    // Sent back, ran again, reported — and not yet judged.
+    attemptOf(store, missionId, taskId);
 
     const outcome = acceptTask(store, missionId, taskId);
     expect(outcome.ok).toBe(false);

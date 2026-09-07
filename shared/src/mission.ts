@@ -131,6 +131,15 @@ export interface Task {
   dependsOn: string[];
   /** What "done" means, in terms a human can check against evidence. */
   acceptance: string;
+  /**
+   * The attempt whose claim put this task in `reported`, when it is there.
+   *
+   * Written by `setStatus` in the transaction that moves the status, because
+   * the board and `accept_task` both need to know which worktree the evidence
+   * on screen describes — and reconstructing it from the log meant every
+   * writer of `reported` had to remember to leave a note. Three did not.
+   */
+  currentRunId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -315,52 +324,6 @@ function clampLimit(value: unknown, fallback: number, ceiling: number): number {
 }
 
 /**
- * The attempt whose report is on the table for one task.
- *
- * Here rather than in either caller because BOTH have to answer it the same
- * way. The board decides from it whether to offer a plain accept; the server
- * decides from it which verdict `accept_task` validates against. When the two
- * disagreed, the panel offered a decision the server then refused — or
- * demanded a reason for evidence the server considered fine — and in both
- * directions the human was deciding about a different worktree than the one
- * being checked. Two implementations with two comments each asserting the
- * other must match is the arrangement that produced that, so there is one.
- *
- * The rule: the run named by the newest `task_reported`. The server writes
- * that note in exactly one place — the branch of `applyTaskIntent` that moves
- * a task INTO `reported` — so it names the claim that put the task in the
- * state the panel renders for and the command acts on.
- *
- * It is NOT the highest attempt, and not the newest run named by any event.
- * Runs of one task overlap and can finish out of order: a second attempt
- * dispatched while the first was stuck can report first, hit the `stillHeld`
- * branch, and never move the task at all. Both of those readings answered with
- * a run nobody is looking at.
- *
- * By `seq`, NOT by position. This took the last match in the array, which made
- * the answer depend on an ordering the signature never asked for: the board
- * passes an ascending slice and the server a descending page, so the server
- * got the OLDEST report in its window and accepted a second attempt on the
- * first one's verdict — the exact failure this function exists to prevent,
- * with the two callers reading the same helper in opposite directions.
- *
- * `undefined` means no such note is in reach — a log written before runs were
- * denormalised onto events, or a task moved to `reported` by hand. Each caller
- * decides what to do there; neither should pretend it knows.
- */
-export function currentRunFor(events: readonly FleetEvent[]): string | undefined {
-  let current: string | undefined;
-  let currentSeq = Number.NEGATIVE_INFINITY;
-  for (const event of events) {
-    if (event.kind !== 'task_reported' || event.runId === undefined) continue;
-    if (event.seq <= currentSeq) continue;
-    current = event.runId;
-    currentSeq = event.seq;
-  }
-  return current;
-}
-
-/**
  * Whether one recorded test result can be read as a result at all.
  *
  * In `shared` because both ends have to agree on it. The server refuses
@@ -383,3 +346,6 @@ export function readableTest(value: unknown): { command: string; exitCode: numbe
   if (typeof exitCode !== 'number' || !Number.isSafeInteger(exitCode)) return undefined;
   return { command, exitCode };
 }
+
+/** The three verdicts `judge` can reach, named once for both ends. */
+export const VERDICTS: ReadonlySet<string> = new Set(['accept', 'reject', 'needs_human']);

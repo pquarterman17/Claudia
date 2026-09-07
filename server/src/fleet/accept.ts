@@ -1,4 +1,4 @@
-import { currentRunFor, type FleetEvent } from '@claudia/shared';
+import { VERDICTS, type FleetEvent } from '@claudia/shared';
 import type { FleetStore } from '../store/index.js';
 
 /**
@@ -26,8 +26,6 @@ import type { FleetStore } from '../store/index.js';
  * auditable decision and the click this replaces.
  */
 
-const VERDICTS = new Set(['accept', 'reject', 'needs_human']);
-
 /** What the log says about a run, read back from JSON rather than assumed. */
 interface Judgement {
   verdict: string;
@@ -49,17 +47,18 @@ export function acceptTask(store: FleetStore, missionId: string, taskId: string,
     return { ok: false, message: `A task that is ${task.value.status} has not reported anything to accept.` };
   }
 
-  // Two exact questions, asked of the database rather than of a page of log
-  // scanned in memory. Each is one indexed walk backwards from the newest, so
-  // neither can fall outside a window as the task's history grows.
-  const reported = store.events.latestForTask(taskId, 'task_reported', 4);
+  // The attempt under review comes off the task row, written there by
+  // `setStatus` in the same transaction that moved the status. It used to be
+  // reconstructed by scanning the log for the newest run-scoped
+  // `task_reported`, which every writer of `reported` had to remember to
+  // append — and three writers existed, each found by a review noticing that
+  // acceptance had validated a second attempt against the first one's verdict.
+  const run = task.value.currentRunId;
+  const verdicts = store.events.latestForTask(taskId, 'task_judged', 8, run);
   // Returned, not swallowed. An unreadable log is not evidence that nothing
   // judged this task, and saying so would put a false sentence — "nothing has
   // judged this task yet" — into the `overrode` field of the record this
   // command exists to produce.
-  if (!reported.ok) return { ok: false, message: reported.message };
-  const run = currentRunId(store, taskId, reported.value);
-  const verdicts = store.events.latestForTask(taskId, 'task_judged', 8, run);
   if (!verdicts.ok) return { ok: false, message: verdicts.message };
   const judged = latestJudgement(verdicts.value);
   const reason = (override ?? '').trim();
@@ -141,9 +140,14 @@ function refusalFor(judged: Judgement): string | undefined {
  *
  * Scoped by RUN before it reaches here: the store is asked for `task_judged`
  * events of one run, so nothing in this loop can pick another attempt's
- * verdict. Which run that is comes from `currentRunFor` in `shared`, the one
- * definition of it, so this and the board cannot answer it differently on any
- * log that names one.
+ * verdict. Which run that is comes off the task row, which the board reads
+ * too — so the two cannot answer it differently, rather than agreeing because
+ * two copies of a rule were kept in step.
+ *
+ * A task carried over from before that column has no run named, and the read
+ * is unscoped there: the newest verdict, whichever attempt it belongs to, and
+ * the board shows the same one. That is the honest answer when the record
+ * genuinely does not say, and it is the same answer on both ends.
  *
  * A judgement describes the worktree of the run that produced it. A task that was sent back to `ready` and ran again has an old verdict
  * about a tree that no longer exists — and the case that matters is the second
@@ -172,34 +176,6 @@ function latestJudgement(events: readonly FleetEvent[]): Judgement | undefined {
     if (read && (latest === undefined || read.seq > latest.seq)) latest = read;
   }
   return latest;
-}
-
-/**
- * The attempt on the table, and what to do when the log will not say.
- *
- * `currentRunFor` answers from the newest `task_reported`. When no such note is
- * in reach — a log written before runs were denormalised onto events, a task
- * moved to `reported` by hand — this falls back to the highest attempt, and
- * the board deliberately does NOT: it goes on showing the newest verdict so a
- * human can still read the evidence.
- *
- * That is the one place the two are allowed to differ, and the asymmetry is
- * the point. The board chooses wording; this decides. Failing closed here
- * keeps the property that matters — a second attempt is never accepted on the
- * first one's verdict — and the cost is that on such a log the board can offer
- * an accept this refuses, with a message saying why. A refused click is worth
- * more than a silent acceptance of the wrong tree.
- *
- * The runs read is a second read, outside the event snapshot above. It is
- * reached only on this fallback, where there is no snapshot answer to be
- * consistent with.
- */
-function currentRunId(store: FleetStore, taskId: string, events: readonly FleetEvent[]): string | undefined {
-  const reported = currentRunFor(events);
-  if (reported !== undefined) return reported;
-  const runs = store.runs.listByTask(taskId);
-  if (!runs.ok || runs.value.length === 0) return undefined;
-  return runs.value[runs.value.length - 1]?.id;
 }
 
 /** The payload is JSON the log never reaches into, so nothing here is assumed. */

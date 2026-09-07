@@ -265,6 +265,7 @@ export function summary(judgement: Judgement | undefined, writing = false): stri
   if (judgement.verdict === 'reject') return 'Evidence needs work';
   if ((judgement.unreadTests ?? 0) > 0) return 'Evidence could not be read';
   if (judgement.tests?.some((test) => test.exitCode !== 0)) return 'A check failed';
+  if (judgement.descendsFromBase === false) return 'Not on its base';
   if (judgement.missing.length > 0) return `${judgement.missing.length} evidence gap${judgement.missing.length === 1 ? '' : 's'}`;
   return 'Ready for your decision';
 }

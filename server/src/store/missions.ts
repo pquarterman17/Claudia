@@ -1,6 +1,5 @@
 import {
   canTransitionMission,
-  canTransitionTask,
   MAX_CHILDREN_CEILING,
   MAX_CHILDREN_DEFAULT,
   PULSE_DEFAULT_SEC,
@@ -10,14 +9,12 @@ import {
   type Mission,
   type MissionStatus,
   type MissionWatch,
-  type Task,
-  type TaskStatus,
   verifyCommandProblem,
 } from '@claudia/shared';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { attempt, refuse, transact, type StoreResult } from './db.js';
-import { agentKind, idList, int, optInt, optText, text, type Row } from './rows.js';
+import { agentKind, int, optInt, optText, text, type Row } from './rows.js';
 
 /**
  * Missions and their tasks.
@@ -45,24 +42,6 @@ export type NewMission = Omit<
 };
 
 /**
- * Dependencies checked on the way IN, not only on the way out.
- *
- * The column is plain TEXT and the reader refuses anything that is not a list
- * of strings — and that refusal propagates out of the whole `listByMission`
- * map, so one malformed row made an entire mission permanently unrenderable
- * with no repair path. `events.ts` already made the opposite call for the same
- * hazard, so that one corrupt row cannot break the read that would explain it.
- * Validating the write is what lets the strict read stay strict.
- */
-function dependencies(value: readonly string[] | undefined): string[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value) || value.some((id) => typeof id !== 'string' || id === '')) {
-    refuse('Task dependencies must be a list of task ids.');
-  }
-  return [...value];
-}
-
-/**
  * Checked on the way IN, like `dependencies` above and for the same reason.
  *
  * A verify command that cannot mean what it says is worse than none: parsed as
@@ -77,22 +56,10 @@ function verifyCommand(value: string): string {
   return value.trim();
 }
 
-export type NewTask = Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'status' | 'priority' | 'dependsOn' | 'acceptance'> & {
-  id?: string;
-  status?: TaskStatus;
-  priority?: number;
-  dependsOn?: string[];
-  acceptance?: string;
-};
-
-/** What a mission runs on unless it says otherwise, and what every mission
- * written before the column existed was in fact running on. */
 const DEFAULT_AGENT: AgentKind = 'claude';
 
 const MISSION_COLUMNS =
   'id, name, body, status, watch, pulse_sec, max_children, budget_sec, budget_tokens, cwd, agent, verify, created_at, updated_at';
-const TASK_COLUMNS =
-  'id, mission_id, title, description, cwd, status, priority, depends_on, acceptance, created_at, updated_at';
 
 export class MissionRepo {
   constructor(private readonly db: DatabaseSync) {}
@@ -262,91 +229,6 @@ export class MissionRepo {
   }
 }
 
-export class TaskRepo {
-  constructor(private readonly db: DatabaseSync) {}
-
-  create(input: NewTask): StoreResult<Task> {
-    return attempt('create the task', () => {
-      const now = Date.now();
-      const task: Task = {
-        id: input.id ?? randomUUID(),
-        missionId: input.missionId,
-        title: input.title,
-        description: input.description,
-        cwd: input.cwd,
-        status: input.status ?? 'proposed',
-        priority: input.priority ?? 0,
-        dependsOn: dependencies(input.dependsOn),
-        acceptance: input.acceptance ?? '',
-        createdAt: now,
-        updatedAt: now,
-      };
-      this.db
-        .prepare(`INSERT INTO tasks (${TASK_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(
-          task.id,
-          task.missionId,
-          task.title,
-          task.description,
-          task.cwd,
-          task.status,
-          task.priority,
-          JSON.stringify(task.dependsOn),
-          task.acceptance,
-          task.createdAt,
-          task.updatedAt,
-        );
-      return task;
-    });
-  }
-
-  get(id: string): StoreResult<Task | undefined> {
-    return attempt('read the task', () => {
-      const row = this.db.prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`).get(id) as Row | undefined;
-      return row ? toTask(row) : undefined;
-    });
-  }
-
-  /** Dispatch order: priority first, then the order they were written down in. */
-  listByMission(missionId: string): StoreResult<Task[]> {
-    return attempt('list the mission tasks', () => {
-      const rows = this.db
-        .prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE mission_id = ? ORDER BY priority, created_at`)
-        .all(missionId) as Row[];
-      return rows.map(toTask);
-    });
-  }
-
-  /**
-   * Moves a task, refusing anything the contract's table does not allow.
-   *
-   * Read and write share a transaction so the status a decision was made
-   * against is the status being replaced. Setting the status a task already
-   * has is a no-op rather than a refusal: the transition table describes
-   * movement and has no self-loops, while a reducer replaying its own events
-   * has to be able to arrive at the same state twice.
-   */
-  setStatus(id: string, to: TaskStatus): StoreResult<Task> {
-    return transact(this.db, 'move the task', () => {
-      const row = this.db.prepare(`SELECT ${TASK_COLUMNS} FROM tasks WHERE id = ?`).get(id) as Row | undefined;
-      if (!row) refuse(`No task with id ${id}.`);
-      const current = toTask(row);
-      if (current.status === to) return current;
-      if (!canTransitionTask(current.status, to)) {
-        refuse(`A task that is ${current.status} cannot become ${to}.`);
-      }
-      const updatedAt = Date.now();
-      this.db.prepare('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?').run(to, updatedAt, id);
-      return { ...current, status: to, updatedAt };
-    });
-  }
-}
-
-/**
- * A budget is optional, and a zero or fractional one is a mistake rather than
- * an unlimited mission — those are two different things, and quietly treating
- * one as the other would give a mission no ceiling at all.
- */
 function ceiling(what: string, value: number | undefined): number | undefined {
   if (value === undefined) return undefined;
   if (!Number.isInteger(value) || value <= 0) refuse(`The ${what} must be a whole number above zero.`);
@@ -380,18 +262,3 @@ function toMission(row: Row): Mission {
   };
 }
 
-function toTask(row: Row): Task {
-  return {
-    id: text(row, 'id'),
-    missionId: text(row, 'mission_id'),
-    title: text(row, 'title'),
-    description: text(row, 'description'),
-    cwd: text(row, 'cwd'),
-    status: text(row, 'status') as TaskStatus,
-    priority: int(row, 'priority'),
-    dependsOn: idList(row, 'depends_on'),
-    acceptance: text(row, 'acceptance'),
-    createdAt: int(row, 'created_at'),
-    updatedAt: int(row, 'updated_at'),
-  };
-}

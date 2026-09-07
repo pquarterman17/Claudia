@@ -64,7 +64,8 @@ export function MissionTasks({
       else byTask.set(event.taskId, [event]);
     }
     const found = new Map<string, ReturnType<typeof judgementFor>>();
-    for (const id of reported) found.set(id, judgementFor(byTask.get(id), id));
+    const runOf = new Map((tasks ?? []).map((task) => [task.id, task.currentRunId]));
+    for (const id of reported) found.set(id, judgementFor(byTask.get(id), id, runOf.get(id)));
     return found;
   }, [events, tasks]);
 

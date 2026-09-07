@@ -2,7 +2,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import { closeFleetDb, fleetDbPath, ok, openFleetDb, type StoreResult } from './db.js';
 import { EscalationRepo } from './escalations.js';
 import { FleetEventLog } from './events.js';
-import { MissionRepo, TaskRepo } from './missions.js';
+import { MissionRepo } from './missions.js';
+import { TaskRepo } from './tasks.js';
 import { ChildRunRepo } from './runs.js';
 import { WorktreeRepo } from './worktrees.js';
 

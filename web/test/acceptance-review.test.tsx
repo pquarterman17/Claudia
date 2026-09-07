@@ -41,6 +41,19 @@ describe('acceptance review summary', () => {
     expect(evidenceSupportsAcceptance(failed)).toBe(false);
   });
 
+  it('will not promise a decision over a tree that is not the task\'s work', () => {
+    // `judge()` refuses outright on ancestry and the panel paints the fact in
+    // the failure colour, so a plain accept beside it would be the board
+    // contradicting itself. Reachable from a build judging under
+    // `allowUnverifiedAncestry`, which leaves the fact in the evidence while
+    // the verdict says nothing about it.
+    const adrift = {
+      verdict: 'needs_human' as const, reason: 'every check passed', missing: [], descendsFromBase: false,
+    };
+    expect(summary(adrift)).toBe('Not on its base');
+    expect(evidenceSupportsAcceptance(adrift)).toBe(false);
+  });
+
   it('says it is recording a reason even before there is a verdict', () => {
     expect(summary(undefined, true)).toBe('Recording a reason');
   });

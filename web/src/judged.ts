@@ -1,4 +1,4 @@
-import { currentRunFor, readableTest, type FleetEvent } from '@claudia/shared';
+import { readableTest, VERDICTS, type FleetEvent } from '@claudia/shared';
 
 /**
  * The server's reading of what a finished child left behind.
@@ -41,7 +41,6 @@ export interface Judgement {
   checks?: string;
 }
 
-const VERDICTS = new Set(['accept', 'reject', 'needs_human']);
 const PR_STATES = new Set(['draft', 'open', 'merged', 'closed']);
 
 /**
@@ -53,18 +52,24 @@ const PR_STATES = new Set(['draft', 'open', 'merged', 'closed']);
  * one: the second attempt reports before the pulse judges it, and taking the
  * newest verdict by position hands back attempt 1's `accept`.
  *
- * Which attempt that is comes from `currentRunFor` in `shared`, so this and
- * `accept_task` cannot drift into answering it differently — the disagreement
- * that made the panel offer decisions the server refused.
+ * Which attempt that is comes off the task row — `Task.currentRunId`, written
+ * by the server in the transaction that moved the status — so this and
+ * `accept_task` read the same field rather than two reconstructions of it.
+ * They used to derive it separately from the log, which is how the panel came
+ * to offer decisions the server refused.
  *
- * When it answers `undefined` — no report note in this window, or a log from
- * before runs were denormalised onto events — the newest verdict stands,
- * whichever attempt it belongs to. Hiding every verdict there would be worse,
- * and the server still refuses an acceptance it disagrees with.
+ * `undefined` is a task carried over from before that column: the newest
+ * verdict stands, whichever attempt it belongs to, and `accept_task` reads it
+ * unscoped too. Hiding every verdict there would be worse, and being wrong in
+ * the same direction on both ends is at least a state a human can act on.
  */
-export function judgementFor(events: readonly FleetEvent[] | undefined, taskId: string): Judgement | undefined {
+export function judgementFor(
+  events: readonly FleetEvent[] | undefined,
+  taskId: string,
+  currentRunId: string | undefined,
+): Judgement | undefined {
   const mine = (events ?? []).filter((event) => event.taskId === taskId);
-  const current = currentRunFor(mine);
+  const current = currentRunId;
   let latest: Judgement | undefined;
   let latestSeq = Number.NEGATIVE_INFINITY;
   for (const event of mine) {
@@ -105,9 +110,10 @@ function readJudgement(payload: unknown): Judgement | undefined {
     verdict: verdict as Judgement['verdict'],
     reason: typeof record['reason'] === 'string' ? record['reason'] : '',
     missing: Array.isArray(record['missing']) ? record['missing'].filter((m): m is string => typeof m === 'string') : [],
-    // A safe integer, like `exitCode`. `typeof NaN` is 'number', and this is
-    // rendered straight through `String(...)` into the Change section.
-    ...(Number.isSafeInteger(evidence['filesChanged']) ? { filesChanged: evidence['filesChanged'] as number } : {}),
+    // A safe integer AND non-negative, which is the rule `malformedEvidence`
+    // applies — it rejects `filesChanged: -3` by name. This accepted it and
+    // rendered `Files: -3` straight through `String(...)` as an observed fact.
+    ...(readableCount(evidence['filesChanged']) ? { filesChanged: evidence['filesChanged'] as number } : {}),
     ...(typeof evidence['branch'] === 'string' ? { branch: evidence['branch'] } : {}),
     ...(typeof evidence['baseSha'] === 'string' ? { baseSha: evidence['baseSha'] } : {}),
     ...(typeof evidence['headSha'] === 'string' ? { headSha: evidence['headSha'] } : {}),
@@ -210,7 +216,18 @@ export function evidenceSupportsAcceptance(judgement: Judgement | undefined): bo
   // both are the cheap half of not depending on that. The server stays the
   // authority either way; the reasoned override records why a human proceeded.
   if ((judgement.unreadTests ?? 0) > 0) return false;
+  // Ancestry too. `judge()` refuses outright on it, and the panel paints
+  // `Does not descend from base` in the failure colour — so a plain accept
+  // beside that line would be the board contradicting itself. Reachable from
+  // a build judging under `allowUnverifiedAncestry`, which leaves the fact in
+  // the evidence while the verdict says nothing about it.
+  if (judgement.descendsFromBase === false) return false;
   return !judgement.tests?.some((test) => test.exitCode !== 0);
+}
+
+/** A count of things, on the same terms the server records one. */
+function readableCount(value: unknown): boolean {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

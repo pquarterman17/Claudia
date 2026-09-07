@@ -6,7 +6,6 @@ import { startFleet } from '../src/fleet/boot.js';
 import { note } from '../src/fleet/pulse-report.js';
 import { acceptTask } from '../src/fleet/accept.js';
 import { worseOf } from '../src/fleet/pulse-apply.js';
-import { currentRunFor } from '@claudia/shared';
 
 const dir = mkdtempSync(join(tmpdir(), 'claudia-pulse-report-'));
 const boot = startFleet(new Set(), join(dir, 'fleet.db'));
@@ -150,34 +149,6 @@ describe('which of two runs a task defers to', () => {
 });
 
 describe('asking the log an exact question', () => {
-  it('finds the newest report on a task with more history than one page', () => {
-    // `sinceForTask` is `seq > 0 ORDER BY seq LIMIT 500` — the OLDEST 500. A
-    // task's log is not bounded by its attempts, which is what that read
-    // assumed: a stuck run escalates with the elapsed minutes in the reason
-    // text, so the keyed note stops deduplicating and appends about sixty rows
-    // an hour. Past the page, the newest thing a task did was invisible.
-    const mission = store.missions.create({ name: 'm5', body: '', cwd: '/repo' });
-    if (!mission.ok) throw new Error(mission.message);
-    const task = store.tasks.create({ missionId: mission.value.id, title: 't', description: '', cwd: '/repo' });
-    if (!task.ok) throw new Error(task.message);
-
-    for (let i = 0; i < 520; i++) {
-      note(store, mission.value.id, task.value.id, 'escalated', `waiting ${i}m for approval of Bash`);
-    }
-    note(store, mission.value.id, task.value.id, 'task_reported', 'the child ended its turn', 'the-current-run');
-
-    // One indexed walk backwards from the newest, so there is no page for the
-    // answer to fall outside of.
-    const reported = store.events.latestForTask(task.value.id, 'task_reported', 4);
-    if (!reported.ok) throw new Error(reported.message);
-    expect(currentRunFor(reported.value)).toBe('the-current-run');
-
-    // The paging read it replaces cannot see it, which is the bug.
-    const head = store.events.sinceForTask(task.value.id);
-    if (!head.ok) throw new Error(head.message);
-    expect(currentRunFor(head.value)).toBeUndefined();
-  });
-
   it('answers about one run without reading the rest of the task', () => {
     const mission = store.missions.create({ name: 'm7', body: '', cwd: '/repo' });
     if (!mission.ok) throw new Error(mission.message);

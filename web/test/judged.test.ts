@@ -24,7 +24,7 @@ const GOOD = {
 
 describe('finding a verdict', () => {
   it('reads the one for this task', () => {
-    const found = judgementFor([event({ payload: GOOD })], 't1');
+    const found = judgementFor([event({ payload: GOOD })], 't1', undefined);
     expect(found?.verdict).toBe('needs_human');
     expect(found?.missing).toEqual(['tests']);
     expect(found?.filesChanged).toBe(3);
@@ -42,7 +42,7 @@ describe('finding a verdict', () => {
         prUrl: 'https://github.com/example/repo/pull/12', prState: 'open',
         risks: ['visual regression'], artifacts: ['dist/report.html'],
       },
-    } })], 't1');
+    } })], 't1', undefined);
     expect(found).toMatchObject({
       baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40),
       tests: [{ command: 'npm test', exitCode: 0, summary: '201 passed' }],
@@ -52,11 +52,11 @@ describe('finding a verdict', () => {
   });
 
   it('ignores one belonging to another task', () => {
-    expect(judgementFor([event({ payload: GOOD, taskId: 't2' })], 't1')).toBeUndefined();
+    expect(judgementFor([event({ payload: GOOD, taskId: 't2' })], 't1', undefined)).toBeUndefined();
   });
 
   it('ignores events of another kind', () => {
-    expect(judgementFor([event({ payload: GOOD, kind: 'task_reported' })], 't1')).toBeUndefined();
+    expect(judgementFor([event({ payload: GOOD, kind: 'task_reported' })], 't1', undefined)).toBeUndefined();
   });
 
   it('takes the latest, because a task can be reported more than once', () => {
@@ -68,17 +68,16 @@ describe('finding a verdict', () => {
   });
 
   it('does not show an earlier attempt after a new completion claim arrives', () => {
-    const found = judgementFor([
-      event({ runId: 'r1', payload: GOOD }),
-      event({ seq: 2, runId: 'r2', kind: 'task_reported', payload: { reason: 'the second attempt ended' } }),
-    ], 't1');
+    // The attempt under review comes off the task row now — one field the
+    // server writes with the status — rather than being reconstructed here
+    // from whichever writer of `reported` remembered to leave a note.
+    const found = judgementFor([event({ runId: 'r1', payload: GOOD })], 't1', 'r2');
     expect(found).toBeUndefined();
 
     const judged = judgementFor([
       event({ runId: 'r1', payload: GOOD }),
-      event({ seq: 2, runId: 'r2', kind: 'task_reported', payload: {} }),
       event({ seq: 3, runId: 'r2', payload: { ...GOOD, reason: 'second attempt checked' } }),
-    ], 't1');
+    ], 't1', 'r2');
     expect(judged?.reason).toBe('second attempt checked');
   });
 
@@ -92,7 +91,7 @@ describe('finding a verdict', () => {
       event({ runId: 'r1', kind: 'task_reported', payload: { reason: 'attempt 1 moved the task' } }),
       event({ seq: 2, runId: 'r1', payload: GOOD }),
       event({ seq: 3, runId: 'r2', kind: 'run_ended_task_held', payload: { reason: 'another run is still active' } }),
-    ], 't1');
+    ], 't1', undefined);
     expect(found?.verdict).toBe('needs_human');
   });
 
@@ -101,13 +100,13 @@ describe('finding a verdict', () => {
     // failing run today, so this is about not depending on that.
     const failing = judgementFor([event({ payload: {
       ...GOOD, missing: [], evidence: { tests: [{ command: 'npm test', exitCode: 1 }] },
-    } })], 't1');
+    } })], 't1', undefined);
     expect(failing?.tests).toEqual([{ command: 'npm test', exitCode: 1 }]);
     expect(evidenceSupportsAcceptance(failing)).toBe(false);
 
     const passing = judgementFor([event({ payload: {
       ...GOOD, missing: [], evidence: { tests: [{ command: 'npm test', exitCode: 0 }] },
-    } })], 't1');
+    } })], 't1', undefined);
     expect(evidenceSupportsAcceptance(passing)).toBe(true);
   });
 
@@ -115,10 +114,10 @@ describe('finding a verdict', () => {
     // Same loose check as `exitCode` had, one property away, and rendered
     // straight through `String(...)` into the Change section.
     for (const filesChanged of [Number.NaN, Number.POSITIVE_INFINITY, 2.5]) {
-      const found = judgementFor([event({ payload: { ...GOOD, evidence: { filesChanged } } })], 't1');
+      const found = judgementFor([event({ payload: { ...GOOD, evidence: { filesChanged } } })], 't1', undefined);
       expect(found?.filesChanged).toBeUndefined();
     }
-    const real = judgementFor([event({ payload: { ...GOOD, evidence: { filesChanged: 0 } } })], 't1');
+    const real = judgementFor([event({ payload: { ...GOOD, evidence: { filesChanged: 0 } } })], 't1', undefined);
     expect(real?.filesChanged).toBe(0);
   });
 
@@ -127,7 +126,7 @@ describe('finding a verdict', () => {
     // used to accept `command: ''` as read. One rule in `shared` now.
     const found = judgementFor([event({ payload: {
       ...GOOD, missing: [], evidence: { tests: [{ command: '   ', exitCode: 0 }] },
-    } })], 't1');
+    } })], 't1', undefined);
     expect(found?.tests).toEqual([]);
     expect(found?.unreadTests).toBe(1);
   });
@@ -138,8 +137,16 @@ describe('finding a verdict', () => {
     const found = judgementFor([
       event({ seq: 9, payload: { ...GOOD, reason: 'the newest' } }),
       event({ seq: 2, payload: { ...GOOD, reason: 'an older one' } }),
-    ], 't1');
+    ], 't1', undefined);
     expect(found?.reason).toBe('the newest');
+  });
+
+  it('treats a negative files-changed count as absent, as the server does', () => {
+    // `malformedEvidence` rejects it by name — "filesChanged is -3, which is
+    // not a number of files" — while this rendered `Files: -3` as an observed
+    // fact in the Change section.
+    const found = judgementFor([event({ payload: { ...GOOD, evidence: { filesChanged: -3 } } })], 't1', undefined);
+    expect(found?.filesChanged).toBeUndefined();
   });
 
   it('treats an exit code the server would call malformed as unread', () => {
@@ -148,7 +155,7 @@ describe('finding a verdict', () => {
     for (const exitCode of [Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
       const found = judgementFor([event({ payload: {
         ...GOOD, missing: [], evidence: { tests: [{ command: 'npm test', exitCode }] },
-      } })], 't1');
+      } })], 't1', undefined);
       expect(found?.tests).toEqual([]);
       expect(found?.unreadTests).toBe(1);
       expect(evidenceSupportsAcceptance(found)).toBe(false);
@@ -160,11 +167,11 @@ describe('finding a verdict', () => {
     // so bailing to absent rendered "None recorded" and left one-click accept
     // live over test evidence nothing could read.
     for (const tests of ['none', {}, 7]) {
-      const found = judgementFor([event({ payload: { ...GOOD, missing: [], evidence: { tests } } })], 't1');
+      const found = judgementFor([event({ payload: { ...GOOD, missing: [], evidence: { tests } } })], 't1', undefined);
       expect(found?.unreadTests).toBe(1);
       expect(evidenceSupportsAcceptance(found)).toBe(false);
     }
-    const absent = judgementFor([event({ payload: { ...GOOD, missing: [] } })], 't1');
+    const absent = judgementFor([event({ payload: { ...GOOD, missing: [] } })], 't1', undefined);
     expect(absent?.unreadTests).toBe(0);
     expect(evidenceSupportsAcceptance(absent)).toBe(true);
   });
@@ -174,37 +181,37 @@ describe('finding a verdict', () => {
     // Scoping to a run nothing names would hide every verdict in it.
     const legacy = (seq: number, payload: unknown): FleetEvent =>
       ({ seq, missionId: 'm1', taskId: 't1', actor: 'system', kind: 'task_judged', at: 1, payload }) as FleetEvent;
-    const found = judgementFor([legacy(1, GOOD), legacy(2, { ...GOOD, verdict: 'accept' })], 't1');
+    const found = judgementFor([legacy(1, GOOD), legacy(2, { ...GOOD, verdict: 'accept' })], 't1', undefined);
     expect(found?.verdict).toBe('accept');
   });
 
   it('answers nothing when there is nothing', () => {
-    expect(judgementFor(undefined, 't1')).toBeUndefined();
-    expect(judgementFor([], 't1')).toBeUndefined();
+    expect(judgementFor(undefined, 't1', undefined)).toBeUndefined();
+    expect(judgementFor([], 't1', undefined)).toBeUndefined();
   });
 });
 
 describe('a payload that is not what it should be', () => {
   it('survives every shape valid JSON can take', () => {
     for (const payload of [null, 42, 'done', [], true, undefined]) {
-      expect(() => judgementFor([event({ payload })], 't1')).not.toThrow();
-      expect(judgementFor([event({ payload })], 't1')).toBeUndefined();
+      expect(() => judgementFor([event({ payload })], 't1', undefined)).not.toThrow();
+      expect(judgementFor([event({ payload })], 't1', undefined)).toBeUndefined();
     }
   });
 
   it('refuses a verdict that is not one of the three', () => {
-    expect(judgementFor([event({ payload: { ...GOOD, verdict: 'probably' } })], 't1')).toBeUndefined();
+    expect(judgementFor([event({ payload: { ...GOOD, verdict: 'probably' } })], 't1', undefined)).toBeUndefined();
   });
 
   it('keeps the last good one rather than blanking on a bad one', () => {
     // A malformed payload should not take a verdict off the screen that was
     // read correctly a moment ago.
-    const found = judgementFor([event({ payload: GOOD }), event({ seq: 2, payload: 'nonsense' })], 't1');
+    const found = judgementFor([event({ payload: GOOD }), event({ seq: 2, payload: 'nonsense' })], 't1', undefined);
     expect(found?.verdict).toBe('needs_human');
   });
 
   it('drops non-string entries out of `missing` rather than rendering them', () => {
-    const found = judgementFor([event({ payload: { ...GOOD, missing: ['tests', 7, null] } })], 't1');
+    const found = judgementFor([event({ payload: { ...GOOD, missing: ['tests', 7, null] } })], 't1', undefined);
     expect(found?.missing).toEqual(['tests']);
   });
 
@@ -213,15 +220,15 @@ describe('a payload that is not what it should be', () => {
     // produced none: a command that could not start and one that never
     // finished both leave `tests` absent, and "no test results" alone does not
     // say which — or that anything was attempted at all.
-    const ran = judgementFor([event({ payload: { ...GOOD, checks: 'npm test — exit 0' } })], 't1');
+    const ran = judgementFor([event({ payload: { ...GOOD, checks: 'npm test — exit 0' } })], 't1', undefined);
     expect(ran?.checks).toBe('npm test — exit 0');
 
-    const missing = judgementFor([event({ payload: GOOD })], 't1');
+    const missing = judgementFor([event({ payload: GOOD })], 't1', undefined);
     expect(missing?.checks).toBeUndefined();
 
     // Same rule as the evidence fields: the wrong type is absent, never a
     // value the panel renders as though somebody had checked.
-    const wrong = judgementFor([event({ payload: { ...GOOD, checks: 7 } })], 't1');
+    const wrong = judgementFor([event({ payload: { ...GOOD, checks: 7 } })], 't1', undefined);
     expect(wrong?.checks).toBeUndefined();
   });
 
@@ -230,20 +237,20 @@ describe('a payload that is not what it should be', () => {
     // the button can say what it is going to do rather than being refused
     // after the click. `needs_human` is NOT a blocker: it is what a green run
     // gets, because the policy will not accept on nobody's behalf.
-    const green = judgementFor([event({ payload: { ...GOOD, verdict: 'needs_human', missing: [] } })], 't1');
+    const green = judgementFor([event({ payload: { ...GOOD, verdict: 'needs_human', missing: [] } })], 't1', undefined);
     expect(evidenceSupportsAcceptance(green)).toBe(true);
 
-    const holes = judgementFor([event({ payload: { ...GOOD, missing: ['test results'] } })], 't1');
+    const holes = judgementFor([event({ payload: { ...GOOD, missing: ['test results'] } })], 't1', undefined);
     expect(evidenceSupportsAcceptance(holes)).toBe(false);
 
-    const bad = judgementFor([event({ payload: { ...GOOD, verdict: 'reject', missing: [] } })], 't1');
+    const bad = judgementFor([event({ payload: { ...GOOD, verdict: 'reject', missing: [] } })], 't1', undefined);
     expect(evidenceSupportsAcceptance(bad)).toBe(false);
 
     const unread = judgementFor([event({ payload: {
       ...GOOD,
       missing: [],
       evidence: { tests: [{ command: 'npm test', exitCode: 'unknown' }] },
-    } })], 't1');
+    } })], 't1', undefined);
     expect(unread?.unreadTests).toBe(1);
     expect(evidenceSupportsAcceptance(unread)).toBe(false);
 
@@ -255,7 +262,7 @@ describe('a payload that is not what it should be', () => {
   it('treats an evidence field of the wrong type as absent, not as a value', () => {
     // Absent means nobody checked. A `filesChanged` of "lots" must not become
     // a number the panel renders as if somebody had.
-    const found = judgementFor([event({ payload: { ...GOOD, evidence: { filesChanged: 'lots', branch: 12 } } })], 't1');
+    const found = judgementFor([event({ payload: { ...GOOD, evidence: { filesChanged: 'lots', branch: 12 } } })], 't1', undefined);
     expect(found?.filesChanged).toBeUndefined();
     expect(found?.branch).toBeUndefined();
   });
@@ -267,7 +274,7 @@ describe('a payload that is not what it should be', () => {
     const found = judgementFor([event({ payload: {
       ...GOOD,
       evidence: { tests: [{ command: 3, exitCode: 'zero' }, null], risks: 'none', artifacts: [2], prState: 'maybe' },
-    } })], 't1');
+    } })], 't1', undefined);
     expect(found?.tests).toEqual([]);
     expect(found?.unreadTests).toBe(2);
     expect(found?.risks).toEqual([]);
@@ -278,24 +285,24 @@ describe('a payload that is not what it should be', () => {
   });
 
   it('separates a list nobody wrote from one it could not read', () => {
-    const absent = judgementFor([event({ payload: GOOD })], 't1');
+    const absent = judgementFor([event({ payload: GOOD })], 't1', undefined);
     expect(absent?.risks).toBeUndefined();
     expect(absent?.unreadRisks).toBe(0);
 
     const partial = judgementFor([event({ payload: {
       ...GOOD, evidence: { risks: ['a real risk', { note: 'data loss possible' }] },
-    } })], 't1');
+    } })], 't1', undefined);
     expect(partial?.risks).toEqual(['a real risk']);
     expect(partial?.unreadRisks).toBe(1);
   });
 
   it('does not turn an unsafe PR URL from a malformed event into a link', () => {
-    const found = judgementFor([event({ payload: { ...GOOD, evidence: { prUrl: 'javascript:alert(1)' } } })], 't1');
+    const found = judgementFor([event({ payload: { ...GOOD, evidence: { prUrl: 'javascript:alert(1)' } } })], 't1', undefined);
     expect(found?.prUrl).toBeUndefined();
   });
 
   it('returns the normalized URL that it actually validated', () => {
-    const found = judgementFor([event({ payload: { ...GOOD, evidence: { prUrl: ' https://example.com/review ' } } })], 't1');
+    const found = judgementFor([event({ payload: { ...GOOD, evidence: { prUrl: ' https://example.com/review ' } } })], 't1', undefined);
     expect(found?.prUrl).toBe('https://example.com/review');
   });
 });

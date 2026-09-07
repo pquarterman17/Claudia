@@ -22,6 +22,7 @@ export function AcceptanceReview({ missionId, task, judgement }: {
   judgement: Judgement | undefined;
 }) {
   const [override, setOverride] = useState<string | undefined>();
+  const [sent, setSent] = useState(false);
   // A reason already being typed keeps the override open even if a fresh
   // verdict would otherwise offer the plain button. `accept.ts` spends a long
   // comment on the reason being the whole point of an override, and tearing
@@ -38,6 +39,12 @@ export function AcceptanceReview({ missionId, task, judgement }: {
   // write "ok" instead of a reason. The panel stops rendering once the task
   // leaves `reported`, so a successful accept clears it anyway.
   const accept = (reason: string): void => {
+    // Once. `send` is fire-and-forget and the panel stays mounted until the
+    // task leaves `reported`, so a held Enter key sent one accept and then a
+    // run of refusals — `a task that is accepted has not reported anything to
+    // accept` — surfacing as an error notice for the accept that just worked.
+    if (sent) return;
+    setSent(true);
     send(acceptCommand(missionId, task.id, reason));
   };
 
@@ -102,7 +109,7 @@ export function AcceptanceReview({ missionId, task, judgement }: {
               <button
                 className="btn btn-ghost"
                 style={warning}
-                disabled={override.trim() === ''}
+                disabled={sent || override.trim() === ''}
                 onClick={() => accept(override)}
               >
                 record override and accept
@@ -111,7 +118,7 @@ export function AcceptanceReview({ missionId, task, judgement }: {
             </>
           ) : supported ? (
             <>
-              <button className="btn btn-ghost" style={positive} onClick={() => send(acceptCommand(missionId, task.id))}>
+              <button className="btn btn-ghost" style={positive} disabled={sent} onClick={() => accept('')}>
                 accept task
               </button>
               <button

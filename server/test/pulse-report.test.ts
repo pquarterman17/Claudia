@@ -149,7 +149,7 @@ describe('which of two runs a task defers to', () => {
   });
 });
 
-describe('reading the end of a task log, not the start', () => {
+describe('asking the log an exact question', () => {
   it('finds the newest report on a task with more history than one page', () => {
     // `sinceForTask` is `seq > 0 ORDER BY seq LIMIT 500` — the OLDEST 500. A
     // task's log is not bounded by its attempts, which is what that read
@@ -166,16 +166,17 @@ describe('reading the end of a task log, not the start', () => {
     }
     note(store, mission.value.id, task.value.id, 'task_reported', 'the child ended its turn', 'the-current-run');
 
-    const tail = store.events.tailForTask(task.value.id);
-    if (!tail.ok) throw new Error(tail.message);
-    expect(currentRunFor(tail.value)).toBe('the-current-run');
+    // One indexed walk backwards from the newest, so there is no page for the
+    // answer to fall outside of.
+    const reported = store.events.latestForTask(task.value.id, 'task_reported', 4);
+    if (!reported.ok) throw new Error(reported.message);
+    expect(currentRunFor(reported.value)).toBe('the-current-run');
 
-    // The read it replaces cannot see it, which is the bug.
+    // The paging read it replaces cannot see it, which is the bug.
     const head = store.events.sinceForTask(task.value.id);
     if (!head.ok) throw new Error(head.message);
     expect(currentRunFor(head.value)).toBeUndefined();
   });
-});
 
 describe('a note that must not grow without bound', () => {
   it('keeps one line for a stuck run however long it stays stuck', () => {
@@ -206,5 +207,38 @@ describe('a note that must not grow without bound', () => {
     expect(events.value).toHaveLength(1);
     // The message still says what it said the first time it was written.
     expect((events.value[0]?.payload as { reason: string }).reason).toMatch(/waiting 1m/);
+  });
+});
+
+  it('answers about one run without reading the rest of the task', () => {
+    const mission = store.missions.create({ name: 'm7', body: '', cwd: '/repo' });
+    if (!mission.ok) throw new Error(mission.message);
+    const task = store.tasks.create({ missionId: mission.value.id, title: 't', description: '', cwd: '/repo' });
+    if (!task.ok) throw new Error(task.message);
+    for (const run of ['r1', 'r2']) {
+      const judged = store.events.append({
+        missionId: mission.value.id,
+        taskId: task.value.id,
+        runId: run,
+        actor: 'system',
+        kind: 'task_judged',
+        payload: { verdict: 'needs_human', reason: `${run} checked`, missing: [] },
+        idempotencyKey: `judged:${run}`,
+      });
+      if (!judged.ok) throw new Error(judged.message);
+    }
+
+    const one = store.events.latestForTask(task.value.id, 'task_judged', 8, 'r1');
+    if (!one.ok) throw new Error(one.message);
+    expect(one.value.map((event) => event.runId)).toEqual(['r1']);
+
+    const missing = store.events.latestForTask(task.value.id, 'task_judged', 8, 'r3');
+    if (!missing.ok) throw new Error(missing.message);
+    expect(missing.value).toHaveLength(0);
+
+    // Newest first, so the first that parses is the answer.
+    const both = store.events.latestForTask(task.value.id, 'task_judged', 8);
+    if (!both.ok) throw new Error(both.message);
+    expect(both.value.map((event) => event.runId)).toEqual(['r2', 'r1']);
   });
 });

@@ -134,6 +134,19 @@ describe('acceptance review evidence', () => {
     expect(html).toContain('with a reason');
   });
 
+  it('reads a multi-line definition of done as written', () => {
+    // The field is a textarea and `briefFor` sends it to the child as a
+    // markdown block, so the panel must not run the bullets together.
+    const multi: Task = { ...task, acceptance: 'Keyboard works.\nScreen reader works.' };
+    const html = renderToStaticMarkup(<AcceptanceReview
+      missionId="m1"
+      task={multi}
+      judgement={{ verdict: 'needs_human', reason: 'green', missing: [] }}
+    />);
+    expect(html).toContain('pre-wrap');
+    expect(html).toContain('Screen reader works.');
+  });
+
   it('shows PR state even when no safe link is available', () => {
     const html = renderToStaticMarkup(<AcceptanceReview
       missionId="m1"

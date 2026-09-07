@@ -1,4 +1,4 @@
-import { currentRunFor, type FleetEvent } from '@claudia/shared';
+import { currentRunFor, readableTest, type FleetEvent } from '@claudia/shared';
 
 /**
  * The server's reading of what a finished child left behind.
@@ -66,6 +66,7 @@ export function judgementFor(events: readonly FleetEvent[] | undefined, taskId: 
   const mine = (events ?? []).filter((event) => event.taskId === taskId);
   const current = currentRunFor(mine);
   let latest: Judgement | undefined;
+  let latestSeq = Number.NEGATIVE_INFINITY;
   for (const event of mine) {
     if (event.kind !== 'task_judged') continue;
     // A judgement that does not name the current run cannot be shown to
@@ -73,9 +74,18 @@ export function judgementFor(events: readonly FleetEvent[] | undefined, taskId: 
     // it would spend one attempt's evidence on another.
     if (current !== undefined && event.runId !== current) continue;
     const read = readJudgement(event.payload);
-    // Kept only if it parses. A malformed payload should leave the previous
+    // By SEQUENCE, like `latestJudgement` server-side, rather than by position
+    // in the array. The two agreed only because `fleet-state.ts` happens to
+    // sort by seq three modules away — an invariant nothing here asserts, and
+    // one an unsorted slice from a future caller would break silently, which
+    // is the panel-versus-server disagreement all over again.
+    //
+    // Kept only if it parses: a malformed payload should leave the previous
     // good one standing rather than blanking the panel.
-    if (read) latest = read;
+    if (read && event.seq > latestSeq) {
+      latest = read;
+      latestSeq = event.seq;
+    }
   }
   return latest;
 }
@@ -128,22 +138,18 @@ function readTests(value: unknown): { values: NonNullable<Judgement['tests']>; u
   const tests: NonNullable<Judgement['tests']> = [];
   let unread = 0;
   for (const item of value) {
-    const test = asRecord(item);
-    const exitCode = test?.['exitCode'];
-    // A SAFE INTEGER, matching `malformedEvidence` server-side. `typeof NaN` is
-    // 'number', so the looser check let `failed (NaN)` render as a result
-    // somebody had read — and `evidenceSupportsAcceptance` keys the
-    // plain-accept button on nothing being unread. Narrowed by `typeof` first
-    // because `Number.isSafeInteger` is not a type guard.
-    if (!test || typeof test['command'] !== 'string' || typeof exitCode !== 'number' || !Number.isSafeInteger(exitCode)) {
+    // `readableTest` is the rule, and it lives in `shared` because the server
+    // refuses what it rejects while this counts the same thing as unread. The
+    // two used to be separate implementations kept in step by a comment, which
+    // is how the board comes to treat as readable a result the server calls
+    // malformed.
+    const test = readableTest(item);
+    if (!test) {
       unread += 1;
       continue;
     }
-    tests.push({
-      command: test['command'],
-      exitCode,
-      ...(typeof test['summary'] === 'string' ? { summary: test['summary'] } : {}),
-    });
+    const summary = asRecord(item)?.['summary'];
+    tests.push({ ...test, ...(typeof summary === 'string' ? { summary } : {}) });
   }
   return { values: tests, unread };
 }

@@ -163,11 +163,14 @@ export class FleetEventLog {
   }
 
   /**
-   * One task's history: its dispatches, state changes and reports.
+   * One task's history from the beginning: its dispatches, state changes and
+   * reports, oldest first.
    *
-   * The narrowing a run needs goes through here too — a run's events are a
-   * subset of its task's, and filtering that small result in the caller costs
-   * less than a second index on every append.
+   * A PAGE FROM THE START, like `since` and `sinceForMission`, and that is the
+   * whole caveat. It used to say the narrowing a run needs goes through here,
+   * on the reasoning that a task's log is small — and a stuck run disproved
+   * that by escalating once a minute. Anything asking what a task did LATELY
+   * wants `latestForTask`; this is for reading a task's history in order.
    */
   sinceForTask(taskId: string, afterSeq = 0, limit: number = DEFAULT_PAGE): StoreResult<FleetEvent[]> {
     return attempt('read a task log', () => {
@@ -250,27 +253,33 @@ export class FleetEventLog {
   }
 
   /**
-   * The newest events of ONE task, oldest first within the page.
+   * The newest events of one KIND for a task, newest first.
    *
-   * `sinceForTask` is `seq > 0 ORDER BY seq LIMIT 500` — the OLDEST 500. That
-   * read was chosen on the reasoning that a task's log is bounded by its
-   * attempts, and it is not: a stuck run escalates with a reason carrying the
-   * elapsed minutes (`waiting 12m for approval of …`), so the text changes
-   * every minute and the keyed note stops deduplicating. Roughly sixty rows an
-   * hour, and past five hundred the newest thing a task did is outside the
-   * window — which is where acceptance was reading the verdict and the run
-   * under review from.
+   * Both questions acceptance asks are exact — "which run reported last" and
+   * "has this run been judged" — and both were being answered by reading a
+   * page of the log and scanning it. That is how the window bugs kept
+   * recurring: `sinceForMission` returns the oldest 500 of a mission, and
+   * narrowing to the task only moved the same trap down a level, because a
+   * task's log is not bounded by its attempts either.
    *
-   * `ORDER BY seq DESC LIMIT n` then reversed, like `tailForMission`: the
-   * database picks the newest n rows this task has, whatever numbers they
-   * carry.
+   * This asks the database instead. `fleet_events_by_task` is `(task_id, seq)`,
+   * so `ORDER BY seq DESC` walks it backwards from the newest and the limit
+   * stops it — no page to fall outside of.
+   *
+   * A limit above one exists for the caller that wants the newest verdict THAT
+   * PARSES: a malformed payload should leave the previous good one standing
+   * rather than reading as "nothing judged this".
    */
-  tailForTask(taskId: string, limit: number = DEFAULT_PAGE): StoreResult<FleetEvent[]> {
-    return attempt('read the end of a task log', () => {
+  latestForTask(taskId: string, kind: string, limit = 8, runId?: string): StoreResult<FleetEvent[]> {
+    return attempt('read a task log', () => {
+      const scoped = runId === undefined ? '' : ' AND run_id = ?';
+      const args: unknown[] = runId === undefined ? [taskId, kind] : [taskId, kind, runId];
       const rows = this.db
-        .prepare(`SELECT ${COLUMNS} FROM fleet_events WHERE task_id = ? ORDER BY seq DESC LIMIT ?`)
-        .all(taskId, page(limit)) as Row[];
-      return rows.map(toEvent).reverse();
+        .prepare(
+          `SELECT ${COLUMNS} FROM fleet_events WHERE task_id = ? AND kind = ?${scoped} ORDER BY seq DESC LIMIT ?`,
+        )
+        .all(...(args as never[]), page(limit)) as Row[];
+      return rows.map(toEvent);
     });
   }
 

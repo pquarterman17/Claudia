@@ -78,24 +78,21 @@ export async function judgeReported(deps: PulseDeps, mission: Mission): Promise<
  * reason: judging READS the worktree, so a report nobody has read yet is a
  * directory still in use.
  *
- * From the newest end of the TASK's log. Two window bugs in sequence, the same
- * pair `accept.ts` documents. `sinceForMission` is the OLDEST 500 events of a
- * mission, so once a mission had that much history this answered `false` for a
- * run judged seconds ago. Narrowing to the task looked like the fix, on the
- * reasoning that a task's log is bounded by its attempts — and it is not: a
- * stuck run escalates once a minute, because the reason carries the elapsed
- * minutes and the keyed note stops deduplicating.
+ * An exact question, asked exactly: one indexed lookup for a `task_judged`
+ * naming this run. It was a scan of a page of the log twice over — first the
+ * mission's oldest 500, then the task's — and both windows could sit entirely
+ * newer than the verdict, because a task's log is not bounded by its attempts
+ * the way that read assumed.
  *
  * The append is keyed on the run, so a wrong answer duplicates nothing. What
  * it costs is the half this check exists to skip — the git reads and the
  * mission's verify command, up to its 120-second timeout, re-run on every
  * pulse for as long as the run sits in `reported` — and it pins the task in
- * `unreadTaskIds`, so its worktree is never retired. Only a newest-first read
- * is bounded by recency rather than by a hope about volume.
+ * `unreadTaskIds`, so its worktree is never retired.
  */
 export function hasJudgement(store: FleetStore, taskId: string, runId: string): boolean {
-  const events = store.events.tailForTask(taskId);
-  return events.ok && events.value.some((event) => event.kind === 'task_judged' && event.runId === runId);
+  const judged = store.events.latestForTask(taskId, 'task_judged', 1, runId);
+  return judged.ok && judged.value.length > 0;
 }
 
 /**

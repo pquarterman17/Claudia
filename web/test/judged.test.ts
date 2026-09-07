@@ -122,6 +122,26 @@ describe('finding a verdict', () => {
     expect(real?.filesChanged).toBe(0);
   });
 
+  it('rejects a test with a blank command, as the server does', () => {
+    // `malformedEvidence` calls a result with no command malformed; the client
+    // used to accept `command: ''` as read. One rule in `shared` now.
+    const found = judgementFor([event({ payload: {
+      ...GOOD, missing: [], evidence: { tests: [{ command: '   ', exitCode: 0 }] },
+    } })], 't1');
+    expect(found?.tests).toEqual([]);
+    expect(found?.unreadTests).toBe(1);
+  });
+
+  it('takes the newest verdict by sequence, not by array position', () => {
+    // The board and the server agreed only because `fleet-state.ts` sorts by
+    // seq three modules away. An unsorted slice made them disagree silently.
+    const found = judgementFor([
+      event({ seq: 9, payload: { ...GOOD, reason: 'the newest' } }),
+      event({ seq: 2, payload: { ...GOOD, reason: 'an older one' } }),
+    ], 't1');
+    expect(found?.reason).toBe('the newest');
+  });
+
   it('treats an exit code the server would call malformed as unread', () => {
     // `typeof NaN` is 'number', so the looser check rendered `failed (NaN)` as
     // a result somebody had read. The producer uses `Number.isSafeInteger`.

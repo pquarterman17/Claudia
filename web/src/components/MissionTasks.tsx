@@ -150,15 +150,19 @@ export function MissionTasks({
           placeholder="Detail (optional)"
           style={field(240)}
         />
-        <input
+        {/* A textarea, because everything downstream is built for a block:
+            `isText` permits newlines, `briefFor` sends the whole thing to the
+            child under `## Done when`, and the review panel renders it
+            `pre-wrap`. As a single-line input with Enter bound to `add`, a
+            three-bullet definition of done created three tasks, the first
+            holding one bullet. Enter is left alone here; the button submits. */}
+        <textarea
           value={acceptance}
           onChange={(e) => setAcceptance(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') add();
-          }}
+          rows={2}
           placeholder="Done when… (optional)"
           aria-label="Acceptance criteria"
-          style={field(240)}
+          style={{ ...field(240), resize: 'vertical', fontFamily: 'inherit' }}
         />
         <button onClick={add} disabled={title.trim() === ''} className="btn btn-ghost" style={action}>
           add task

@@ -47,17 +47,19 @@ export function acceptTask(store: FleetStore, missionId: string, taskId: string,
     return { ok: false, message: `A task that is ${task.value.status} has not reported anything to accept.` };
   }
 
-  // Read once, and both derivations answer from the same snapshot. Two reads
-  // could disagree — a pulse commits between them — and "which attempt" and
-  // "its verdict" disagreeing is the whole failure this command guards.
-  const log = store.events.tailForTask(taskId);
+  // Two exact questions, asked of the database rather than of a page of log
+  // scanned in memory. Each is one indexed walk backwards from the newest, so
+  // neither can fall outside a window as the task's history grows.
+  const reported = store.events.latestForTask(taskId, 'task_reported', 4);
   // Returned, not swallowed. An unreadable log is not evidence that nothing
   // judged this task, and saying so would put a false sentence — "nothing has
   // judged this task yet" — into the `overrode` field of the record this
   // command exists to produce.
-  if (!log.ok) return { ok: false, message: log.message };
-  const run = currentRunId(store, taskId, log.value);
-  const judged = latestJudgement(log.value, run);
+  if (!reported.ok) return { ok: false, message: reported.message };
+  const run = currentRunId(store, taskId, reported.value);
+  const verdicts = store.events.latestForTask(taskId, 'task_judged', 8, run);
+  if (!verdicts.ok) return { ok: false, message: verdicts.message };
+  const judged = latestJudgement(verdicts.value);
   const reason = (override ?? '').trim();
   const blocker = judged === undefined ? 'nothing has judged this task yet' : refusalFor(judged);
 
@@ -135,8 +137,11 @@ function refusalFor(judged: Judgement): string | undefined {
  * Two narrowings, and both of them are the difference between a check and a
  * rubber stamp.
  *
- * By RUN — `currentRunFor`, the one definition of that in `shared`, so this and
- * the board cannot answer it differently on any log that names one.
+ * Scoped by RUN before it reaches here: the store is asked for `task_judged`
+ * events of one run, so nothing in this loop can pick another attempt's
+ * verdict. Which run that is comes from `currentRunFor` in `shared`, the one
+ * definition of it, so this and the board cannot answer it differently on any
+ * log that names one.
  *
  * A judgement describes the worktree of the run that produced it. A task that was sent back to `ready` and ran again has an old verdict
  * about a tree that no longer exists — and the case that matters is the second
@@ -155,14 +160,12 @@ function refusalFor(judged: Judgement): string | undefined {
  * same trap sat one level down, and only `tailForTask` — newest first — is
  * actually bounded by recency rather than by a hope about volume.
  */
-function latestJudgement(events: readonly FleetEvent[], run: string | undefined): Judgement | undefined {
+function latestJudgement(events: readonly FleetEvent[]): Judgement | undefined {
   let latest: Judgement | undefined;
+  // Newest first from the store, so the first that parses is the answer. A
+  // malformed payload leaves the previous good one standing rather than
+  // reading as "nothing judged this", which would demand an override.
   for (const event of events) {
-    if (event.kind !== 'task_judged') continue;
-    // A judgement that does not say which run it describes cannot be shown to
-    // describe this one. Refusing it costs a reason; accepting it would spend
-    // the evidence of one attempt on another.
-    if (run !== undefined && event.runId !== run) continue;
     const read = readJudgement(event.payload, event.seq);
     if (read && (latest === undefined || read.seq > latest.seq)) latest = read;
   }

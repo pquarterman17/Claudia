@@ -6,6 +6,7 @@ import { startFleet } from '../src/fleet/boot.js';
 import { note } from '../src/fleet/pulse-report.js';
 import { acceptTask } from '../src/fleet/accept.js';
 import { worseOf } from '../src/fleet/pulse-apply.js';
+import { currentRunFor } from '@claudia/shared';
 
 const dir = mkdtempSync(join(tmpdir(), 'claudia-pulse-report-'));
 const boot = startFleet(new Set(), join(dir, 'fleet.db'));
@@ -60,13 +61,7 @@ describe('run identity on the notes a pulse writes', () => {
     expect(events.value.map((event) => event.runId)).toEqual([run.value.id, run.value.id, run.value.id]);
   });
 
-  it('agrees with acceptance about which attempt is current', () => {
-    // `worseOf` kept the FIRST intent of equal severity, so with two runs
-    // reporting in one pulse the note named attempt 1 while `acceptTask` read
-    // attempt 2 — the board and the server scoping to different verdicts for
-    // the same click. Observations are walked in started-at order, so keeping
-    // the later intent makes the note name the highest attempt, which is the
-    // one `listByTask` hands acceptance.
+  it('refuses on the verdict of the attempt whose report moved the task', () => {
     const mission = store.missions.create({ name: 'm3', body: '', cwd: '/repo' });
     if (!mission.ok) throw new Error(mission.message);
     const task = store.tasks.create({ missionId: mission.value.id, title: 't', description: '', cwd: '/repo' });
@@ -148,5 +143,33 @@ describe('which of two runs a task defers to', () => {
     if (!one.ok || !two.ok) throw new Error('could not read the log');
     expect(one.value).toHaveLength(1);
     expect(two.value).toHaveLength(1);
+  });
+});
+
+describe('reading the end of a task log, not the start', () => {
+  it('finds the newest report on a task with more history than one page', () => {
+    // `sinceForTask` is `seq > 0 ORDER BY seq LIMIT 500` — the OLDEST 500. A
+    // task's log is not bounded by its attempts, which is what that read
+    // assumed: a stuck run escalates with the elapsed minutes in the reason
+    // text, so the keyed note stops deduplicating and appends about sixty rows
+    // an hour. Past the page, the newest thing a task did was invisible.
+    const mission = store.missions.create({ name: 'm5', body: '', cwd: '/repo' });
+    if (!mission.ok) throw new Error(mission.message);
+    const task = store.tasks.create({ missionId: mission.value.id, title: 't', description: '', cwd: '/repo' });
+    if (!task.ok) throw new Error(task.message);
+
+    for (let i = 0; i < 520; i++) {
+      note(store, mission.value.id, task.value.id, 'escalated', `waiting ${i}m for approval of Bash`);
+    }
+    note(store, mission.value.id, task.value.id, 'task_reported', 'the child ended its turn', 'the-current-run');
+
+    const tail = store.events.tailForTask(task.value.id);
+    if (!tail.ok) throw new Error(tail.message);
+    expect(currentRunFor(tail.value)).toBe('the-current-run');
+
+    // The read it replaces cannot see it, which is the bug.
+    const head = store.events.sinceForTask(task.value.id);
+    if (!head.ok) throw new Error(head.message);
+    expect(currentRunFor(head.value)).toBeUndefined();
   });
 });

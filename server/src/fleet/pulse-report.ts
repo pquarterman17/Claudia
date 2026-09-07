@@ -69,13 +69,20 @@ export function skipMission(mission: Mission, reason: string): undefined {
   return undefined;
 }
 
-/** One line in the mission's timeline, keyed so a repeated tick cannot duplicate it. */
-/** Mission, task and run as one component, with no id able to impersonate a join. */
+/**
+ * Mission, task and run as one component, with no id able to impersonate a join.
+ *
+ * Three FIXED slots, empty where an id is absent. Dropping absent parts made
+ * the join positional again: `(m1, -, r1)` and `(m1, r1, -)` both spelled
+ * `m1:r1`, so a run-scoped mission note and an ordinary task note whose task
+ * id happened to equal that run id shared a key — and `note` swallows a
+ * duplicate silently, so the loser simply never exists.
+ */
 function scopeOf(missionId: string, taskId: string | undefined, runId: string | undefined): string {
-  const parts = [missionId, ...(taskId === undefined ? [] : [taskId]), ...(runId === undefined ? [] : [runId])];
-  return parts.map(encodeURIComponent).join(':');
+  return [missionId, taskId ?? '', runId ?? ''].map(encodeURIComponent).join(':');
 }
 
+/** One line in the mission's timeline, keyed so a repeated tick cannot duplicate it. */
 export function note(
   store: FleetStore,
   missionId: string,

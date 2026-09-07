@@ -172,7 +172,12 @@ export function applyWatchdogOutcomes(
         // could see — a watched mission simply stopped moving. The note is
         // idempotent on the same reason, so a fault that re-escalates does not
         // fill the log.
-        note(store, mission.id, run.taskId, 'escalated', `${action.request}: ${action.reason}`);
+        // Named with its run, like the rest. The key is (mission, task, run,
+        // kind, reason), so a fault that re-escalates for the same reason
+        // still writes one line — but two ATTEMPTS parked on the same tool at
+        // the same elapsed minute produce the same reason, and without the run
+        // the second one was swallowed as a duplicate of the first.
+        note(store, mission.id, run.taskId, 'escalated', `${action.request}: ${action.reason}`, run.id);
         result.escalated += 1;
         // An escalation does not end the run: it is still active, still
         // holding its task, and still occupying a slot.
@@ -213,18 +218,19 @@ export function applyWatchdogOutcomes(
 /**
  * Which of two runs' intents the task defers to.
  *
- * Ranked by what the answer COSTS, because the property worth keeping when
- * two runs of one task disagree is the bound on spending:
+ * `failed` beats everything, which is the rule this function already had: one
+ * run claiming to have finished does not answer another run of the same task
+ * having failed, and the answer that stops is the one to keep when two runs
+ * disagree. Note that this does cost something — a completion claim losing to
+ * a sibling's failure can only be recovered through `failed -> ready`, which
+ * pays for another child — but it is the existing bargain and not one to
+ * re-cut here.
  *
- *   failed    ends the task. Spends nothing more.
- *   reported  waits on a human. Spends nothing more.
- *   ready     is a retry. It launches another child and pays for it.
- *
- * So `failed` beats everything — one run claiming to have finished does not
- * answer another run of the same task having failed — and `reported` beats
- * `ready`, because a completion claim already in hand is not worth discarding
- * to pay for another attempt. The claim is never lost either way: its run row
- * records it, and only the task's status defers.
+ * `reported` beats `ready` because a retry LAUNCHES another child and pays for
+ * it, while a claim already in hand waits on a human for free. That is the
+ * ordering the bound on spending actually implies, and the one this function
+ * was getting wrong. The claim is never lost either way: its run row records
+ * it, and only the task's status defers.
  *
  * This replaces two rules that were both wrong. "Keep the first" made the
  * answer depend on the order `observations` happened to be walked in: the same

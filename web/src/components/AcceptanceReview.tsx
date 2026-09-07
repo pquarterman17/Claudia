@@ -51,7 +51,11 @@ export function AcceptanceReview({ missionId, task, judgement }: {
       <div style={{ display: 'grid', gap: 10, paddingTop: 10 }}>
         <section aria-label="Acceptance criteria">
           <Label>Acceptance criteria</Label>
-          <p style={copy}>{task.acceptance.trim() || 'No task-specific acceptance criteria were recorded.'}</p>
+          {/* Multi-line by design: `isText` permits newlines and `briefFor`
+              hands the whole thing to the child as a `## Done when` block, so
+              a three-bullet definition of done is ordinary input — and this is
+              the one place a human checks the evidence against it. */}
+          <p style={{ ...copy, whiteSpace: 'pre-wrap' }}>{task.acceptance.trim() || 'No task-specific acceptance criteria were recorded.'}</p>
         </section>
 
         {!judgement ? (

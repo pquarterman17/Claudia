@@ -82,21 +82,6 @@ describe('finding a verdict', () => {
     expect(judged?.reason).toBe('second attempt checked');
   });
 
-  it('scopes to the attempt whose report moved the task', () => {
-    const found = judgementFor([
-      event({ runId: 'r1', payload: GOOD }),
-      event({ seq: 2, runId: 'r2', kind: 'task_reported', payload: { reason: 'the second attempt ended' } }),
-    ], 't1');
-    expect(found).toBeUndefined();
-
-    const judged = judgementFor([
-      event({ runId: 'r1', payload: GOOD }),
-      event({ seq: 2, runId: 'r2', kind: 'task_reported', payload: {} }),
-      event({ seq: 3, runId: 'r2', payload: { ...GOOD, reason: 'second attempt checked' } }),
-    ], 't1');
-    expect(judged?.reason).toBe('second attempt checked');
-  });
-
   it('is not fooled by a run that ended without moving the task', () => {
     // The heuristic this replaces took the newest run named by ANY event, on
     // the reasoning that attempts are sequential. Pulse notes name the run that
@@ -109,6 +94,34 @@ describe('finding a verdict', () => {
       event({ seq: 3, runId: 'r2', kind: 'run_ended_task_held', payload: { reason: 'another run is still active' } }),
     ], 't1');
     expect(found?.verdict).toBe('needs_human');
+  });
+
+  it('will not offer a plain accept beside a test it can see failed', () => {
+    // The panel draws `failed (1)` from this same object. `judge()` rejects a
+    // failing run today, so this is about not depending on that.
+    const failing = judgementFor([event({ payload: {
+      ...GOOD, missing: [], evidence: { tests: [{ command: 'npm test', exitCode: 1 }] },
+    } })], 't1');
+    expect(failing?.tests).toEqual([{ command: 'npm test', exitCode: 1 }]);
+    expect(evidenceSupportsAcceptance(failing)).toBe(false);
+
+    const passing = judgementFor([event({ payload: {
+      ...GOOD, missing: [], evidence: { tests: [{ command: 'npm test', exitCode: 0 }] },
+    } })], 't1');
+    expect(evidenceSupportsAcceptance(passing)).toBe(true);
+  });
+
+  it('treats an exit code the server would call malformed as unread', () => {
+    // `typeof NaN` is 'number', so the looser check rendered `failed (NaN)` as
+    // a result somebody had read. The producer uses `Number.isSafeInteger`.
+    for (const exitCode of [Number.NaN, Number.POSITIVE_INFINITY, 1.5]) {
+      const found = judgementFor([event({ payload: {
+        ...GOOD, missing: [], evidence: { tests: [{ command: 'npm test', exitCode }] },
+      } })], 't1');
+      expect(found?.tests).toEqual([]);
+      expect(found?.unreadTests).toBe(1);
+      expect(evidenceSupportsAcceptance(found)).toBe(false);
+    }
   });
 
   it('counts a tests field of the wrong shape as unread, like the other lists', () => {

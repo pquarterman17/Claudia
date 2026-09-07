@@ -1,4 +1,4 @@
-import type { FleetEvent } from '@claudia/shared';
+import { currentRunFor, type FleetEvent } from '@claudia/shared';
 
 /**
  * The server's reading of what a finished child left behind.
@@ -53,18 +53,18 @@ const PR_STATES = new Set(['draft', 'open', 'merged', 'closed']);
  * one: the second attempt reports before the pulse judges it, and taking the
  * newest verdict by position hands back attempt 1's `accept`.
  *
- * The first version of this reset on `task_reported`, which read well and was
- * not sound. That note is written only when the task's own status move
- * succeeds — `applyTaskIntent` returns earlier when another run still holds
- * the task, and again when the route is refused — while `judgeReported` judges
- * every reported run regardless. So the marker went missing in exactly the
- * overlapping-attempt cases it was there for. Run identity is on every event
- * instead, which is a fact about the claim rather than a side effect of a
- * transition, and it is the same thing `accept_task` scopes by server-side.
+ * Which attempt that is comes from `currentRunFor` in `shared`, so this and
+ * `accept_task` cannot drift into answering it differently — the disagreement
+ * that made the panel offer decisions the server refused.
+ *
+ * When it answers `undefined` — no report note in this window, or a log from
+ * before runs were denormalised onto events — the newest verdict stands,
+ * whichever attempt it belongs to. Hiding every verdict there would be worse,
+ * and the server still refuses an acceptance it disagrees with.
  */
 export function judgementFor(events: readonly FleetEvent[] | undefined, taskId: string): Judgement | undefined {
   const mine = (events ?? []).filter((event) => event.taskId === taskId);
-  const current = currentRun(mine);
+  const current = currentRunFor(mine);
   let latest: Judgement | undefined;
   for (const event of mine) {
     if (event.kind !== 'task_judged') continue;
@@ -78,35 +78,6 @@ export function judgementFor(events: readonly FleetEvent[] | undefined, taskId: 
     if (read) latest = read;
   }
   return latest;
-}
-
-/**
- * The attempt whose report is on the table.
- *
- * The run named by the newest `task_reported`, which the server writes in
- * exactly one place: the branch that moves a task INTO `reported`. So it names
- * the claim that put the task in the state this panel is rendered for.
- *
- * The first version of this took the newest run named by ANY event, on the
- * reasoning that attempts are sequential so the last one mentioned is the
- * newest. That is false, and a review caught it: pulse notes name the run that
- * ENDED, not the run holding the task, and runs can end out of attempt order —
- * a second attempt dispatched while the first was stuck can report first and
- * never move the task. The board then scoped to one attempt and `accept_task`
- * to another, which is the disagreement this whole change exists to remove.
- * `server/src/fleet/accept.ts` reads the same note the same way.
- *
- * `undefined` — no such note in the window, or a log written before runs were
- * denormalised onto events — falls back to the newest verdict, whichever
- * attempt it belongs to. Hiding every verdict there would be worse, and the
- * server still refuses an acceptance it disagrees with.
- */
-function currentRun(events: readonly FleetEvent[]): string | undefined {
-  let current: string | undefined;
-  for (const event of events) {
-    if (event.kind === 'task_reported' && event.runId !== undefined) current = event.runId;
-  }
-  return current;
 }
 
 function readJudgement(payload: unknown): Judgement | undefined {
@@ -156,13 +127,19 @@ function readTests(value: unknown): { values: NonNullable<Judgement['tests']>; u
   let unread = 0;
   for (const item of value) {
     const test = asRecord(item);
-    if (!test || typeof test['command'] !== 'string' || typeof test['exitCode'] !== 'number') {
+    const exitCode = test?.['exitCode'];
+    // A SAFE INTEGER, matching `malformedEvidence` server-side. `typeof NaN` is
+    // 'number', so the looser check let `failed (NaN)` render as a result
+    // somebody had read — and `evidenceSupportsAcceptance` keys the
+    // plain-accept button on nothing being unread. Narrowed by `typeof` first
+    // because `Number.isSafeInteger` is not a type guard.
+    if (!test || typeof test['command'] !== 'string' || typeof exitCode !== 'number' || !Number.isSafeInteger(exitCode)) {
       unread += 1;
       continue;
     }
     tests.push({
       command: test['command'],
-      exitCode: test['exitCode'],
+      exitCode,
       ...(typeof test['summary'] === 'string' ? { summary: test['summary'] } : {}),
     });
   }
@@ -215,11 +192,17 @@ function safeWebUrl(value: unknown): string | undefined {
  */
 export function evidenceSupportsAcceptance(judgement: Judgement | undefined): boolean {
   if (!judgement) return false;
-  // If this client could not read every result, it cannot honestly present the
-  // same plain-accept path as a complete green verdict. The server remains the
-  // authority; the reasoned override records why the human proceeded despite
-  // what this board could not show.
-  return judgement.verdict !== 'reject' && judgement.missing.length === 0 && (judgement.unreadTests ?? 0) === 0;
+  if (judgement.verdict === 'reject' || judgement.missing.length > 0) return false;
+  // What this board could not read, and what it read and can see failed. The
+  // first because a plain accept over evidence nobody could parse is not the
+  // same offer as one over a complete green verdict. The second because the
+  // panel draws `failed (1)` from this very object, and offering a one-click
+  // acceptance beside it would be the board disagreeing with itself. Neither
+  // should be reachable from today's `judge()`, which rejects a failing run —
+  // both are the cheap half of not depending on that. The server stays the
+  // authority either way; the reasoned override records why a human proceeded.
+  if ((judgement.unreadTests ?? 0) > 0) return false;
+  return !judgement.tests?.some((test) => test.exitCode !== 0);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

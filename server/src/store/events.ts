@@ -250,6 +250,31 @@ export class FleetEventLog {
   }
 
   /**
+   * The newest events of ONE task, oldest first within the page.
+   *
+   * `sinceForTask` is `seq > 0 ORDER BY seq LIMIT 500` — the OLDEST 500. That
+   * read was chosen on the reasoning that a task's log is bounded by its
+   * attempts, and it is not: a stuck run escalates with a reason carrying the
+   * elapsed minutes (`waiting 12m for approval of …`), so the text changes
+   * every minute and the keyed note stops deduplicating. Roughly sixty rows an
+   * hour, and past five hundred the newest thing a task did is outside the
+   * window — which is where acceptance was reading the verdict and the run
+   * under review from.
+   *
+   * `ORDER BY seq DESC LIMIT n` then reversed, like `tailForMission`: the
+   * database picks the newest n rows this task has, whatever numbers they
+   * carry.
+   */
+  tailForTask(taskId: string, limit: number = DEFAULT_PAGE): StoreResult<FleetEvent[]> {
+    return attempt('read the end of a task log', () => {
+      const rows = this.db
+        .prepare(`SELECT ${COLUMNS} FROM fleet_events WHERE task_id = ? ORDER BY seq DESC LIMIT ?`)
+        .all(taskId, page(limit)) as Row[];
+      return rows.map(toEvent).reverse();
+    });
+  }
+
+  /**
    * The oldest and newest sequence ONE mission's log still holds.
    *
    * Per mission, not global, and that is the whole point of it existing.

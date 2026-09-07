@@ -1,3 +1,4 @@
+import { currentRunFor, type FleetEvent } from '@claudia/shared';
 import type { FleetStore } from '../store/index.js';
 
 /**
@@ -46,8 +47,13 @@ export function acceptTask(store: FleetStore, missionId: string, taskId: string,
     return { ok: false, message: `A task that is ${task.value.status} has not reported anything to accept.` };
   }
 
-  const run = currentRunId(store, taskId);
-  const judged = latestJudgement(store, taskId, run);
+  // Read once, and both derivations answer from the same snapshot. Two reads
+  // could disagree — a pulse commits between them — and "which attempt" and
+  // "its verdict" disagreeing is the whole failure this command guards.
+  const log = store.events.tailForTask(taskId);
+  const events = log.ok ? log.value : [];
+  const run = currentRunId(store, taskId, events);
+  const judged = latestJudgement(events, run);
   const reason = (override ?? '').trim();
   const blocker = judged === undefined ? 'nothing has judged this task yet' : refusalFor(judged);
 
@@ -133,18 +139,19 @@ function refusalFor(judged: Judgement): string | undefined {
  * through without anything having looked at it. Unjudged has to read as
  * unjudged, which is what an override exists for.
  *
- * From the TASK's log, not the mission's. `sinceForMission(id)` is
- * `seq > 0 ORDER BY seq LIMIT 500` — the OLDEST 500 events of the mission. So
- * on any mission long enough to matter, the judgement made seconds ago was not
- * in the window and acceptance demanded an override forever, which trains the
- * one habit this whole command exists to prevent. A task's own log is bounded
- * by its attempts, so the same read is sound here.
+ * From the newest end of the TASK's log. Two window bugs, in sequence. The
+ * first read the MISSION's log through `sinceForMission`, which is
+ * `seq > 0 ORDER BY seq LIMIT 500` — the oldest 500 — so on any long mission
+ * the verdict made seconds ago was outside it. Narrowing to the task looked
+ * like the fix, on the reasoning that a task's log is bounded by its attempts.
+ * It is not: a stuck run escalates once a minute, because the reason text
+ * carries the elapsed minutes and the keyed note stops deduplicating. So the
+ * same trap sat one level down, and only `tailForTask` — newest first — is
+ * actually bounded by recency rather than by a hope about volume.
  */
-function latestJudgement(store: FleetStore, taskId: string, run: string | undefined): Judgement | undefined {
-  const events = store.events.sinceForTask(taskId);
-  if (!events.ok) return undefined;
+function latestJudgement(events: readonly FleetEvent[], run: string | undefined): Judgement | undefined {
   let latest: Judgement | undefined;
-  for (const event of events.value) {
+  for (const event of events) {
     if (event.kind !== 'task_judged') continue;
     // A judgement that does not say which run it describes cannot be shown to
     // describe this one. Refusing it costs a reason; accepting it would spend
@@ -179,15 +186,9 @@ function latestJudgement(store: FleetStore, taskId: string, run: string | undefi
  * not describe, and refusing every acceptance there would be worse than
  * scoping to the newest run.
  */
-function currentRunId(store: FleetStore, taskId: string): string | undefined {
-  const events = store.events.sinceForTask(taskId);
-  if (events.ok) {
-    let reported: string | undefined;
-    for (const event of events.value) {
-      if (event.kind === 'task_reported' && event.runId !== undefined) reported = event.runId;
-    }
-    if (reported !== undefined) return reported;
-  }
+function currentRunId(store: FleetStore, taskId: string, events: readonly FleetEvent[]): string | undefined {
+  const reported = currentRunFor(events);
+  if (reported !== undefined) return reported;
   const runs = store.runs.listByTask(taskId);
   if (!runs.ok || runs.value.length === 0) return undefined;
   return runs.value[runs.value.length - 1]?.id;

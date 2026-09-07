@@ -300,6 +300,42 @@ describe('the attempt on the table', () => {
     expect(outcome.message).toBe('Accepted.');
   });
 
+  it('finds the attempt and its verdict past a page of the task\'s own log', () => {
+    // Narrowing from the mission's log to the task's looked like the fix for
+    // the window bug, on the reasoning that a task's log is bounded by its
+    // attempts. It is not — a stuck run escalates once a minute, because the
+    // reason carries the elapsed minutes and the keyed note stops
+    // deduplicating — so the same trap sat one level down. Only a newest-first
+    // read is bounded by recency rather than by a hope about volume.
+    const { store, missionId, taskId } = fixture();
+    const run = attemptOf(store, missionId, taskId);
+    for (let i = 0; i < 520; i++) {
+      const filler = store.events.append({
+        missionId,
+        taskId,
+        actor: 'system',
+        kind: 'escalated',
+        payload: { reason: `waiting ${i}m for approval of Bash` },
+      });
+      if (!filler.ok) throw new Error(filler.message);
+    }
+    judged(store, missionId, taskId, run, GREEN);
+    const reported = store.events.append({
+      missionId,
+      taskId,
+      runId: run,
+      actor: 'system',
+      kind: 'task_reported',
+      payload: { reason: 'the child ended its turn' },
+      idempotencyKey: `reported:${run}`,
+    });
+    if (!reported.ok) throw new Error(reported.message);
+
+    const outcome = acceptTask(store, missionId, taskId);
+    expect(outcome.ok, outcome.message).toBe(true);
+    expect(outcome.message).toBe('Accepted.');
+  });
+
   it('keeps a reason somebody wrote even when the evidence turned out to hold', () => {
     // The board asks for a reason from the judgement IT holds, and it holds
     // only the tail of a mission's log. So a human can write one against

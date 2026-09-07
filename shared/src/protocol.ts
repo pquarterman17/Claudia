@@ -33,6 +33,7 @@ import type {
   ToolkitAction,
   TranscriptItem,
   TriggerStatus,
+  WorktreeState,
 } from './index.js';
 import type { UsageSnapshot } from './usage.js';
 
@@ -207,4 +208,30 @@ export type ServerEvent =
    * rather than a client inferring it from a string of refusals.
    */
   | { type: 'fleet_unavailable'; reason: string }
+  /**
+   * What a worktree cleanup would do, or what it did.
+   *
+   * One event for both phases because they carry the same rows and the human
+   * reads them the same way: a list of directories with a sentence each. The
+   * plan requires cleanup to be previewable and refuses unsafe deletion, so
+   * `preview` is the only way to reach `applied` in the UI — and `applied`
+   * repeats every entry's verdict rather than only the successes, because the
+   * one a person most wants to see is the one that did not go.
+   */
+  | { type: 'worktree_cleanup'; missionId: string; phase: 'preview' | 'applied'; entries: WorktreeCleanupEntry[] }
   | { type: 'server_error'; message: string };
+
+/** One directory in a cleanup plan, with the reason it is or is not going. */
+export interface WorktreeCleanupEntry {
+  worktreeId: string;
+  path: string;
+  branch: string;
+  state: WorktreeState;
+  /** Whether the rules would let this one go, before anything was attempted. */
+  removable: boolean;
+  reason: string;
+  /** Only in the `applied` phase, and only for the ones that were attempted. */
+  removed?: boolean;
+  /** Why git or the store refused, when one of them did. */
+  error?: string;
+}

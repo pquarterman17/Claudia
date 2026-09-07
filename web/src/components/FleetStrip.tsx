@@ -6,6 +6,7 @@ import { send } from '../store';
 import { FleetLimitsControl } from './FleetLimits';
 import { MissionBudget } from './MissionBudget';
 import { MissionEscalations } from './MissionEscalations';
+import { WorktreeCleanup } from './WorktreeCleanup';
 import { MissionVerify } from './MissionVerify';
 import { MissionTasks } from './MissionTasks';
 
@@ -160,6 +161,7 @@ export function FleetStrip({ fleet, connected, limits }: { fleet: FleetState; co
                     <MissionVerify missionId={mission.id} verify={mission.verify} />
                     <MissionBudget mission={mission} spend={fleet.spend.get(mission.id)} />
                     <MissionEscalations missionId={mission.id} escalations={fleet.escalations.get(mission.id)} />
+                    <WorktreeCleanup missionId={mission.id} plan={fleet.cleanup.get(mission.id)} />
                   </div>
                 )}
                 {open === mission.id && (

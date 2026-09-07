@@ -214,6 +214,22 @@ export type ClientCommand =
    */
   | { type: 'resolve_escalation'; missionId: string; escalationId: string; resolution: HumanResolution; note?: string }
   /**
+   * What a worktree cleanup would do. Reads git, writes nothing, and is the
+   * only way to reach `remove_worktrees` — the plan requires managed cleanup
+   * to preview branches and worktrees before it refuses or removes anything.
+   */
+  | { type: 'preview_worktree_cleanup'; missionId: string }
+  /**
+   * Remove the directories a person picked out of a preview.
+   *
+   * `worktreeIds` is what they chose, not a filter: a plan recomputed a minute
+   * later is not the list they read, and a record that appeared in between is
+   * one nobody agreed to. `confirmedUnmerged` is per worktree for the same
+   * reason it is in `CleanupOptions` — approving one unmerged removal in a
+   * preview must not authorise every unmerged one beside it.
+   */
+  | { type: 'remove_worktrees'; missionId: string; worktreeIds: string[]; confirmedUnmerged?: string[] }
+  /**
    * Follow a session Claudia does not own, by reading its transcript.
    *
    * On demand rather than always: the usage reader already sweeps every log on

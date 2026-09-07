@@ -83,6 +83,8 @@ const VALID: Array<[string, Record<string, unknown>]> = [
   ['set_mission_budget', { type: 'set_mission_budget', missionId: 'm1', budgetSec: 7200, budgetTokens: null }],
   ['create_task', { type: 'create_task', missionId: 'm1', title: 't', description: '', cwd: '/repo' }],
   ['list_tasks', { type: 'list_tasks', missionId: 'm1' }],
+  ['preview_worktree_cleanup', { type: 'preview_worktree_cleanup', missionId: 'm1' }],
+  ['remove_worktrees', { type: 'remove_worktrees', missionId: 'm1', worktreeIds: ['w1'], confirmedUnmerged: ['w1'] }],
   ['get_fleet_events', { type: 'get_fleet_events', missionId: 'm1', afterSeq: 0 }],
   ['set_task_status', { type: 'set_task_status', missionId: 'm1', taskId: 't1', status: 'ready' }],
   ['accept_task', { type: 'accept_task', missionId: 'm1', taskId: 't1' }],

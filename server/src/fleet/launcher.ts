@@ -1,11 +1,12 @@
-import { realpathSync, statSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import type { AgentKind, PermissionLaunchMode, Task } from '@claudia/shared';
 import type { FleetStore } from '../store/index.js';
 import { gitLine } from './git-facts.js';
 import { ensureWorktree, worktreePath } from '../worktree.js';
 import type { LaunchChild, LaunchOrder } from './pulse.js';
 import { REPORT_PATH } from './child-report.js';
-import { claimWorktree, type ObservedWorktree } from './worktree-owner.js';
+import { claimWorktree } from './worktree-owner.js';
+import { observeWorktree } from './worktree-observe.js';
 
 /**
  * Where a dispatch decision finally becomes a running agent.
@@ -130,7 +131,7 @@ async function claimFor(order: LaunchOrder, task: Task, deps: LauncherDeps): Pro
   const verdict = claimWorktree(
     { repo, path, branch, missionId: order.missionId, taskId: order.taskId },
     held.value,
-    await observe(path),
+    await observeWorktree(path),
   );
   if (verdict.kind === 'refuse') throw new Error(`cannot claim a worktree: ${verdict.reason}`);
 
@@ -234,33 +235,4 @@ export function briefFor(task: Task): string {
   return parts.filter(Boolean).join('\n\n');
 }
 
-/**
- * What is actually at the path, as far as this process can tell.
- *
- * Every field is left UNDEFINED when it cannot be read, which `claimWorktree`
- * treats as a reason to refuse. That is the point: `exists: false` is the one
- * value that skips its identity, dirty and ownership vetoes, so a `statSync`
- * that failed for any reason other than "nothing there" must not be reported
- * as an empty path.
- */
-async function observe(path: string): Promise<ObservedWorktree> {
-  try {
-    statSync(path);
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === 'ENOENT' ? { exists: false } : {};
-  }
-  const common = await gitLine(path, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
-  const status = await gitLine(path, ['status', '--porcelain'], { allowEmpty: true });
-  return {
-    exists: true,
-    ...(common ? { repo: common.replace(/[/\\]\.git\/?$/, '') } : {}),
-    ...(await optional('branch', gitLine(path, ['rev-parse', '--abbrev-ref', 'HEAD']))),
-    ...(await optional('headSha', gitLine(path, ['rev-parse', 'HEAD']))),
-    ...(status === undefined ? {} : { dirty: status.length > 0 }),
-  };
-}
 
-async function optional<K extends string>(key: K, value: Promise<string | undefined>): Promise<Record<K, string> | object> {
-  const resolved = await value;
-  return resolved ? ({ [key]: resolved } as Record<K, string>) : {};
-}

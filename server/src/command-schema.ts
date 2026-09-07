@@ -177,7 +177,17 @@ function validate(type: string, o: Record<string, unknown>): string | undefined 
         opt('override', isText, 'a string'),
       ]);
     case 'list_tasks':
+    case 'preview_worktree_cleanup':
       return runChecks(type, o, [req('missionId', isLabel, 'a string')]);
+    case 'remove_worktrees':
+      // The ids are checked for SHAPE only. Whether each one may actually go
+      // is re-graded against the disk when the command runs — a preview is
+      // what the human consented to, not evidence about the worktree.
+      return runChecks(type, o, [
+        req('missionId', isLabel, 'a string'),
+        req('worktreeIds', isLabelList, 'an array of worktree ids'),
+        opt('confirmedUnmerged', isLabelList, 'an array of worktree ids'),
+      ]);
     case 'set_task_status':
       return runChecks(type, o, [
         req('missionId', isLabel, 'a string'),

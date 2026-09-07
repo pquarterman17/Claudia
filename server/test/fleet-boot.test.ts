@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { recoverFleet, startFleet } from '../src/fleet/boot.js';
+import { currentRunFor } from '@claudia/shared';
 import type { FleetStore } from '../src/store/index.js';
 
 /**
@@ -183,5 +184,49 @@ describe('reconciling what a crash left behind', () => {
     expect(recoverFleet(store, new Set()).ok).toBe(true);
     const task = store.tasks.get(taskId);
     expect(task.ok && task.value?.status).toBe('ready');
+  });
+});
+
+describe('a claim recovered after a crash names its attempt', () => {
+  it('writes a run-scoped report note when it puts a task back into review', () => {
+    // Everything downstream reads WHICH attempt is under review from a
+    // run-scoped `task_reported`. The pulse writes one when it moves a task
+    // into `reported`; recovery is the only other path that does, and without
+    // a note here a task recovered after a crash was reviewed against
+    // whichever earlier attempt had last left one.
+    const dir = mkdtempSync(join(tmpdir(), 'claudia-recover-note-'));
+    const first = startFleet(new Set(), join(dir, 'fleet.db'));
+    if (!first.store) throw new Error(first.summary);
+
+    const mission = first.store.missions.create({ name: 'm', body: '', cwd: '/repo' });
+    if (!mission.ok) throw new Error(mission.message);
+    const task = first.store.tasks.create({ missionId: mission.value.id, title: 't', description: '', cwd: '/repo' });
+    if (!task.ok) throw new Error(task.message);
+    for (const status of ['ready', 'running'] as const) {
+      const moved = first.store.tasks.setStatus(task.value.id, status);
+      if (!moved.ok) throw new Error(moved.message);
+    }
+    const run = first.store.runs.create({
+      missionId: mission.value.id,
+      taskId: task.value.id,
+      agent: 'claude',
+      sessionId: 'gone',
+      state: 'dispatched',
+    });
+    if (!run.ok) throw new Error(run.message);
+    for (const state of ['running', 'reported'] as const) {
+      const moved = first.store.runs.setState(run.value.id, state);
+      if (!moved.ok) throw new Error(moved.message);
+    }
+    first.close();
+
+    // Restarted with no live sessions: the task is recovered into `reported`.
+    const second = startFleet(new Set(), join(dir, 'fleet.db'));
+    if (!second.store) throw new Error(second.summary);
+    const reported = second.store.events.latestForTask(task.value.id, 'task_reported', 4);
+    if (!reported.ok) throw new Error(reported.message);
+    expect(currentRunFor(reported.value)).toBe(run.value.id);
+    second.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 });

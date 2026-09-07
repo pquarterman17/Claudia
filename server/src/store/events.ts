@@ -262,9 +262,14 @@ export class FleetEventLog {
    * narrowing to the task only moved the same trap down a level, because a
    * task's log is not bounded by its attempts either.
    *
-   * This asks the database instead. `fleet_events_by_task` is `(task_id, seq)`,
-   * so `ORDER BY seq DESC` walks it backwards from the newest and the limit
-   * stops it — no page to fall outside of.
+   * This asks the database instead. `fleet_events_by_task_kind` is
+   * `(task_id, kind, seq)`, so `ORDER BY seq DESC` walks the matching rows
+   * backwards from the newest and the limit stops it — no page to fall
+   * outside of, and a miss stops at the first row rather than at the last.
+   * The `(task_id, seq)` index alone was not enough: `kind` was a filter
+   * rather than a key, so the case that matters — `hasJudgement` answering
+   * "not yet" for a freshly reported run, every pulse — read the task's whole
+   * partition.
    *
    * A limit above one exists for the caller that wants the newest verdict THAT
    * PARSES: a malformed payload should leave the previous good one standing

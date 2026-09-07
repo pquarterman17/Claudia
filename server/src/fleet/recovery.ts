@@ -66,7 +66,14 @@ export function recoverRuns(
  * attempt did fail. Applying `path` in order is the whole contract; a caller
  * that writes only the last element gets its write refused.
  */
-export type TaskRecovery = { taskId: string; to: TaskStatus; path: readonly TaskStatus[]; reason: string };
+export type TaskRecovery = {
+  taskId: string;
+  to: TaskStatus;
+  path: readonly TaskStatus[];
+  reason: string;
+  /** The attempt this recovery is about, when it puts a task back into review. */
+  runId?: string;
+};
 
 /**
  * The route back into the queue, named rather than searched for.
@@ -81,10 +88,10 @@ const TO_QUEUE: readonly TaskStatus[] = ['failed', 'ready'];
 const TO_REVIEW: readonly TaskStatus[] = ['reported'];
 
 /** Builds the recovery, refusing to emit a move the store would reject. */
-function move(task: Task, route: readonly TaskStatus[], reason: string): TaskRecovery | undefined {
+function move(task: Task, route: readonly TaskStatus[], reason: string, runId?: string): TaskRecovery | undefined {
   if (!isLegalRoute(task.status, route, TASK_TRANSITIONS)) return undefined;
   const to = route[route.length - 1];
-  return to ? { taskId: task.id, to, path: route, reason } : undefined;
+  return to ? { taskId: task.id, to, path: route, reason, ...(runId === undefined ? {} : { runId }) } : undefined;
 }
 
 /**
@@ -130,7 +137,13 @@ export function recoverTasks(
       run?.state === 'reported'
         ? // That attempt finished and its evidence is in the worktree. Sending
           // it back to the queue throws the work away and pays for it twice.
-          move(task, TO_REVIEW, 'its latest run reported before the server stopped; the work is waiting on review')
+          //
+          // The run comes with it. Everything downstream reads which attempt
+          // is under review from a run-scoped `task_reported`, and recovery
+          // is the one other path that puts a task into `reported` — without
+          // naming its run here, a task recovered after a crash was reviewed
+          // against whichever earlier attempt last left a note.
+          move(task, TO_REVIEW, 'its latest run reported before the server stopped; the work is waiting on review', run.id)
         : move(task, TO_QUEUE, 'it was running when the server stopped, and nothing is running now');
     if (recovery) recoveries.push(recovery);
   }

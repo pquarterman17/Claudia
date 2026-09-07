@@ -154,6 +154,7 @@ CREATE INDEX fleet_events_by_mission ON fleet_events (mission_id, seq);
 -- Run-level filtering rides on this one: a run's events are a subset of its
 -- task's, and a second index on the append path is not worth that narrowing.
 CREATE INDEX fleet_events_by_task ON fleet_events (task_id, seq) WHERE task_id IS NOT NULL;
+CREATE INDEX fleet_events_by_task_kind ON fleet_events (task_id, kind, seq) WHERE task_id IS NOT NULL;
 `;
 
 /**
@@ -228,4 +229,19 @@ ALTER TABLE missions ADD COLUMN verify TEXT;
  */
 export const RUN_TOKENS = `
 ALTER TABLE child_runs ADD COLUMN tokens INTEGER;
+`;
+
+/**
+ * The index `latestForTask` actually needs.
+ *
+ * `fleet_events_by_task` is `(task_id, seq)`, so a lookup filtered by `kind`
+ * walks every event the task has until it finds a match. The case that hurts
+ * is the NEGATIVE one — `hasJudgement` asking whether a freshly reported run
+ * has been judged, on every pulse, and the answer being "no" — which scanned
+ * the task's whole partition. Adding `kind` ahead of `seq` makes the walk stop
+ * at the first miss instead of at the last row.
+ */
+export const EVENTS_BY_TASK_KIND = `
+CREATE INDEX IF NOT EXISTS fleet_events_by_task_kind
+  ON fleet_events (task_id, kind, seq) WHERE task_id IS NOT NULL;
 `;

@@ -271,6 +271,48 @@ describe('the attempt on the table', () => {
     expect(accepted(store, missionId)?.['overrode']).toBeUndefined();
   });
 
+  it('will not accept a later attempt on an earlier one\'s verdict', () => {
+    // The end-to-end shape of the whole feature, through the real store.
+    // `latestForTask` answers newest-first and `currentRunFor` took the LAST
+    // match, so the server scoped to the OLDEST report in its window and
+    // accepted attempt 2 on attempt 1's green verdict with no override — the
+    // exact failure this command exists to prevent, reintroduced by the read
+    // that was supposed to make it robust.
+    const { store, missionId, taskId } = fixture();
+    const first = attemptOf(store, missionId, taskId);
+    const second = attemptOf(store, missionId, taskId);
+    const report = (runId: string, reason: string) => {
+      const appended = store.events.append({
+        missionId, taskId, runId, actor: 'system', kind: 'task_reported',
+        payload: { reason }, idempotencyKey: `reported:${runId}`,
+      });
+      if (!appended.ok) throw new Error(appended.message);
+    };
+    report(first, 'attempt 1 ended');
+    judged(store, missionId, taskId, first, GREEN);
+    report(second, 'attempt 2 ended');
+
+    const outcome = acceptTask(store, missionId, taskId);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.message).toMatch(/[Nn]othing has judged/);
+    expect(statusOf(store, taskId)).toBe('reported');
+  });
+
+  it('refuses a verdict it does not recognise instead of reading it as fine', () => {
+    // `refusalFor` blocks only on `reject`, so an unrecognised verdict — an
+    // older or newer build, a hand-written event — read as "not a rejection"
+    // and permitted a plain accept, while the board guards the same field
+    // against the same three values. The two disagreed in the unsafe
+    // direction.
+    const { store, missionId, taskId } = fixture();
+    const run = attemptOf(store, missionId, taskId);
+    judged(store, missionId, taskId, run, { verdict: 'probably', reason: 'who knows', missing: [] });
+
+    const outcome = acceptTask(store, missionId, taskId);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.message).toMatch(/[Nn]othing has judged/);
+  });
+
   it('names the run it accepted, so the log says which tree was signed off', () => {
     const { store, missionId, taskId } = fixture();
     const run = attemptOf(store, missionId, taskId);

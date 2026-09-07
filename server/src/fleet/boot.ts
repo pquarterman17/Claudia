@@ -1,4 +1,5 @@
 import { describeRecovery, planRecovery, type RunRecovery, type TaskRecovery } from './recovery.js';
+import { note } from './pulse-report.js';
 import { transact } from '../store/db.js';
 import { openFleetStore, type FleetStore, type StoreResult } from '../store/index.js';
 
@@ -129,6 +130,15 @@ function applyRecovery(
       for (const status of task.path) {
         const moved = store.tasks.setStatus(task.taskId, status);
         if (!moved.ok) throw new Error(moved.message);
+      }
+      // A recovered claim is still a claim, and everything downstream reads
+      // WHICH attempt is under review from a run-scoped `task_reported`. The
+      // pulse writes one when it moves a task into `reported`; this is the
+      // only other path that does, and without a note here a task recovered
+      // after a crash was reviewed against whichever earlier attempt had last
+      // left one — the board and `accept_task` both.
+      if (task.to === 'reported' && task.runId !== undefined) {
+        note(store, missionId, task.taskId, 'task_reported', task.reason, task.runId);
       }
     }
     const account = describeRecovery(plan.runs, plan.tasks);

@@ -337,14 +337,25 @@ function clampLimit(value: unknown, fallback: number, ceiling: number): number {
  * branch, and never move the task at all. Both of those readings answered with
  * a run nobody is looking at.
  *
+ * By `seq`, NOT by position. This took the last match in the array, which made
+ * the answer depend on an ordering the signature never asked for: the board
+ * passes an ascending slice and the server a descending page, so the server
+ * got the OLDEST report in its window and accepted a second attempt on the
+ * first one's verdict — the exact failure this function exists to prevent,
+ * with the two callers reading the same helper in opposite directions.
+ *
  * `undefined` means no such note is in reach — a log written before runs were
  * denormalised onto events, or a task moved to `reported` by hand. Each caller
  * decides what to do there; neither should pretend it knows.
  */
 export function currentRunFor(events: readonly FleetEvent[]): string | undefined {
   let current: string | undefined;
+  let currentSeq = Number.NEGATIVE_INFINITY;
   for (const event of events) {
-    if (event.kind === 'task_reported' && event.runId !== undefined) current = event.runId;
+    if (event.kind !== 'task_reported' || event.runId === undefined) continue;
+    if (event.seq <= currentSeq) continue;
+    current = event.runId;
+    currentSeq = event.seq;
   }
   return current;
 }

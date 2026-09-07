@@ -22,7 +22,6 @@ export function AcceptanceReview({ missionId, task, judgement }: {
   judgement: Judgement | undefined;
 }) {
   const [override, setOverride] = useState<string | undefined>();
-  const [sent, setSent] = useState(false);
   // A reason already being typed keeps the override open even if a fresh
   // verdict would otherwise offer the plain button. `accept.ts` spends a long
   // comment on the reason being the whole point of an override, and tearing
@@ -39,12 +38,6 @@ export function AcceptanceReview({ missionId, task, judgement }: {
   // write "ok" instead of a reason. The panel stops rendering once the task
   // leaves `reported`, so a successful accept clears it anyway.
   const accept = (reason: string): void => {
-    // Once. `send` is fire-and-forget and the panel stays mounted until the
-    // task leaves `reported`, so a held Enter key sent one accept and then a
-    // run of refusals — `a task that is accepted has not reported anything to
-    // accept` — surfacing as an error notice for the accept that just worked.
-    if (sent) return;
-    setSent(true);
     send(acceptCommand(missionId, task.id, reason));
   };
 
@@ -96,10 +89,19 @@ export function AcceptanceReview({ missionId, task, judgement }: {
                   value={override}
                   onChange={(event) => setOverride(event.target.value)}
                   onKeyDown={(event) => {
-                    // Enter submits, as it does in all three task inputs next
-                    // door. This one sits in a `div` rather than a `form`, so
-                    // without a handler there is no implicit submit and the
-                    // reason can only be committed with the mouse.
+                    // Enter submits, as it does in the task inputs next door.
+                    // This one sits in a `div` rather than a `form`, so without
+                    // a handler there is no implicit submit and the reason
+                    // could only be committed with the mouse.
+                    //
+                    // `repeat` guards the held key, which is the case that sent
+                    // one accept and then a run of refusals. A LATCH was the
+                    // wrong shape for it: nothing reset the latch, so the first
+                    // refusal — which `accept.ts` documents as reachable —
+                    // disabled every acceptance control on the task for good,
+                    // including the override path that exists to recover from
+                    // exactly that refusal.
+                    if (event.repeat) return;
                     if (event.key === 'Enter' && override.trim() !== '') accept(override);
                   }}
                   placeholder="Explain why this evidence is sufficient"
@@ -109,7 +111,7 @@ export function AcceptanceReview({ missionId, task, judgement }: {
               <button
                 className="btn btn-ghost"
                 style={warning}
-                disabled={sent || override.trim() === ''}
+                disabled={override.trim() === ''}
                 onClick={() => accept(override)}
               >
                 record override and accept
@@ -118,7 +120,7 @@ export function AcceptanceReview({ missionId, task, judgement }: {
             </>
           ) : supported ? (
             <>
-              <button className="btn btn-ghost" style={positive} disabled={sent} onClick={() => accept('')}>
+              <button className="btn btn-ghost" style={positive} onClick={() => accept('')}>
                 accept task
               </button>
               <button

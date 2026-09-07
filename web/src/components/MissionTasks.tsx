@@ -48,16 +48,23 @@ export function MissionTasks({
   const [description, setDescription] = useState('');
   const [acceptance, setAcceptance] = useState('');
 
-  // Computed once per timeline, not once per keystroke. The three inputs below
-  // are controlled state on this component, so every character typed into any
-  // of them re-renders the whole list — and `judgementFor` walks the capped
-  // 200-event window and re-parses every matching payload, including a `new
-  // URL` per PR link, once for each reported task.
+  // Computed once per timeline, not once per keystroke, and in ONE pass over
+  // the window rather than one per reported task. The inputs below are
+  // controlled state on this component, so every character typed into any of
+  // them re-renders the whole list; `judgementFor` walks the capped 200-event
+  // window and re-parses every matching payload, including a `new URL` per PR
+  // link, so calling it per task was that walk N times over.
   const judgements = useMemo(() => {
-    const found = new Map<string, ReturnType<typeof judgementFor>>();
-    for (const task of tasks ?? []) {
-      if (task.status === 'reported') found.set(task.id, judgementFor(events, task.id));
+    const reported = new Set((tasks ?? []).filter((task) => task.status === 'reported').map((task) => task.id));
+    const byTask = new Map<string, FleetEvent[]>();
+    for (const event of events ?? []) {
+      if (event.taskId === undefined || !reported.has(event.taskId)) continue;
+      const bucket = byTask.get(event.taskId);
+      if (bucket) bucket.push(event);
+      else byTask.set(event.taskId, [event]);
     }
+    const found = new Map<string, ReturnType<typeof judgementFor>>();
+    for (const id of reported) found.set(id, judgementFor(byTask.get(id), id));
     return found;
   }, [events, tasks]);
 

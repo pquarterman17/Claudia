@@ -26,6 +26,8 @@ import type { FleetStore } from '../store/index.js';
  * auditable decision and the click this replaces.
  */
 
+const VERDICTS = new Set(['accept', 'reject', 'needs_human']);
+
 /** What the log says about a run, read back from JSON rather than assumed. */
 interface Judgement {
   verdict: string;
@@ -205,7 +207,12 @@ function readJudgement(payload: unknown, seq: number): Judgement | undefined {
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return undefined;
   const record = payload as Record<string, unknown>;
   const verdict = record['verdict'];
-  if (typeof verdict !== 'string') return undefined;
+  // One of the three, not any string. `refusalFor` blocks only on `reject`, so
+  // an unrecognised verdict — an older or newer build, a hand-written event —
+  // read as "not a rejection" and permitted a plain accept, while the board
+  // guards the same field against the same set and treats it as unreadable.
+  // The two disagreed in the unsafe direction.
+  if (typeof verdict !== 'string' || !VERDICTS.has(verdict)) return undefined;
   return {
     verdict,
     reason: typeof record['reason'] === 'string' ? record['reason'] : '',

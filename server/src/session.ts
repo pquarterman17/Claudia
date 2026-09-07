@@ -64,7 +64,7 @@ export class ClaudiaSession {
   private needsAction: NeedsAction | undefined;
   private readonly subAgents = new SubAgentTracker();
   private readonly promptQueue = new PromptQueue();
-  private readonly draft = new DraftBuffer();
+  private readonly draft = new DraftBuffer((text) => this.cb.onDraft(this.id, text));
   private readonly controls: SessionRuntimeControls;
   readonly transcript = new TranscriptLog();
   private customTitle: string | undefined;
@@ -177,8 +177,7 @@ export class ClaudiaSession {
     this.lastActivityAt = Date.now();
 
     if (routed.draftDelta !== undefined) {
-      const emit = this.draft.append(routed.draftDelta);
-      if (emit !== null) this.cb.onDraft(this.id, emit);
+      this.draft.append(routed.draftDelta);
       return; // a delta carries nothing else
     }
     if (routed.steps.length > 0 && this.draft.clear()) this.cb.onDraft(this.id, null);

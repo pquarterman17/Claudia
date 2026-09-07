@@ -238,6 +238,17 @@ export type ClientCommand =
    */
   | { type: 'mirror_session'; sessionId: string }
   | { type: 'close_mirror'; sessionId: string }
+  /**
+   * This page is unloading for good — a closed tab, or a reload about to
+   * happen. Sent on `pagehide`, best effort.
+   *
+   * The server cannot otherwise tell a closed tab from a frozen one: a sleeping
+   * laptop and a bfcached page both leave a socket that looks alive with nobody
+   * behind it, which is why sessions get a grace period at all. This says the
+   * page is genuinely going away, so the only thing left to wait for is a
+   * reload coming back — a much shorter question than "is anyone still there".
+   */
+  | { type: 'closing' }
   | { type: 'ping' };
 
 /**

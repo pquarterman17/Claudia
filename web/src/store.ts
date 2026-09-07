@@ -1,5 +1,4 @@
 import {
-  CLAUDIA_PORT,
   CLIENT_PING_MS,
   DEFAULT_FLEET_LIMITS,
   type ClientCommand,
@@ -29,21 +28,8 @@ import { foldFleet, NO_FLEET, type FleetState } from './fleet-state';
 import { foldMirror, type Mirrors } from './mirror-state';
 import { forgetSession, upsertSession, withoutKey } from './session-state';
 import { isSafeKey } from './safe-key';
+import { serverUrl } from './server-url';
 import { useSyncExternalStore } from 'react';
-
-/**
- * Talk to the server directly on its own port rather than through Vite's dev
- * proxy. The proxy silently stops forwarding the WS upgrade once the upstream
- * has restarted a few times, which looks exactly like a dead server; going
- * direct removes that failure mode and behaves identically in a built app.
- */
-function serverUrl(): string {
-  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-  // In production the server serves the UI too, so it is simply this origin.
-  // In dev the UI comes from Vite on another port, so aim at the server's.
-  const host = import.meta.env.DEV ? `${location.hostname}:${CLAUDIA_PORT}` : location.host;
-  return `${scheme}://${host}/ws`;
-}
 
 export interface ClaudiaState {
   connected: boolean;
@@ -208,6 +194,20 @@ class Store {
     if (this.state.lastError !== undefined) this.set({ lastError: undefined });
     if (this.state.lastNotice !== undefined) this.set({ lastNotice: undefined });
   };
+
+  /** Says the page is unloading — see `unload.ts`. Deliberately not `send`,
+   * which reports failures and reconnects: both are noise on a dying page, and
+   * a missed announcement just falls back to the server's full grace. */
+  announceClosing(): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    // Typed, so it stays inside the suite's every-ClientCommand-has-a-row net.
+    const closing: ClientCommand = { type: 'closing' };
+    try {
+      this.ws.send(JSON.stringify(closing));
+    } catch {
+      /* the socket went first */
+    }
+  }
 
   /** Reports rather than silently swallowing a command sent while offline. */
   send(cmd: ClientCommand): void {

@@ -530,3 +530,40 @@ describe('escalation idempotency', () => {
     expect(all.ok && all.value).toHaveLength(2);
   });
 });
+
+describe('the attempt under review', () => {
+  /** A task at `reported`, with the run that reported it recorded against it. */
+  function reported() {
+    const fleet = store();
+    const mission = seedMission(fleet);
+    const task = value(fleet.tasks.create({ missionId: mission.id, title: 'A', description: '', cwd: '/r' }));
+    const run = value(fleet.runs.create({ missionId: mission.id, taskId: task.id, agent: 'claude' }));
+    value(fleet.tasks.setStatus(task.id, 'ready'));
+    value(fleet.tasks.setStatus(task.id, 'running'));
+    // The run reaches `reported` before the task does, on every production
+    // path — `setStatus` reads the newest attempt that has reported.
+    value(fleet.runs.setState(run.id, 'running'));
+    value(fleet.runs.setState(run.id, 'reported'));
+    const moved = value(fleet.tasks.setStatus(task.id, 'reported'));
+    expect(moved.currentRunId).toBe(run.id);
+    return { fleet, taskId: task.id, runId: run.id };
+  }
+
+  it('is cleared when a reported task is sent back for another go', () => {
+    // The next attempt has not run yet. A row still naming the last one says a
+    // claim is under review when none is, and acceptance scopes on this field.
+    const { fleet, taskId } = reported();
+    expect(value(fleet.tasks.setStatus(taskId, 'ready')).currentRunId).toBeUndefined();
+    expect(value(fleet.tasks.get(taskId))?.currentRunId).toBeUndefined();
+    fleet.close();
+  });
+
+  it('is kept on the attempt an accepted task ended on', () => {
+    // Here the field has stopped meaning "under review" and started meaning
+    // "the attempt that counted" — the only record of which one it was.
+    const { fleet, taskId, runId } = reported();
+    expect(value(fleet.tasks.setStatus(taskId, 'accepted')).currentRunId).toBe(runId);
+    fleet.close();
+  });
+});
+

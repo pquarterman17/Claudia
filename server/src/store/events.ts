@@ -172,6 +172,17 @@ export class FleetEventLog {
    * that by escalating once a minute. Anything asking what a task did LATELY
    * wants `latestForTask`; this is for reading a task's history in order.
    */
+  /**
+   * One task's log from a cursor.
+   *
+   * No production caller: the board reads a mission's timeline and acceptance
+   * reads `latestForTask`, which is indexed on `(task_id, kind, seq)` and
+   * answers the exact questions those paths ask. This is kept because it is
+   * how the tests inspect one task's history, and rewriting them to filter a
+   * mission-wide read would make them slower and less clear about what they
+   * are asserting. Noted rather than deleted so the next audit does not have
+   * to work out which of those it is.
+   */
   sinceForTask(taskId: string, afterSeq = 0, limit: number = DEFAULT_PAGE): StoreResult<FleetEvent[]> {
     return attempt('read a task log', () => {
       const rows = this.db

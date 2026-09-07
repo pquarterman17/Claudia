@@ -57,6 +57,10 @@ describe('mission flow model', () => {
     expect(flow([task('1', 'ready')], { budgetTokens: 100 }, { elapsedSec: 10, tokens: 100 }).next).toBe('Raise or clear the token budget');
   });
 
+  it('identifies elapsed budget exhaustion without parsing its explanation', () => {
+    expect(flow([task('1', 'ready')], { budgetSec: 60 }, { elapsedSec: 60, tokens: 10 }).next).toBe('Raise or clear the elapsed-time budget');
+  });
+
   it('puts a pending escalation ahead of task advice', () => {
     const model = missionFlow([task('1', 'reported')], mission, undefined, limits, [{
       id: 'e1', missionId: 'm1', source: 'system', request: 'Bash', reason: 'needs approval',

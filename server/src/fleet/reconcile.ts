@@ -60,24 +60,6 @@ export type Decision =
   | { kind: 'unblock'; taskId: string; reason: string }
   | { kind: 'hold'; reason: string };
 
-/**
- * How many children this mission may have running at once, or `undefined` when
- * that cannot be read.
- *
- * Exported because the reconciler is no longer the only caller. Found in
- * review: the watchdog's retry path reserves and launches directly, so it
- * bypassed the gate below entirely — a mission at a ceiling of zero still got a
- * replacement child, and lowering the ceiling under a fleet that was already
- * over it never drained, because every run that died was replaced one for one.
- * A limit enforced in one of the two places that spend is not a limit, so both
- * read it from here.
- *
- * The LOWER of what the human set on this mission and what the server-wide
- * policy allows, so neither ceiling can be exceeded by raising the other. A
- * whole non-negative number or nothing: `Math.min(NaN, 2)` is NaN, and a
- * fractional or negative ceiling reads as nonsense in the one line a person
- * looks at to find out why nothing is happening.
- */
 /** Whether a run is still occupying a slot. */
 export function isActiveRun(state: string): boolean {
   return ACTIVE_RUN_STATES.has(state);
@@ -110,7 +92,7 @@ export function reconcile(input: ReconcileInput): Decision[] {
   // different answer from being busy: one clears itself when a run finishes,
   // the other does not clear until a human raises it.
   const overspent = budgetHold(mission, input.spend);
-  if (overspent) return [{ kind: 'hold', reason: overspent }];
+  if (overspent) return [{ kind: 'hold', reason: overspent.reason }];
 
   const byId = new Map(tasks.map((t) => [t.id, t]));
   const cyclic = tasksInCycles(tasks);

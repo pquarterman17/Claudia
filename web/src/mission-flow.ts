@@ -29,7 +29,11 @@ function nextAction(tasks: readonly FlowTask[], mission: Mission, spend: Spend |
   if (mission.status !== 'active') return `Mission is ${mission.status}`;
   if (mission.watch !== 'watching') return 'Start watching to continue this mission';
   const budget = budgetHold(mission, spend);
-  if (budget) return budget.startsWith('spent its ') ? `Raise or clear the ${budget.includes('token') ? 'token' : 'elapsed-time'} budget` : 'Repair the unreadable mission spend';
+  if (budget) {
+    if (budget.kind === 'tokens') return 'Raise or clear the token budget';
+    if (budget.kind === 'elapsed') return 'Raise or clear the elapsed-time budget';
+    return 'Repair the unreadable mission spend';
+  }
   if (childCeiling(mission, limits) === undefined) return 'Repair the unreadable child limit';
   const reported = tasks.find((task) => task.status === 'reported');
   if (reported) return `Review “${reported.title}”`;

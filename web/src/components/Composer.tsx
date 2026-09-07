@@ -8,6 +8,7 @@ import { send, useClaudia } from '../store';
 import { COLORS, statusOf } from '../status';
 import { ImageStrip, MAX_IMAGES, readImageFiles, type PendingImage } from './ImageStrip';
 import { MentionDropdown } from './MentionDropdown';
+import { ModelPicker } from './ModelPicker';
 import { OutputStylePicker } from './OutputStylePicker';
 import { ReasoningControls } from './ReasoningControls';
 
@@ -43,12 +44,11 @@ function matchCommands(commands: SlashCommandInfo[], query: string): SlashComman
 /**
  * The session's prompt row: skip-perms toggle, the input itself (with shell-style
  * history recall and slash-command completion), queued/token/cost chips, a
- * fresh-session shortcut, and a model picker.
+ * fresh-session shortcut, and the model, output-style and reasoning pickers.
  */
 export function Composer({ session }: Props) {
-  const { models, commands, fileMatches } = useClaudia();
+  const { commands, fileMatches } = useClaudia();
   const [draft, setDraft] = useState('');
-  const [modelOpen, setModelOpen] = useState(false);
   const [images, setImages] = useState<PendingImage[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const promptInput = useRef<HTMLInputElement>(null);
@@ -122,11 +122,7 @@ export function Composer({ session }: Props) {
     setDraft(`/${name} `);
   };
 
-  const modelChoices = models[session.id];
-  const toggleModelPicker = () => {
-    if (!modelOpen && modelChoices === undefined) send({ type: 'get_models', sessionId: session.id });
-    setModelOpen((open) => !open);
-  };
+
 
   return (
     <div className="composer">
@@ -321,72 +317,7 @@ export function Composer({ session }: Props) {
       >
         New session
       </button>
-      <span style={{ position: 'relative', flex: 'none' }}>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          disabled={!can.modelPicker}
-          title={can.modelPicker ? 'Pick the model for this session' : 'This agent has no model picker'}
-          onClick={toggleModelPicker}
-          style={{ fontSize: 10, padding: '2px 6px', color: '#75798c' }}
-        >
-          Choose model
-        </button>
-        {modelOpen && (
-          <div
-            style={{
-              position: 'absolute',
-              bottom: '100%',
-              right: 0,
-              marginBottom: 4,
-              zIndex: 5,
-              minWidth: 210,
-              maxHeight: 240,
-              overflowY: 'auto',
-              background: '#1d1f2c',
-              border: '1px solid #33364a',
-              borderRadius: 6,
-              boxShadow: '0 6px 18px rgba(0, 0, 0, 0.4)',
-            }}
-          >
-            {modelChoices === undefined && (
-              <div style={{ padding: '6px 9px', fontSize: 10.5, color: '#75798c' }}>loading…</div>
-            )}
-            {modelChoices?.length === 0 && (
-              <div style={{ padding: '6px 9px', fontSize: 10.5, color: '#75798c' }}>no models reported</div>
-            )}
-            {modelChoices?.map((m) => {
-              // Marks the pick the moment it is made. Without this the menu
-              // looked inert, because a switch does not reach the chip until
-              // the next turn reports which model actually ran.
-              const chosen = session.selectedModel === m.value;
-              return (
-                <div
-                  key={m.value}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    send({ type: 'set_model', sessionId: session.id, model: m.value });
-                    setModelOpen(false);
-                  }}
-                  style={{
-                    padding: '5px 9px',
-                    cursor: 'pointer',
-                    borderBottom: '1px solid #26293a',
-                    background: chosen ? '#2b2741' : 'transparent',
-                  }}
-                >
-                  <div style={{ fontSize: 11, fontWeight: 600, color: chosen ? '#d2cefd' : '#e4e7f5' }}>
-                    {chosen ? '✓ ' : ''}
-                    {m.displayName}
-                    {chosen && <span style={{ color: COLORS.warn, fontWeight: 400 }}> · next turn</span>}
-                  </div>
-                  {m.description && <div style={{ fontSize: 9.5, color: '#75798c' }}>{m.description}</div>}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </span>
+      <ModelPicker session={session} />
       <OutputStylePicker session={session} />
       <ReasoningControls session={session} />
     </div>

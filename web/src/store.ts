@@ -27,7 +27,7 @@ import {
 } from '@claudia/shared';
 import { foldFleet, NO_FLEET, type FleetState } from './fleet-state';
 import { foldMirror, type Mirrors } from './mirror-state';
-import { forgetSession, upsertSession } from './session-state';
+import { forgetSession, upsertSession, withoutKey } from './session-state';
 import { isSafeKey } from './safe-key';
 import { useSyncExternalStore } from 'react';
 
@@ -304,9 +304,20 @@ class Store {
       case 'folders_picked':
         for (const listener of this.folderListeners) listener(event.paths);
         return;
-      case 'session_upsert':
-        this.set({ sessions: upsertSession(this.state.sessions, event.session) });
+      case 'session_upsert': {
+        // A session that changed agent has a different roster of models, and
+        // the cached one belongs to the agent it just left. Dropped rather
+        // than kept: showing Claude's models on a Codex session is worse than
+        // showing none, because picking one sends a `set_model` the new agent
+        // has never heard of.
+        const was = this.state.sessions.find((s) => s.id === event.session.id)?.agent;
+        const models =
+          was !== undefined && was !== event.session.agent
+            ? withoutKey(this.state.models, event.session.id)
+            : this.state.models;
+        this.set({ sessions: upsertSession(this.state.sessions, event.session), models });
         return;
+      }
       case 'session_removed':
         this.set(forgetSession(this.state, event.sessionId));
         return;

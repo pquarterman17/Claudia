@@ -323,7 +323,9 @@ export class ClaudiaSession {
       getAgent: () => this.opts.agent ?? 'claude',
       setAgent: (a) => (this.opts.agent = a),
       forgetConversation: () => (this.claudeSessionId = undefined),
+      hasStarted: () => this.driver !== null,
       getQuery: () => this.raw,
+      closeDriver: () => this.driver?.close(),
       getInput: () => this.input,
       setInput: (queue) => (this.input = queue),
       bumpGeneration: () => (this.queryGen += 1),
@@ -342,11 +344,9 @@ export class ClaudiaSession {
     };
   }
 
-  /**
-   * See permission-switch.ts — tighten in place, loosen via relaunch. Codex's
-   * `raw` is always falsy, so it takes the same "no live query" path as an
-   * unstarted Claude session: mode recorded, no relaunch attempted.
-   */
+  /** See permission-switch.ts — tighten in place, loosen via relaunch. The note
+   * that used to be here, that Codex's `raw` is always falsy, stopped being
+   * true when `CodexDriver` grew one for the model picker. */
   setPermissionMode(mode: PermissionLaunchMode): Promise<'in-place' | 'relaunched' | 'unchanged'> {
     return switchPermissionMode(this.restartCtx(), mode);
   }

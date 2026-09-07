@@ -11,7 +11,19 @@ import { describeMode } from './permission-labels.js';
 export interface SwitchCtx {
   getMode: () => PermissionLaunchMode;
   setMode: (mode: PermissionLaunchMode) => void;
+  /**
+   * Whether a driver exists at all — the lifecycle question.
+   *
+   * Deliberately not `getQuery()`, which asks a CAPABILITY question: does this
+   * driver expose an SDK query object to poke at. The two were conflated, and
+   * once `CodexDriver` grew a `raw` of its own for the model picker the
+   * conflation started answering "this session has not started yet" about
+   * sessions that were running — see `applyAgentSwitch`.
+   */
+  hasStarted: () => boolean;
   getQuery: () => unknown | null;
+  /** Shuts the outgoing driver down. A replaced driver keeps its child process. */
+  closeDriver: () => void;
   replaceQuery: (mode: PermissionLaunchMode, resume: string | undefined, input: AsyncQueue<unknown>) => void;
   getInput: () => AsyncQueue<unknown>;
   setInput: (queue: AsyncQueue<unknown>) => void;
@@ -37,15 +49,22 @@ export async function switchPermissionMode(
 ): Promise<'in-place' | 'relaunched' | 'unchanged'> {
   if (ctx.getMode() === mode) return 'unchanged';
 
-  if (!ctx.getQuery()) {
+  // The lifecycle question, not the capability one. A session with no driver
+  // has nothing to relaunch and nothing running under the old mode, so the
+  // mode is simply recorded for its first prompt. Asking `getQuery()` here
+  // conflated that with "this driver exposes no SDK object", which is true of
+  // a Codex driver whose app-server never came up — and recording a mode
+  // against a live session applies nothing while telling the user it did.
+  if (!ctx.hasStarted()) {
     ctx.setMode(mode);
     ctx.feedInfo('Permission mode', describeMode(mode));
     ctx.updated();
     return 'in-place';
   }
 
-  const q = ctx.getQuery() as { setPermissionMode?: (m: PermissionLaunchMode) => Promise<void> };
-  if (q.setPermissionMode) {
+  // Null-safe, now that reaching here no longer implies a query exists.
+  const q = ctx.getQuery() as { setPermissionMode?: (m: PermissionLaunchMode) => Promise<void> } | null;
+  if (q?.setPermissionMode) {
     try {
       await q.setPermissionMode(mode);
       ctx.setMode(mode);
@@ -67,11 +86,13 @@ function relaunch(ctx: SwitchCtx, mode: PermissionLaunchMode): void {
   // Abandons the gate, clears any half-streamed draft, fails running steps,
   // and bumps the generation so the old consume loop becomes inert.
   ctx.abandonForRestart();
-  try {
-    (ctx.getQuery() as { close?: () => void } | null)?.close?.();
-  } catch {
-    /* already closed */
-  }
+  // The DRIVER, not whatever `getQuery()` happens to expose. This used to
+  // reach for a `close` on the raw query, which is the SDK object for Claude
+  // and has one — but Codex's `raw` is a small facade carrying `supportedModels`
+  // and `setModel` for the picker, and has none. So every loosening of
+  // permissions on a live Codex session left its app-server child running for
+  // the life of the board while a replacement was spawned beside it.
+  ctx.closeDriver();
 
   // The old query's iterator still holds a pending read on the old queue; a
   // shared queue would race two consumers for the next prompt. Anything

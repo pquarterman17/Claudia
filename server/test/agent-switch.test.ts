@@ -16,6 +16,7 @@ interface Recorded {
   agent: AgentKind;
   live: boolean;
   abandoned: number;
+  closed: number;
   generations: number;
   forgotten: number;
   relaunches: Array<{ mode: PermissionLaunchMode; resume: string | undefined }>;
@@ -24,13 +25,14 @@ interface Recorded {
   inputs: AsyncQueue<unknown>[];
 }
 
-function harness(agent: AgentKind = 'claude', live = true): Recorded {
+function harness(agent: AgentKind = 'claude', live = true, exposesQuery = live): Recorded {
   const first = new AsyncQueue<unknown>();
   const rec: Recorded = {
     ctx: null as never,
     agent,
     live,
     abandoned: 0,
+    closed: 0,
     generations: 0,
     forgotten: 0,
     relaunches: [],
@@ -44,7 +46,12 @@ function harness(agent: AgentKind = 'claude', live = true): Recorded {
     getAgent: () => rec.agent,
     setAgent: (a) => (rec.agent = a),
     forgetConversation: () => (rec.forgotten += 1),
-    getQuery: () => (rec.live ? {} : null),
+    hasStarted: () => rec.live,
+    // Separate from `hasStarted` on purpose: a Codex driver whose app-server
+    // has not connected is RUNNING and exposes nothing, which is the shape
+    // that used to make this function answer "not started yet".
+    getQuery: () => (exposesQuery ? {} : null),
+    closeDriver: () => (rec.closed += 1),
     getInput: () => rec.inputs[rec.inputs.length - 1] as AsyncQueue<unknown>,
     setInput: (q) => rec.inputs.push(q),
     bumpGeneration: () => (rec.generations += 1),
@@ -144,3 +151,37 @@ describe('applyAgentSwitch', () => {
     expect(rec.relaunches[0]?.mode).toBe('auto');
   });
 });
+
+describe('switching a session that is running but exposes no SDK query', () => {
+  /**
+   * The bug this pins down. `CodexDriver.raw` answers `undefined` until its
+   * app-server connects, and the liveness test used to be `getQuery()` — so a
+   * live Codex session took the "nothing to leave behind" path. The badge
+   * changed, the summary agreed, the feed said the session had not started,
+   * and the Codex driver kept running. The agent could not be changed after
+   * launch, which is the whole point of having the control on the tile.
+   */
+  it('relaunches it rather than only recording the choice', () => {
+    const rec = harness('codex', true, false);
+    expect(applyAgentSwitch(rec.ctx, 'claude')).toBe('switched');
+    expect(rec.relaunches).toHaveLength(1);
+    expect(rec.agent).toBe('claude');
+    expect(rec.feed.at(-1)?.meta).not.toContain('has not started yet');
+  });
+
+  it('closes the driver it is walking away from', () => {
+    // Codex runs an app-server child. A replaced driver nobody closed keeps
+    // that process alive for the life of the board.
+    const rec = harness('codex', true, false);
+    applyAgentSwitch(rec.ctx, 'claude');
+    expect(rec.closed).toBe(1);
+  });
+
+  it('still records rather than relaunches when nothing has started', () => {
+    const rec = harness('claude', false);
+    expect(applyAgentSwitch(rec.ctx, 'codex')).toBe('recorded');
+    expect(rec.relaunches).toHaveLength(0);
+    expect(rec.closed).toBe(0);
+  });
+});
+

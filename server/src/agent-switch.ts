@@ -32,11 +32,19 @@ export type AgentSwitchOutcome = 'unchanged' | 'recorded' | 'switched';
  * A session that has not started a driver yet (launched idle, never prompted)
  * has nothing to leave behind, so the agent is simply recorded for its first
  * prompt — the same shape as the permission switch's empty-session path.
+ *
+ * That test is `hasStarted`, not `getQuery`. It used to be `getQuery`, which
+ * asks whether the driver exposes an SDK query rather than whether one is
+ * running, and a Codex driver whose app-server has not connected exposes
+ * nothing. So switching away from a live Codex session took the "recorded"
+ * path: the badge changed, the summary agreed, the feed said "this session has
+ * not started yet" — and the Codex driver kept running. The agent could not be
+ * changed after launch, in the one direction somebody would most want to.
  */
 export function applyAgentSwitch(ctx: AgentSwitchCtx, agent: AgentKind): AgentSwitchOutcome {
   if (ctx.getAgent() === agent) return 'unchanged';
 
-  if (!ctx.getQuery()) {
+  if (!ctx.hasStarted()) {
     ctx.setAgent(agent);
     ctx.feedInfo('Agent switched', `${agentLabel(agent)} — this session has not started yet`);
     ctx.updated();
@@ -45,6 +53,11 @@ export function applyAgentSwitch(ctx: AgentSwitchCtx, agent: AgentKind): AgentSw
 
   const previous = ctx.getAgent();
   ctx.abandonForRestart();
+  // The outgoing driver is closed, not just dropped. Codex runs an app-server
+  // child; a replaced driver that nobody closed leaves that process alive for
+  // the life of the board, holding the conversation this switch just walked
+  // away from.
+  ctx.closeDriver();
   // The agent is set BEFORE the relaunch: the driver factory reads it to decide
   // which agent to construct, so setting it after would rebuild the old one.
   ctx.setAgent(agent);

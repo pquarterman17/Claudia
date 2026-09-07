@@ -1,6 +1,7 @@
 import type { SessionSummary } from '@claudia/shared';
 import { useState } from 'react';
 import { AGENT_KINDS } from '../agent-kinds';
+import { useDismiss } from '../use-dismiss';
 import { send } from '../store';
 
 /**
@@ -36,6 +37,10 @@ function hasConversation(session: SessionSummary): boolean {
 export function AgentPicker({ session }: { session: SessionSummary }) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  // Clearing `confirming` as well: a half-made switch left armed would fire on
+  // the next single click, which is the one thing the confirm step exists to
+  // stop happening by accident.
+  const wrap = useDismiss<HTMLSpanElement>(open, () => { setOpen(false); setConfirming(null); });
   const current = session.agent ?? 'claude';
   const isCodex = current === 'codex';
   const started = hasConversation(session);
@@ -55,7 +60,7 @@ export function AgentPicker({ session }: { session: SessionSummary }) {
   };
 
   return (
-    <span style={{ position: 'relative', flex: 'none' }}>
+    <span ref={wrap} style={{ position: 'relative', flex: 'none' }}>
       <button
         type="button"
         onClick={() => {

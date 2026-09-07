@@ -1,15 +1,17 @@
 import type { EffortLevel, SessionSummary, ThinkingMode } from '@claudia/shared';
 import { useState } from 'react';
 import { send } from '../store';
+import { useDismiss } from '../use-dismiss';
 
 const EFFORTS: EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export function ReasoningControls({ session }: { session: SessionSummary }) {
   const [open, setOpen] = useState(false);
+  const wrap = useDismiss<HTMLSpanElement>(open, () => setOpen(false));
   const setEffort = (effortLevel: EffortLevel) => send({ type: 'set_effort', sessionId: session.id, effortLevel });
   const setThinking = (thinkingMode: ThinkingMode) => send({ type: 'set_thinking', sessionId: session.id, thinkingMode });
   return (
-    <span style={{ position: 'relative', flex: 'none' }}>
+    <span ref={wrap} style={{ position: 'relative', flex: 'none' }}>
       <button
         type="button"
         className="btn btn-ghost"

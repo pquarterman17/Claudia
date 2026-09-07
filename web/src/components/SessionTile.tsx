@@ -3,10 +3,10 @@ import { useEffect, useRef, useState } from 'react';
 import { accentFor } from '../accent';
 import { capabilitiesFor } from '../agent-kinds';
 import { elapsed, fmtModel } from '../format';
-import { PERMISSION_MODES } from '../permission-modes';
 import { send } from '../store';
 import { COLORS, statusOf } from '../status';
 import { AgentPicker } from './AgentPicker';
+import { SessionMenu } from './SessionMenu';
 import { BranchChip } from './BranchChip';
 import { ApprovalBanner } from './ApprovalBanner';
 import { Composer } from './Composer';
@@ -52,7 +52,6 @@ export function SessionTile({
 }: Props) {
   const tileRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<'feed' | 'chat'>('feed');
-  const [menuOpen, setMenuOpen] = useState(false);
   const backfilledRef = useRef(false);
 
   useEffect(() => {
@@ -87,11 +86,6 @@ export function SessionTile({
     setRenaming(false);
   };
 
-  const removeSession = () => {
-    if (window.confirm(`Stop and remove ${session.title ?? session.name}? This cannot be undone.`)) {
-      send({ type: 'remove_session', sessionId: session.id });
-    }
-  };
 
   const cls = [
     'tile',
@@ -237,54 +231,7 @@ export function SessionTile({
             ⏸
           </button>
         )}
-        <button
-          className="btn btn-ghost"
-          aria-expanded={menuOpen}
-          aria-haspopup="menu"
-          title="Session actions"
-          style={{ flex: 'none', fontSize: 10, padding: '2px 6px', color: '#75798c' }}
-          onClick={() => setMenuOpen((open) => !open)}
-        >
-          ⋯
-        </button>
-        {menuOpen && (
-          <div role="menu" aria-label={`Actions for ${session.title ?? session.name}`} style={{ position: 'absolute', right: 12, zIndex: 10, minWidth: 190, padding: 4, background: '#1d1f2c', border: '1px solid #33364a', borderRadius: 6, boxShadow: '0 6px 18px rgba(0, 0, 0, 0.4)' }}>
-            <div style={{ padding: '4px 6px 6px', fontSize: 10, color: '#75798c' }}>{fmtModel(session.model)} · {yolo ? 'approvals skipped' : 'approvals on'}</div>
-            <div style={{ padding: '2px 6px 3px', fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: '#4a4e5e' }}>
-              Permission mode
-            </div>
-            {PERMISSION_MODES.map((m) => (
-              <MenuAction
-                key={m.key}
-                title={m.title}
-                color={m.key === session.permissionMode ? '#b5abfc' : m.danger ? '#e0a0a0' : undefined}
-                onClick={() => {
-                  send({ type: 'set_permission_mode', sessionId: session.id, mode: m.key });
-                  setMenuOpen(false);
-                }}
-              >
-                {`${m.key === session.permissionMode ? '✓ ' : ''}${m.label}`}
-              </MenuAction>
-            ))}
-            <div style={{ borderTop: '1px solid #2c2f3d', margin: '4px 0' }} />
-            <MenuAction onClick={() => { setRenaming(true); setMenuOpen(false); }}>Rename</MenuAction>
-            {!can.fileCheckpoints ? (
-              <div style={{ padding: '4px 6px', fontSize: 10, color: '#595d6c' }}>File checkpoints aren't available for Codex sessions</div>
-            ) : (
-              <>
-                {session.claudeSessionId && <MenuAction onClick={() => send({ type: 'get_saved_session_detail', sessionId: session.claudeSessionId!, cwd: session.cwd })}>Load file checkpoints</MenuAction>}
-                {checkpoints.map((checkpoint) => (
-                  <MenuAction key={checkpoint.messageId} title="Restores tracked files only; conversation is unchanged" color="#e0c58c" onClick={() => {
-                    if (window.confirm(`Restore tracked files to “${checkpoint.label}”? Conversation history will not change.`)) send({ type: 'rewind_files', sessionId: session.id, checkpointId: checkpoint.messageId });
-                    setMenuOpen(false);
-                  }}>{`Restore files: ${checkpoint.label}`}</MenuAction>
-                ))}
-              </>
-            )}
-            {(session.state === 'working' || session.state === 'starting') && <MenuAction color={COLORS.warn} onClick={() => { send({ type: 'interrupt', sessionId: session.id }); setMenuOpen(false); }}>Interrupt</MenuAction>}
-            <MenuAction color="#e0a0a0" onClick={removeSession}>Stop and remove…</MenuAction>
-          </div>
-        )}
+        <SessionMenu session={session} yolo={yolo} checkpoints={checkpoints} onRename={() => setRenaming(true)} />
       </div>
 
       <div className="tile-body">
@@ -375,23 +322,5 @@ export function SessionTile({
         <div className="tile-grip" onMouseDown={onGripDown} title="Drag to resize this tile" />
       )}
     </div>
-  );
-}
-
-function MenuAction({
-  children,
-  color,
-  title,
-  onClick,
-}: {
-  children: string;
-  color?: string;
-  title?: string;
-  onClick: () => void;
-}) {
-  return (
-    <button role="menuitem" className="btn btn-ghost" title={title} onClick={onClick} style={{ display: 'block', width: '100%', padding: '5px 7px', textAlign: 'left', fontSize: 11, color }}>
-      {children}
-    </button>
   );
 }

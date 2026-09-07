@@ -58,10 +58,10 @@ const PR_STATES = new Set(['draft', 'open', 'merged', 'closed']);
  * They used to derive it separately from the log, which is how the panel came
  * to offer decisions the server refused.
  *
- * `undefined` is a task carried over from before that column: the newest
- * verdict stands, whichever attempt it belongs to, and `accept_task` reads it
- * unscoped too. Hiding every verdict there would be worse, and being wrong in
- * the same direction on both ends is at least a state a human can act on.
+ * `undefined` means the record does not say which attempt is under review — a
+ * later one still writing to the worktree, or a row from before the column.
+ * The panel does not present another attempt's evidence as this claim's, and
+ * `accept_task` refuses without a reason for the same reason.
  */
 export function judgementFor(
   events: readonly FleetEvent[] | undefined,

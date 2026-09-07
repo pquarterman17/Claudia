@@ -180,6 +180,21 @@ describe('the retire pass', () => {
     expect(stateOf(store, worktreeId)).toBe('idle');
   });
 
+  it('holds a worktree when the log cannot be read, rather than letting it go', () => {
+    // The two callers of `hasJudgement` need opposite answers when the read
+    // fails. Collapsing both into "judged" made this one fail OPEN: the task
+    // dropped out of `unreadTaskIds`, its worktree was retired, and nothing
+    // puts a retired one back — while `cleanupWorktree` only protects records
+    // still marked `active`. That is the directory holding the only evidence
+    // for a claim nobody has read.
+    const { store, missionId, taskId, worktreeId } = fixture();
+    run(store, missionId, taskId, 'reported');
+    store.db.exec('DROP TABLE fleet_events');
+
+    expect(retireWorktrees(store, missionId)).toBe(0);
+    expect(stateOf(store, worktreeId)).toBe('active');
+  });
+
   it('is what makes cleanup reachable at all', () => {
     // The join the two halves were missing. Before the pass, every record said
     // `active` and cleanup's first check answered "keep" for all of them —

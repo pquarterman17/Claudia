@@ -64,7 +64,16 @@ export function AcceptanceReview({ missionId, task, judgement }: {
           <p style={{ ...copy, whiteSpace: 'pre-wrap' }}>{task.acceptance?.trim() || 'No task-specific acceptance criteria were recorded.'}</p>
         </section>
 
-        {!judgement ? (
+        {!attributed ? (
+          // Not the evidence, deliberately. `judgementFor` is unscoped when no
+          // attempt is named, so what it returns describes SOME attempt — and
+          // rendering another run's branch, shas and tests under this claim is
+          // the substitution the server refuses on its side.
+          <p role="status" style={{ ...copy, color: '#e0a34f' }}>
+            The record does not say which attempt made this claim, so nothing here can be
+            shown as its evidence. Accepting takes a reason, which is recorded.
+          </p>
+        ) : !judgement ? (
           <p role="status" style={{ ...copy, color: '#75798c' }}>No judgement for this claim has reached the board yet.</p>
         ) : (
           <>

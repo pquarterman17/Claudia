@@ -40,7 +40,9 @@ export async function judgeReported(deps: PulseDeps, mission: Mission): Promise<
     // The append below is keyed on the run, so a second pass over a run
     // already judged is a no-op in the store. Checked here as well only to
     // avoid the git calls, which are the expensive half.
-    if (hasJudgement(store, run.taskId, run.id)) continue;
+    // Unknown counts as judged here: the cost of being wrong is a pulse
+    // that skips work, not a pulse that repeats the expensive half forever.
+    if (hasJudgement(store, run.taskId, run.id) !== false) continue;
     const gathered = await gatherEvidence(deps, run.worktreeId, mission.verify);
     const { checks, ...evidence } = gathered;
     const verdict = judge(evidence);
@@ -90,15 +92,17 @@ export async function judgeReported(deps: PulseDeps, mission: Mission): Promise<
  * pulse for as long as the run sits in `reported` — and it pins the task in
  * `unreadTaskIds`, so its worktree is never retired.
  */
-export function hasJudgement(store: FleetStore, taskId: string, runId: string): boolean {
+export function hasJudgement(store: FleetStore, taskId: string, runId: string): boolean | undefined {
   const judged = store.events.latestForTask(taskId, 'task_judged', 1, runId);
-  // A read that FAILED answers "already judged", not "not yet". `accept.ts`
-  // refuses to make the opposite substitution on this same query and says why:
-  // an unreadable log is not evidence about what is in it. Here the safe
-  // direction is the other one — a false "no" re-runs the git reads and the
-  // mission's verify command every pulse, and pins the task's worktree — so
-  // the pass is skipped until the log can be read again.
-  if (!judged.ok) return true;
+  // `undefined` is UNKNOWN, and it is deliberately not collapsed into either
+  // answer, because the two callers need opposite ones. `judgeReported` treats
+  // unknown as judged — a false "no" re-runs the git reads and the mission's
+  // verify command on every pulse. `retireWorktrees` treats it as unread — a
+  // false "yes" retires the worktree holding the only evidence for a claim
+  // nobody has read, and `cleanupWorktree` only protects records still marked
+  // `active`. Answering `true` for both, which is what this did, made the
+  // second one fail OPEN toward deleting that directory.
+  if (!judged.ok) return undefined;
   return judged.value.length > 0;
 }
 

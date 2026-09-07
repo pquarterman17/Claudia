@@ -172,17 +172,25 @@ export function applyWatchdogOutcomes(
         // could see — a watched mission simply stopped moving. The note is
         // idempotent on the same reason, so a fault that re-escalates does not
         // fill the log.
-        // Keyed on `action.key`, not on the message. The message carries the
-        // elapsed minutes, so keying on it wrote a new line every minute for
-        // as long as the run stayed stuck — the same mistake
-        // `watchdog-action.ts` records fixing for the escalation row, left in
-        // place for the note. That one write is what grew a task's log without
-        // bound, and every windowed read that had to be repaired downstream
-        // was a consequence of it.
+        // Keyed on `action.key`, and the body is `action.reason` alone.
+        //
+        // `action.request` carries the elapsed minutes — `waiting 12m for
+        // approval of Bash` — so keying on it wrote a new line every minute
+        // for as long as the run stayed stuck, which is what grew a task's log
+        // without bound and forced a window fix into three separate reads.
+        // `watchdog-action.ts` records fixing exactly this for the escalation
+        // ROW and keys on the tool instead.
+        //
+        // Keying on the stable key alone would have frozen the first
+        // sentence — "waiting 1m" still on screen three hours later — so the
+        // changing quantity is left out of the note entirely. `reason` says
+        // what is wrong and why retrying will not clear it, the event's own
+        // `at` says when it started, and the escalation row carries the
+        // request for anyone who wants the elapsed figure.
         //
         // Named with its run as well, so two attempts stuck on the same tool
         // are two lines rather than one swallowing the other.
-        note(store, mission.id, run.taskId, 'escalated', `${action.request}: ${action.reason}`, run.id, action.key);
+        note(store, mission.id, run.taskId, 'escalated', action.reason, run.id, action.key);
         result.escalated += 1;
         // An escalation does not end the run: it is still active, still
         // holding its task, and still occupying a slot.

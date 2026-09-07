@@ -155,10 +155,10 @@ function refusalFor(judged: Judgement): string | undefined {
  * too — so the two cannot answer it differently, rather than agreeing because
  * two copies of a rule were kept in step.
  *
- * A task carried over from before that column has no run named, and the read
- * is unscoped there: the newest verdict, whichever attempt it belongs to, and
- * the board shows the same one. That is the honest answer when the record
- * genuinely does not say, and it is the same answer on both ends.
+ * A task with no run named never reaches here at all: `acceptTask` treats that
+ * as its own blocker, because no attempt recorded under review means no run
+ * has claimed the task is done, and reading any attempt's verdict there is the
+ * substitution this command exists to refuse.
  *
  * A judgement describes the worktree of the run that produced it. A task that was sent back to `ready` and ran again has an old verdict
  * about a tree that no longer exists — and the case that matters is the second

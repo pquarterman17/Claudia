@@ -93,10 +93,12 @@ describe('a claim whose attempt the record does not name', () => {
     const html = renderToStaticMarkup(<AcceptanceReview
       missionId="m1"
       task={unnamed}
-      judgement={{ verdict: 'needs_human', reason: 'green', missing: [] }}
+      judgement={{ verdict: 'needs_human', reason: 'green', missing: [], branch: 'claudia/x' }}
     />);
     expect(html).toContain('Attempt not recorded');
-    expect(html).toContain('green');
+    expect(html).toContain('does not say which attempt');
+    // And NOT another attempt's evidence dressed as this claim's.
+    expect(html).not.toContain('claudia/x');
     expect(html).not.toContain('accept task');
     expect(html).toContain('accept with override');
   });

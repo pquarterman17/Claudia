@@ -119,7 +119,12 @@ function factsFor(store: FleetStore, missionId: string): RetireFacts | undefined
   const unreadTaskIds = new Set<string>();
   for (const run of runs.value) {
     if (run.state === 'dispatched' || run.state === 'running') busyTaskIds.add(run.taskId);
-    else if (run.state === 'reported' && !hasJudgement(store, run.taskId, run.id)) unreadTaskIds.add(run.taskId);
+    // Unknown counts as UNREAD here, the opposite of `judgeReported`: being
+    // wrong the other way lets go of the worktree holding the only evidence
+    // for a claim nobody has read, and nothing puts a retired one back.
+    else if (run.state === 'reported' && hasJudgement(store, run.taskId, run.id) !== true) {
+      unreadTaskIds.add(run.taskId);
+    }
   }
   return { busyTaskIds, unreadTaskIds };
 }

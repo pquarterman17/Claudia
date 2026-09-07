@@ -2,6 +2,7 @@ import type { SessionSummary } from '@claudia/shared';
 import { useState } from 'react';
 import { capabilitiesFor } from '../agent-kinds';
 import { send } from '../store';
+import { useDismiss } from '../use-dismiss';
 
 interface Props {
   session: SessionSummary;
@@ -17,12 +18,13 @@ interface Props {
  */
 export function OutputStylePicker({ session }: Props) {
   const [open, setOpen] = useState(false);
+  const wrap = useDismiss<HTMLSpanElement>(open, () => setOpen(false));
   const can = capabilitiesFor(session.agent).outputStylePicker;
   const styles = session.outputStyles;
   const working = session.state === 'working' || session.state === 'awaiting_approval';
 
   return (
-    <span style={{ position: 'relative', flex: 'none' }}>
+    <span ref={wrap} style={{ position: 'relative', flex: 'none' }}>
       <button
         type="button"
         className="btn btn-ghost"

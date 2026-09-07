@@ -11,7 +11,19 @@ import { describeMode } from './permission-labels.js';
 export interface SwitchCtx {
   getMode: () => PermissionLaunchMode;
   setMode: (mode: PermissionLaunchMode) => void;
+  /**
+   * Whether a driver exists at all — the lifecycle question.
+   *
+   * Deliberately not `getQuery()`, which asks a CAPABILITY question: does this
+   * driver expose an SDK query object to poke at. The two were conflated, and
+   * once `CodexDriver` grew a `raw` of its own for the model picker the
+   * conflation started answering "this session has not started yet" about
+   * sessions that were running — see `applyAgentSwitch`.
+   */
+  hasStarted: () => boolean;
   getQuery: () => unknown | null;
+  /** Shuts the outgoing driver down. A replaced driver keeps its child process. */
+  closeDriver: () => void;
   replaceQuery: (mode: PermissionLaunchMode, resume: string | undefined, input: AsyncQueue<unknown>) => void;
   getInput: () => AsyncQueue<unknown>;
   setInput: (queue: AsyncQueue<unknown>) => void;

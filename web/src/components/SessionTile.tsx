@@ -7,6 +7,7 @@ import { PERMISSION_MODES } from '../permission-modes';
 import { send } from '../store';
 import { COLORS, statusOf } from '../status';
 import { AgentPicker } from './AgentPicker';
+import { useDismiss } from '../use-dismiss';
 import { BranchChip } from './BranchChip';
 import { ApprovalBanner } from './ApprovalBanner';
 import { Composer } from './Composer';
@@ -53,6 +54,7 @@ export function SessionTile({
   const tileRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<'feed' | 'chat'>('feed');
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuWrap = useDismiss<HTMLDivElement>(menuOpen, () => setMenuOpen(false));
   const backfilledRef = useRef(false);
 
   useEffect(() => {
@@ -113,7 +115,7 @@ export function SessionTile({
         borderLeft: `3px solid ${accent}`,
       }}
     >
-      <div className="tile-head">
+      <div ref={menuWrap} className="tile-head">
         {index < 9 && (
           <span
             title={`jump with the modifier and ${index + 1}`}

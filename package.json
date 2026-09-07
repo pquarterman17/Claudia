@@ -3,7 +3,7 @@
   "license": "AGPL-3.0-only",
   "author": "Paige Quarterman",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Claudia — one window over every parallel Claude Code session",
   "workspaces": [
     "shared",

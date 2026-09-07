@@ -9,7 +9,7 @@ tag. `.github/workflows/release.yml` runs the full gate on the tagged tree and
 refuses to publish if those three disagree — `node scripts/release-notes.mjs
 v0.2.0` says so before you tag, and prints the notes it would use.
 
-## [Unreleased]
+## [0.2.0] — 2026-09-07
 
 The fleet stops being a plan, and then stops being unreachable. Claudia can now
 hold a standing intention — a mission with tasks — and act on it without a
@@ -48,6 +48,14 @@ show what it is saying.
 - A mission chooses which harness its children run on, Claude or Codex
 - Fleet-wide child and attempt ceilings as a stored preference, read at every
   pulse rather than pinned in source, and settable from the board
+- Capability grants: one per run, issued before the child exists, and checked
+  ahead of the approval banner rather than behind it. A tool the run was never
+  authorised to use is refused rather than offered to a human to approve —
+  which for an unattended fleet is the whole point. The policy can only
+  tighten: a call it cannot classify parks on a person exactly as before
+- The worktrees a mission has finished with are let go of, and then actually
+  removed. Nothing is deleted automatically, nothing dirty or unmerged is
+  deleted at all, and `git worktree remove` is never given `--force`
 
 - A mission says what "green" means for its repository: one verify command, run
   in the worktree the child worked in once it reports, with the result carried
@@ -84,6 +92,14 @@ show what it is saying.
 - The judgement beside the task it belongs to: what changed, what nobody
   checked, and what the mission's own checks said — including when they could
   not run, which "no test results" alone does not distinguish
+- A compact mission overview above the task list: what is moving, what is held,
+  and one line naming the next action — drawn from the same rules the
+  reconciler decides on, so the board cannot promise a dispatch the server has
+  already refused
+- Managed worktree cleanup, previewed before anything is removed. Every
+  directory carries a reason, the kept ones included, because "why is that one
+  still here?" is the question a person actually has; unmerged branches are
+  confirmed one at a time
 
 ### Mirroring sessions Claudia did not launch
 
@@ -146,6 +162,19 @@ show what it is saying.
   unreachable from the wire
 - A run's session could be attached to a reservation that had already been
   retired
+- **Retired worktrees were never removed.** The retire pass ran on every pulse
+  and marked records idle; nothing ever touched the directories they named, so
+  a long-running fleet reclaimed no disk at all
+- **An escalation could not expire.** `expiresAt` was stored and `expired` was
+  legal in the schema, and no code path ever wrote it, so a request with a
+  deadline behaved exactly like one without: pending for good
+- **Capability grants were never checked.** The rules existed and there was no
+  table to keep a grant in, nothing that issued one, and no lookup — so the
+  module's own claim, that a grant is only ever reached by looking it up for a
+  run, described something that did not exist
+- The attempt under review was recorded when a task entered `reported` and
+  never cleared when it left, so a requeued task pointed at the attempt that
+  had just been sent back
 
 ### Infrastructure
 
@@ -166,7 +195,7 @@ show what it is saying.
 
 ### Testing
 
-- 2,149 tests (1,951 server, 198 web) across 118 files, on the same
+- 2,327 tests (2,061 server, 266 web) across 126 files, on the same
   Ubuntu/Windows × Node 22/24 matrix
 
 ## [0.1.0] — 2026-09-01

@@ -50,6 +50,7 @@ describe('opening the fleet database', () => {
       'escalations',
       'fleet_events',
       'fleet_meta',
+      'grants',
       'missions',
       'tasks',
       'worktrees',

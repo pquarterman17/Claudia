@@ -317,7 +317,7 @@ export function requestedCapability(text: string): Capability | undefined {
   return asked !== undefined && isCapability(asked) ? asked : undefined;
 }
 
-function isCapability(value: string): value is Capability {
+export function isCapability(value: string): value is Capability {
   return (
     value === 'repo.read' ||
     value === 'repo.write' ||
@@ -328,4 +328,32 @@ function isCapability(value: string): value is Capability {
     value === 'net' ||
     value === 'destructive'
   );
+}
+
+/**
+ * The capability a tool call needs, when it can be named from the call alone.
+ *
+ * `undefined` means "nothing this module can speak to", and every caller
+ * treats that as "carry on to whatever gate you already had". That direction
+ * matters: a fleet child runs in `default` permission mode, so an unclassified
+ * call still parks on a human. This map can therefore only ever TIGHTEN the
+ * boundary, and a tool it fails to recognise degrades to the behaviour that
+ * existed before it — never to an approval nobody gave.
+ *
+ * Bash is read by inspecting the command, which is imprecise by nature. It is
+ * matched on word boundaries around the git subcommand so `git pushd` and a
+ * branch called `merge` do not read as the real thing, and anything it cannot
+ * place returns undefined rather than a guess.
+ */
+export function capabilityForTool(toolName: string, input: Record<string, unknown>): Capability | undefined {
+  if (toolName === 'WebFetch' || toolName === 'WebSearch') return 'net';
+  if (toolName === 'Write' || toolName === 'Edit' || toolName === 'NotebookEdit') return 'repo.write';
+  if (toolName === 'Read' || toolName === 'Glob' || toolName === 'Grep') return 'repo.read';
+  if (toolName !== 'Bash') return undefined;
+  const command = input['command'];
+  if (typeof command !== 'string') return undefined;
+  if (/\bgit\s+push\b/.test(command)) return 'git.push';
+  if (/\bgit\s+merge\b/.test(command)) return 'git.merge';
+  if (/\bgit\s+commit\b/.test(command)) return 'git.commit';
+  return undefined;
 }

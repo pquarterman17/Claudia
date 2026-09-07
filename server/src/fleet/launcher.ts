@@ -1,10 +1,13 @@
 import { realpathSync } from 'node:fs';
 import type { AgentKind, PermissionLaunchMode, Task } from '@claudia/shared';
+import type { ToolPolicy } from '../session-contract.js';
 import type { FleetStore } from '../store/index.js';
 import { gitLine } from './git-facts.js';
 import { ensureWorktree, worktreePath } from '../worktree.js';
 import type { LaunchChild, LaunchOrder } from './pulse.js';
 import { REPORT_PATH } from './child-report.js';
+import { randomUUID } from 'node:crypto';
+import { capabilityForTool, checkCapability, defaultGrant, type CapabilityRequest } from './capabilities.js';
 import { claimWorktree } from './worktree-owner.js';
 import { observeWorktree } from './worktree-observe.js';
 
@@ -37,6 +40,7 @@ export interface LauncherDeps {
     agent: AgentKind;
     prompt: string;
     permissionMode: PermissionLaunchMode;
+    toolPolicy?: ToolPolicy;
   }): string | undefined;
   /** Stops a session this launcher started but could not keep. */
   stopSession(sessionId: string): void;
@@ -62,8 +66,18 @@ export function createLauncher(deps: LauncherDeps): LaunchChild {
     if (!task.value) throw new Error(`there is no task ${order.taskId} to run`);
 
     const claim = await claimFor(order, task.value, deps);
+    // Before the child exists, so there is no window in which it is running
+    // unbounded. `checkCapability` refuses on "nothing has been granted to
+    // this run", so a failure to record the grant does not fail open — but it
+    // would refuse every classified tool the child tried, which is a stalled
+    // run rather than an unsafe one, and worth failing the launch over.
+    const scope = { runId: order.runId, missionId: order.missionId, taskId: order.taskId, repo: canonicalRepo(task.value.cwd), worktreePath: claim.path };
+    const granted = deps.store.grants.issue(defaultGrant(randomUUID(), scope));
+    if (!granted.ok) throw new Error(`could not record what this run may do: ${granted.message}`);
+
     const sessionId = deps.startSession({
       cwd: claim.path,
+      toolPolicy: capabilityPolicy(deps.store, scope),
       // The reservation's answer, not a constant and not the mission's current
       // one: the run row is the record of what this attempt was authorised to
       // start, and it is what the watchdog and any retry will read back.
@@ -236,3 +250,32 @@ export function briefFor(task: Task): string {
 }
 
 
+
+/**
+ * The refusal a fleet child's tool calls are graded against.
+ *
+ * Only ever a tightening. `capabilityForTool` returns `undefined` for anything
+ * it cannot name from the call alone, and this lets those through to the
+ * approval banner the child already had — a fleet child runs in `default`
+ * permission mode, so an unclassified call still stops on a human. So a tool
+ * this cannot classify behaves exactly as it did before capabilities existed,
+ * and the only new outcome is a refusal.
+ *
+ * The grant is read on every call rather than captured once. A grant can be
+ * widened by a human answering an escalation while the child is working, and a
+ * policy closed over the launch-time list would keep refusing something that
+ * has since been approved.
+ */
+function capabilityPolicy(store: LauncherDeps['store'], scope: CapabilityRequest): ToolPolicy {
+  return (toolName, input) => {
+    const needed = capabilityForTool(toolName, input);
+    if (needed === undefined) return undefined;
+    const held = store.grants.find(scope.runId);
+    // A read that FAILED is not evidence of an ungranted run, but it is not
+    // evidence of a granted one either, and this is the direction where being
+    // wrong is cheap: the child is told no and a human sees the refusal.
+    const grants = { find: () => (held.ok ? held.value : undefined) };
+    const verdict = checkCapability(needed, scope, grants, Date.now());
+    return verdict.ok ? undefined : `${needed} is not available to this run: ${verdict.reason}`;
+  };
+}

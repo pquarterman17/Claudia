@@ -35,4 +35,17 @@ export interface LaunchOptions {
   thinkingMode?: ThinkingMode;
   resume?: string;
   forkSession?: boolean;
+  /**
+   * A refusal this session's tool calls are graded against before a human sees
+   * them, or nothing for a session nobody has bounded.
+   *
+   * Server-side only and deliberately a function: it closes over what the
+   * caller knows about the session, and the fleet's version closes over the
+   * capability grant issued to a run. A launch spec that could carry the
+   * allowed capabilities as DATA would be one a client could send.
+   */
+  toolPolicy?: ToolPolicy;
 }
+
+/** Returns a reason to refuse `toolName`, or nothing to let it through. */
+export type ToolPolicy = (toolName: string, input: Record<string, unknown>) => string | undefined;

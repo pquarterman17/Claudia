@@ -97,6 +97,18 @@ export function note(
   reason: string,
   /** The attempt this note describes, when repeating it for a later run is meaningful. */
   runId?: string,
+  /**
+   * What makes this note the SAME note, when the reason text alone does not.
+   *
+   * An escalation's reason carries the elapsed minutes — `waiting 12m for
+   * approval of Bash` — so keying on it wrote a fresh line every minute, about
+   * sixty an hour, for as long as the run stayed stuck. `watchdog-action.ts`
+   * already solved this for the escalation ROW and says so: it keys on the
+   * tool rather than the message. The note ignored the stable key sitting on
+   * the same action object, and the unbounded log that produced is what made
+   * three separate read paths need a window fix.
+   */
+  dedupe?: string,
 ): void {
   const appended = store.events.append({
     missionId,
@@ -114,7 +126,7 @@ export function note(
     // first argument by concatenating three ids with colons handed that class
     // straight back. A colliding key here is silent: `append` returns the
     // duplicate and `note` swallows it, so the losing note is simply gone.
-    idempotencyKey: escalationKey(scopeOf(missionId, taskId, runId), scopeOf(kind, reason, undefined)),
+    idempotencyKey: escalationKey(scopeOf(missionId, taskId, runId), scopeOf(kind, dedupe ?? reason, undefined)),
   });
   // A duplicate key means this exact note is already in the log, which is the
   // idempotency doing its job rather than a failure worth aborting the pulse.

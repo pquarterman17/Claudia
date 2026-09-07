@@ -61,7 +61,7 @@ describe('run identity on the notes a pulse writes', () => {
     expect(events.value.map((event) => event.runId)).toEqual([run.value.id, run.value.id, run.value.id]);
   });
 
-  it('refuses on the verdict of the attempt whose report moved the task', () => {
+  it('refuses on the verdict of the attempt the fallback picks when no note names one', () => {
     const mission = store.missions.create({ name: 'm3', body: '', cwd: '/repo' });
     if (!mission.ok) throw new Error(mission.message);
     const task = store.tasks.create({ missionId: mission.value.id, title: 't', description: '', cwd: '/repo' });
@@ -70,7 +70,10 @@ describe('run identity on the notes a pulse writes', () => {
     const second = store.runs.create({ missionId: mission.value.id, taskId: task.value.id, agent: 'claude' });
     if (!first.ok || !second.ok) throw new Error('could not create runs');
 
-    // Attempt 2 is judged; attempt 1 is not. Acceptance must read attempt 2.
+    // No `task_reported` here, so this is the FALLBACK path: `currentRunFor`
+    // answers nothing and `currentRunId` takes the highest attempt. The rule
+    // itself is covered in accept-task.test.ts, where a report note names the
+    // run; this pins what happens when the log will not say.
     const judged = store.events.append({
       missionId: mission.value.id,
       taskId: task.value.id,
@@ -171,5 +174,37 @@ describe('reading the end of a task log, not the start', () => {
     const head = store.events.sinceForTask(task.value.id);
     if (!head.ok) throw new Error(head.message);
     expect(currentRunFor(head.value)).toBeUndefined();
+  });
+});
+
+describe('a note that must not grow without bound', () => {
+  it('keeps one line for a stuck run however long it stays stuck', () => {
+    // The root cause under three separate window fixes. An escalation's reason
+    // carries the elapsed minutes, so keying the note on it wrote a new row
+    // every minute — about sixty an hour — and that is what pushed a task's
+    // log past every page anything read it through. `watchdog-action.ts` keys
+    // the escalation ROW on the tool for exactly this reason; the note now
+    // takes the same stable key.
+    const mission = store.missions.create({ name: 'm6', body: '', cwd: '/repo' });
+    if (!mission.ok) throw new Error(mission.message);
+    const task = store.tasks.create({ missionId: mission.value.id, title: 't', description: '', cwd: '/repo' });
+    if (!task.ok) throw new Error(task.message);
+
+    for (let minute = 1; minute <= 40; minute++) {
+      note(
+        store,
+        mission.value.id,
+        task.value.id,
+        'escalated',
+        `waiting ${minute}m for approval of Bash: the child has not moved`,
+        'r1',
+        'escalation:r1:Bash',
+      );
+    }
+    const events = store.events.sinceForTask(task.value.id);
+    if (!events.ok) throw new Error(events.message);
+    expect(events.value).toHaveLength(1);
+    // The message still says what it said the first time it was written.
+    expect((events.value[0]?.payload as { reason: string }).reason).toMatch(/waiting 1m/);
   });
 });

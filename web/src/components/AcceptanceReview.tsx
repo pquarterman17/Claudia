@@ -74,15 +74,13 @@ export function AcceptanceReview({ missionId, task, judgement }: {
         )}
 
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-          {supported ? (
-            <button className="btn btn-ghost" style={positive} onClick={() => send(acceptCommand(missionId, task.id))}>
-              accept task
-            </button>
-          ) : override === undefined ? (
-            <button className="btn btn-ghost" style={warning} onClick={() => setOverride('')}>
-              accept with override…
-            </button>
-          ) : (
+          {/* The reason input, once open, outranks whether the evidence
+              supports a plain accept. It has to: the server can refuse an
+              accept this panel offered — the fallback asymmetry `accept.ts`
+              documents — and if the only way to reach this input were the
+              unsupported branch, a task in that state could not be accepted at
+              all. There was no route from "refused" back to "give a reason". */}
+          {override !== undefined ? (
             <>
               <label style={{ flex: '1 1 240px', fontSize: 10.5, color: '#a8abbd' }}>
                 Override reason
@@ -111,6 +109,24 @@ export function AcceptanceReview({ missionId, task, judgement }: {
               </button>
               <button className="btn btn-ghost" style={action} onClick={() => setOverride(undefined)}>cancel</button>
             </>
+          ) : supported ? (
+            <>
+              <button className="btn btn-ghost" style={positive} onClick={() => send(acceptCommand(missionId, task.id))}>
+                accept task
+              </button>
+              <button
+                className="btn btn-ghost"
+                style={action}
+                title="Record why you are accepting, even though the evidence does not require it."
+                onClick={() => setOverride('')}
+              >
+                with a reason…
+              </button>
+            </>
+          ) : (
+            <button className="btn btn-ghost" style={warning} onClick={() => setOverride('')}>
+              accept with override…
+            </button>
           )}
         </div>
       </div>

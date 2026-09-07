@@ -120,6 +120,20 @@ describe('acceptance review evidence', () => {
     expect(html).toContain('<span style="color:#e07070">Does not descend from base</span>');
   });
 
+  it('always leaves a route to recording a reason', () => {
+    // The server can refuse an accept this panel offered — the fallback
+    // asymmetry `accept.ts` documents — and the reason input used to be
+    // reachable only from the unsupported branch. A task in that state had no
+    // control that could supply what the server was asking for.
+    const html = renderToStaticMarkup(<AcceptanceReview
+      missionId="m1"
+      task={task}
+      judgement={{ verdict: 'needs_human', reason: 'green', missing: [] }}
+    />);
+    expect(html).toContain('accept task');
+    expect(html).toContain('with a reason');
+  });
+
   it('shows PR state even when no safe link is available', () => {
     const html = renderToStaticMarkup(<AcceptanceReview
       missionId="m1"

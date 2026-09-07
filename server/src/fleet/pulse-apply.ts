@@ -172,12 +172,17 @@ export function applyWatchdogOutcomes(
         // could see — a watched mission simply stopped moving. The note is
         // idempotent on the same reason, so a fault that re-escalates does not
         // fill the log.
-        // Named with its run, like the rest. The key is (mission, task, run,
-        // kind, reason), so a fault that re-escalates for the same reason
-        // still writes one line — but two ATTEMPTS parked on the same tool at
-        // the same elapsed minute produce the same reason, and without the run
-        // the second one was swallowed as a duplicate of the first.
-        note(store, mission.id, run.taskId, 'escalated', `${action.request}: ${action.reason}`, run.id);
+        // Keyed on `action.key`, not on the message. The message carries the
+        // elapsed minutes, so keying on it wrote a new line every minute for
+        // as long as the run stayed stuck — the same mistake
+        // `watchdog-action.ts` records fixing for the escalation row, left in
+        // place for the note. That one write is what grew a task's log without
+        // bound, and every windowed read that had to be repaired downstream
+        // was a consequence of it.
+        //
+        // Named with its run as well, so two attempts stuck on the same tool
+        // are two lines rather than one swallowing the other.
+        note(store, mission.id, run.taskId, 'escalated', `${action.request}: ${action.reason}`, run.id, action.key);
         result.escalated += 1;
         // An escalation does not end the run: it is still active, still
         // holding its task, and still occupying a slot.

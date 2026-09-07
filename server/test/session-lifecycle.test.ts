@@ -312,6 +312,21 @@ describe('streaming vectors', () => {
     await tick();
     expect(rec.drafts[rec.drafts.length - 1]).toBeNull();
   });
+
+  // A dead draft is not just a ghost on screen: the buffer keeps accumulating
+  // into it, so the next turn's first delta would arrive with the abandoned
+  // half-sentence already in front of it.
+  it('V31: a failure clears the draft rather than leaving it to prefix the next turn', async () => {
+    const rec = launch({ prompt: 'x' });
+    await tick();
+    current().emit(streamDelta('half a thou'));
+    await tick();
+    expect(rec.drafts[rec.drafts.length - 1]).toBe('half a thou');
+
+    current().fail(new Error('transport exploded'));
+    await tick();
+    expect(rec.drafts[rec.drafts.length - 1]).toBeNull();
+  });
 });
 
 describe('transcript vectors', () => {

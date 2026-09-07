@@ -66,3 +66,54 @@ describe('size ratchet', () => {
     },
   );
 });
+
+/**
+ * The board's menus escape their clipping ancestors with `position: fixed`.
+ *
+ * A tile header is 34px tall and hides what overflows it, so the agent picker
+ * and the tile's overflow menu showed three pixels of themselves and the
+ * terminal body through the rest until they were positioned against the
+ * viewport instead. That only works while nothing between a menu and the
+ * viewport establishes a containing block for fixed elements — `transform`,
+ * `filter`, `contain` and `will-change` each do.
+ *
+ * Asserted rather than remembered: the day someone adds a transform to `.tile`
+ * for an animation, every menu on the board silently goes back to being
+ * clipped, and nothing else in the suite would notice.
+ */
+describe('board stylesheet', () => {
+  /**
+   * Declaration-wise, not line-wise.
+   *
+   * The first version of this matched `^transform:` on trimmed LINES, and this
+   * stylesheet writes a dozen rules as a single line with several declarations
+   * on it — so `.tile { position: relative; transform: scale(1.02); }`, which
+   * is exactly how somebody would add an animation, sailed straight past the
+   * check written to catch it. Splitting on the delimiters first also keeps
+   * `text-transform` out of it for free: the property either IS one of these
+   * names or it is not.
+   *
+   * Inline styles in components are not covered. Every layout property in this
+   * app lives in the stylesheet, and a scanner over JSX object literals would
+   * trade a real guard for a fragile one.
+   */
+  const containingBlockProps = (css: string): string[] =>
+    css
+      .split(/[;{}\n]/)
+      .map((part) => part.trim())
+      .filter((part) => /^(transform|filter|backdrop-filter|contain|will-change|perspective)\s*:/.test(part));
+
+  it('creates no containing block for the fixed-position menus', () => {
+    const css = readFileSync(join(ROOT, 'web/src/app.css'), 'utf8');
+    expect(containingBlockProps(css), 'these re-clip every board menu — see web/src/use-anchor.ts').toEqual([]);
+  });
+
+  it('would notice one written inline, which is how it would be written', () => {
+    // The guard's own regression test. Without it the check above passes
+    // forever and proves nothing.
+    expect(containingBlockProps('.tile { position: relative; transform: scale(1.02); overflow: hidden; }')).toEqual([
+      'transform: scale(1.02)',
+    ]);
+    expect(containingBlockProps('.x { text-transform: uppercase; }')).toEqual([]);
+  });
+});

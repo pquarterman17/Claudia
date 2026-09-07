@@ -1,8 +1,7 @@
 import type { SessionSummary } from '@claudia/shared';
 import { useState } from 'react';
 import { AGENT_KINDS } from '../agent-kinds';
-import { belowAnchor, useAnchor } from '../use-anchor';
-import { useDismiss } from '../use-dismiss';
+import { useAnchoredMenu } from '../use-anchor';
 import { send } from '../store';
 
 /**
@@ -41,12 +40,9 @@ export function AgentPicker({ session }: { session: SessionSummary }) {
   // Clearing `confirming` as well: a half-made switch left armed would fire on
   // the next single click, which is the one thing the confirm step exists to
   // stop happening by accident.
-  const wrap = useDismiss<HTMLSpanElement>(open, () => { setOpen(false); setConfirming(null); });
-  // Anchored to the BUTTON and positioned against the viewport: this menu
-  // hangs below a 34px header that clips what overflows it, so an absolutely
-  // positioned one showed three pixels of itself and the terminal behind the
-  // rest. See `use-anchor.ts`.
-  const anchor = useAnchor<HTMLButtonElement>(open);
+  const menu = useAnchoredMenu<HTMLButtonElement>(open, () => { setOpen(false); setConfirming(null); }, {
+    label: `Agent for ${session.title ?? session.name}`,
+  });
   const current = session.agent ?? 'claude';
   const isCodex = current === 'codex';
   const started = hasConversation(session);
@@ -66,10 +62,11 @@ export function AgentPicker({ session }: { session: SessionSummary }) {
   };
 
   return (
-    <span ref={wrap} style={{ position: 'relative', flex: 'none' }}>
+    <span style={{ flex: 'none' }}>
       <button
-        ref={anchor.ref}
+        ref={menu.trigger}
         type="button"
+        {...menu.triggerProps}
         onClick={() => {
           setOpen(!open);
           setConfirming(null);
@@ -95,56 +92,43 @@ export function AgentPicker({ session }: { session: SessionSummary }) {
         {isCodex ? 'Codex' : 'Claude'}
       </button>
 
-      {open && anchor.rect && (
-        <div
-          role="menu"
-          style={{
-            ...belowAnchor(anchor.rect),
-            zIndex: 20,
-            minWidth: 210,
-            background: '#1a1c28',
-            border: '1px solid #33364a',
-            borderRadius: 7,
-            padding: 4,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
-          }}
-        >
-          {AGENT_KINDS.map((a) => {
-            const isCurrent = a.key === current;
-            const asking = confirming === a.key;
-            return (
-              <button
-                key={a.key}
-                type="button"
-                role="menuitemradio"
-                aria-checked={isCurrent}
-                onClick={() => choose(a.key)}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '5px 7px',
-                  border: 0,
-                  borderRadius: 5,
-                  background: asking ? '#2e2226' : 'transparent',
-                  color: asking ? '#e0a0a0' : isCurrent ? '#d2cefd' : '#a4a8b8',
-                  fontSize: 11.5,
-                  cursor: isCurrent ? 'default' : 'pointer',
-                }}
-              >
-                {isCurrent ? '✓ ' : ''}
-                {asking ? `Switch to ${a.label} — click again` : a.label}
-                {!isCurrent && (
-                  <span style={{ display: 'block', fontSize: 10, color: asking ? '#c98d8d' : '#595d6c', marginTop: 2 }}>
-                    {started
-                      ? 'Starts a new conversation. This one stays in the resume picker.'
-                      : 'This session has not started yet.'}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+      {menu.render(
+        AGENT_KINDS.map((a) => {
+          const isCurrent = a.key === current;
+          const asking = confirming === a.key;
+          return (
+            <button
+              key={a.key}
+              type="button"
+              role="menuitemradio"
+              aria-checked={isCurrent}
+              onClick={() => choose(a.key)}
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'left',
+                padding: '5px 7px',
+                border: 0,
+                borderRadius: 5,
+                background: asking ? '#2e2226' : 'transparent',
+                color: asking ? '#e0a0a0' : isCurrent ? '#d2cefd' : '#a4a8b8',
+                fontSize: 11.5,
+                cursor: isCurrent ? 'default' : 'pointer',
+              }}
+            >
+              {isCurrent ? '✓ ' : ''}
+              {asking ? `Switch to ${a.label} — click again` : a.label}
+              {!isCurrent && (
+                <span style={{ display: 'block', fontSize: 10, color: asking ? '#c98d8d' : '#595d6c', marginTop: 2 }}>
+                  {started
+                    ? 'Starts a new conversation. This one stays in the resume picker.'
+                    : 'This session has not started yet.'}
+                </span>
+              )}
+            </button>
+          );
+        }),
+        { background: '#1a1c28', border: '1px solid #33364a', borderRadius: 7, padding: 4, boxShadow: '0 8px 24px rgba(0,0,0,0.45)' },
       )}
     </span>
   );

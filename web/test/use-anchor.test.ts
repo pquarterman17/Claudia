@@ -6,10 +6,14 @@ import { belowAnchor } from '../src/use-anchor';
  *
  * The header is 34px tall and clips what overflows it — a long path must not
  * spill across the row — so a menu positioned against it showed three pixels
- * of itself and the terminal body through the rest. `position: fixed` escapes
- * that, and then the menu has to be kept inside the viewport by hand, on all
- * four sides. Three of them were easy to get right; the fourth is why these
- * tests exist.
+ * of itself and the terminal body through the rest. A body-level portal and
+ * `position: fixed` escape that, and then the menu has to be kept inside the
+ * viewport by hand, on all four sides. Three of them were easy to get right;
+ * the fourth is why these tests exist.
+ *
+ * The portal, the dismissal and the focus move live in `useAnchoredMenu` and
+ * need a DOM these tests do not have. This file covers the geometry, which is
+ * pure; `server/test/repo-integrity.test.ts` covers the layering.
  */
 
 const rect = (over: Partial<{ bottom: number; left: number; right: number }> = {}) => ({

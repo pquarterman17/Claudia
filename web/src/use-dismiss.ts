@@ -16,17 +16,26 @@ import { useEffect, useRef, type RefObject } from 'react';
  * `mousedown` with `preventDefault` to keep the composer focused, which a
  * `click`-based dismissal would race.
  *
- * The ref goes on the element that wraps BOTH the trigger and the menu. A ref
- * on the menu alone closes it on the way down through the trigger and the
- * trigger's own handler immediately reopens it, so the button stops working.
+ * Every node named as "inside" is exempt, and the TRIGGER has to be one of
+ * them. Treating only the menu as inside closes it on the way down through the
+ * trigger, whose own handler then immediately reopens it — so the button stops
+ * working. Menus that live inside their trigger's wrapper get this for free
+ * from `useDismiss`; a menu rendered through a portal is not a descendant of
+ * anything, and has to be named separately (see `useAnchoredMenu`).
  */
-export function useDismiss<T extends HTMLElement>(open: boolean, close: () => void): RefObject<T | null> {
-  const ref = useRef<T | null>(null);
-  // Held in a ref so the effect below depends only on `open`. An inline arrow
-  // passed by a component re-renders into a new identity every render, which
-  // would tear down and re-add the listeners on every keystroke.
+export function useDismissRefs(
+  open: boolean,
+  close: () => void,
+  insides: readonly RefObject<Node | null>[],
+): void {
+  // Held in refs so the effect below depends only on `open`. Both of these
+  // arrive as a fresh identity every render — an inline arrow for `close`, an
+  // array literal for `insides` — and depending on either would tear the
+  // listeners down and re-add them on every keystroke.
   const latest = useRef(close);
   latest.current = close;
+  const inside = useRef(insides);
+  inside.current = insides;
 
   useEffect(() => {
     if (!open) return;
@@ -37,7 +46,7 @@ export function useDismiss<T extends HTMLElement>(open: boolean, close: () => vo
       // as an outside click would close a menu the component is mid-way
       // through handling.
       if (!(target instanceof Node) || !target.isConnected) return;
-      if (ref.current?.contains(target)) return;
+      if (inside.current.some((node) => node.current?.contains(target))) return;
       latest.current();
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -50,6 +59,15 @@ export function useDismiss<T extends HTMLElement>(open: boolean, close: () => vo
       document.removeEventListener('keydown', onKeyDown);
     };
   }, [open]);
+}
 
+/**
+ * The common case: one ref, on an element wrapping BOTH the trigger and the
+ * menu. Used by the popovers that open inside their own tile rather than
+ * against the viewport.
+ */
+export function useDismiss<T extends HTMLElement>(open: boolean, close: () => void): RefObject<T | null> {
+  const ref = useRef<T | null>(null);
+  useDismissRefs(open, close, [ref]);
   return ref;
 }

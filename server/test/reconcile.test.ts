@@ -151,6 +151,15 @@ describe('reconcile', () => {
     expect(d).toContainEqual({ kind: 'block', taskId: t.id, reason: 'depends on "the dep", which is failed' });
   });
 
+  it('distinguishes a dependency nobody has approved from one still working', () => {
+    // Patience clears a running dependency. Only a person clears a proposed
+    // one, so the two must not read the same in the block reason.
+    const dep = task({ status: 'proposed', title: 'the dep' });
+    const t = task({ dependsOn: [dep.id] });
+    const d = reconcile({ mission: mission(), tasks: [dep, t], runs: [], policy: POLICY });
+    expect(d).toContainEqual({ kind: 'block', taskId: t.id, reason: 'depends on "the dep", which nobody has approved' });
+  });
+
   it('blocks a task pointing at a dependency that does not exist', () => {
     const t = task({ dependsOn: ['ghost'] });
     const d = reconcile({ mission: mission(), tasks: [t], runs: [], policy: POLICY });

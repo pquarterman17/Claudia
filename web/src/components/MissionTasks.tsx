@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react';
-import type { FleetEvent, Task, TaskStatus } from '@claudia/shared';
+import type { Escalation, FleetEvent, FleetLimits, Mission, Task } from '@claudia/shared';
 import { send } from '../store';
 import { judgementFor } from '../judged';
 import { HUMAN_MOVES, MOVE_LABEL } from '../task-moves';
 import { AcceptanceReview } from './AcceptanceReview';
+import { MissionFlow } from './MissionFlow';
+import type { Spend } from './MissionBudget';
+import { TASK_STATUS_COLOR } from '../task-status';
 
 /**
  * One mission's tasks, and the decisions that are the human's to make.
@@ -19,23 +22,16 @@ import { AcceptanceReview } from './AcceptanceReview';
  * observe for itself.
  */
 
-const STATUS_COLOR: Readonly<Record<TaskStatus, string>> = {
-  proposed: '#75798c',
-  ready: '#8ab4ff',
-  blocked: '#e0a34f',
-  running: '#7ee0a3',
-  reported: '#d2cefd',
-  accepted: '#5fbf7f',
-  failed: '#e07070',
-  cancelled: '#595d6c',
-};
-
 export function MissionTasks({
   missionId,
   cwd,
   tasks,
   events,
   elided,
+  mission,
+  spend,
+  limits,
+  escalations,
 }: {
   missionId: string;
   cwd: string;
@@ -43,6 +39,10 @@ export function MissionTasks({
   events: FleetEvent[] | undefined;
   /** History the client was not sent, or dropped off the front of its own cap. */
   elided: number;
+  mission: Mission;
+  spend: Spend | undefined;
+  limits: FleetLimits;
+  escalations: Escalation[] | undefined;
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -91,6 +91,7 @@ export function MissionTasks({
 
   return (
     <div style={{ padding: '8px 0 4px 16px', borderLeft: '1px solid #23263a', marginLeft: 4 }}>
+      <MissionFlow tasks={tasks} mission={mission} spend={spend} limits={limits} escalations={escalations} />
       {(tasks ?? []).length === 0 ? (
         <p style={{ fontSize: 11, color: '#595d6c', margin: '0 0 8px' }}>
           No tasks yet. Describe one below — it starts as <em>proposed</em>, and nothing is dispatched until you
@@ -106,7 +107,7 @@ export function MissionTasks({
                     fontSize: 10,
                     textTransform: 'uppercase',
                     letterSpacing: 0.4,
-                    color: STATUS_COLOR[task.status],
+                    color: TASK_STATUS_COLOR[task.status],
                     minWidth: 62,
                   }}
                 >

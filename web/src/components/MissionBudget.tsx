@@ -1,12 +1,16 @@
 import { useState } from 'react';
-import type { Mission } from '@claudia/shared';
+import type { Mission, MissionSpendLike } from '@claudia/shared';
 import { send } from '../store';
 
-/** What the server measured, or nothing if this mission has not been read. */
-export interface Spend {
-  elapsedSec: number;
-  tokens: number | null;
-}
+/**
+ * What the server measured, or nothing if this mission has not been read.
+ *
+ * The shared shape under the name this component reads well with. It was a
+ * third declaration of the same two fields — server, shared and here — and the
+ * one the model layer had started importing, which pointed a pure module at a
+ * React file for a type that has nothing to do with rendering.
+ */
+export type Spend = MissionSpendLike;
 
 /**
  * The ceilings a mission may spend against.

@@ -2,7 +2,8 @@ import type { Mission } from '@claudia/shared';
 import { transact } from '../store/db.js';
 import type { LaunchOrder, PulseDeps } from './pulse.js';
 import { note } from './pulse-report.js';
-import { childCeiling, isActiveRun, routeTo } from './reconcile.js';
+import { childCeiling } from '@claudia/shared';
+import { isActiveRun, routeTo } from './reconcile.js';
 
 /**
  * Claiming an attempt, and releasing one that never started.

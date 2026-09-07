@@ -215,6 +215,8 @@ export function applyWatchdogOutcomes(
   }
 }
 
+const COST: Readonly<Record<TaskIntent['to'], number>> = { failed: 2, reported: 1, ready: 0 };
+
 /**
  * Which of two runs' intents the task defers to.
  *
@@ -245,8 +247,6 @@ export function applyWatchdogOutcomes(
  * Keeping the first meant the note named attempt 1 while the board and
  * `acceptTask` were talking about attempt 2.
  */
-const COST: Readonly<Record<TaskIntent['to'], number>> = { failed: 2, reported: 1, ready: 0 };
-
 export function worseOf(existing: TaskIntent | undefined, next: TaskIntent): TaskIntent {
   if (existing === undefined) return next;
   if (COST[existing.to] > COST[next.to]) return existing;
@@ -268,11 +268,13 @@ function applyTaskIntent(
     // the task out from under it, or the survivor finishes into a task that
     // has already been handed to somebody else.
     //
-    // Named with its run, like every other note here. This branch and the
-    // refused-route one below are where a run ends without the task moving,
-    // and they are exactly the branches a second attempt takes — so a board
-    // that learns run identity only from `task_reported` learns nothing in
-    // the cases where two attempts overlap, which are the cases it exists for.
+    // Named with its run, like every other note here — for the LOG, not for
+    // the board. `currentRunFor` reads `task_reported` and nothing else, on
+    // purpose: these notes name the run that ended, not the one holding the
+    // task, and a board that read them would scope to an attempt nobody is
+    // reviewing. What the run id buys here is a timeline that says which
+    // attempt each line is about, and a key that keeps two attempts' notes
+    // from collapsing into one.
     note(store, mission.id, taskId, 'run_ended_task_held', `${intent.reason}; another run of this task is still active`, intent.runId);
     return;
   }

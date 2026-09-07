@@ -95,7 +95,9 @@ function readJudgement(payload: unknown): Judgement | undefined {
     verdict: verdict as Judgement['verdict'],
     reason: typeof record['reason'] === 'string' ? record['reason'] : '',
     missing: Array.isArray(record['missing']) ? record['missing'].filter((m): m is string => typeof m === 'string') : [],
-    ...(typeof evidence['filesChanged'] === 'number' ? { filesChanged: evidence['filesChanged'] } : {}),
+    // A safe integer, like `exitCode`. `typeof NaN` is 'number', and this is
+    // rendered straight through `String(...)` into the Change section.
+    ...(Number.isSafeInteger(evidence['filesChanged']) ? { filesChanged: evidence['filesChanged'] as number } : {}),
     ...(typeof evidence['branch'] === 'string' ? { branch: evidence['branch'] } : {}),
     ...(typeof evidence['baseSha'] === 'string' ? { baseSha: evidence['baseSha'] } : {}),
     ...(typeof evidence['headSha'] === 'string' ? { headSha: evidence['headSha'] } : {}),

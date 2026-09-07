@@ -220,7 +220,7 @@ function NewMission({ onDone }: { onDone: () => void }) {
         value={verify}
         onChange={(e) => setVerify(e.target.value)}
         placeholder="Check with (optional) — npm test"
-        title="Run in the child’s worktree once it reports. One program, no shell. Without it every verdict is “check it”."
+        title="Run in the child’s worktree once it reports. One program, no shell. Without it every completion claim reaches you with no test results."
         style={field(180)}
       />
       <select value={agent} onChange={(e) => setAgent(e.target.value as AgentKind)} style={field(80)}>

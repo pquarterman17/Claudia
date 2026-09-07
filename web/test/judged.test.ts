@@ -111,6 +111,17 @@ describe('finding a verdict', () => {
     expect(evidenceSupportsAcceptance(passing)).toBe(true);
   });
 
+  it('treats a files-changed count the server would call malformed as absent', () => {
+    // Same loose check as `exitCode` had, one property away, and rendered
+    // straight through `String(...)` into the Change section.
+    for (const filesChanged of [Number.NaN, Number.POSITIVE_INFINITY, 2.5]) {
+      const found = judgementFor([event({ payload: { ...GOOD, evidence: { filesChanged } } })], 't1');
+      expect(found?.filesChanged).toBeUndefined();
+    }
+    const real = judgementFor([event({ payload: { ...GOOD, evidence: { filesChanged: 0 } } })], 't1');
+    expect(real?.filesChanged).toBe(0);
+  });
+
   it('treats an exit code the server would call malformed as unread', () => {
     // `typeof NaN` is 'number', so the looser check rendered `failed (NaN)` as
     // a result somebody had read. The producer uses `Number.isSafeInteger`.

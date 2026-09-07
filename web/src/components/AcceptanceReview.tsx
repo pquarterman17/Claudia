@@ -55,7 +55,7 @@ export function AcceptanceReview({ missionId, task, judgement }: {
               hands the whole thing to the child as a `## Done when` block, so
               a three-bullet definition of done is ordinary input — and this is
               the one place a human checks the evidence against it. */}
-          <p style={{ ...copy, whiteSpace: 'pre-wrap' }}>{task.acceptance.trim() || 'No task-specific acceptance criteria were recorded.'}</p>
+          <p style={{ ...copy, whiteSpace: 'pre-wrap' }}>{task.acceptance?.trim() || 'No task-specific acceptance criteria were recorded.'}</p>
         </section>
 
         {!judgement ? (
@@ -219,12 +219,15 @@ export function acceptCommand(missionId: string, taskId: string, reason?: string
  * The one line a reviewer reads without opening the disclosure.
  *
  * It has to answer the same question the button below it answers, or the
- * collapsed row promises something the panel then refuses. Two inputs are here
- * for exactly that reason. `unreadTests`, because `evidenceSupportsAcceptance`
- * fails closed on it. And `writing`, because a reason already being typed
- * holds the panel on the override path — so a verdict turning green mid
- * sentence would otherwise leave the headline saying "Ready for your decision"
- * over a panel that still only offers the override.
+ * collapsed row promises something the panel then refuses — and the reader who
+ * never expands the disclosure sees only this line. So it mirrors every reason
+ * `evidenceSupportsAcceptance` fails closed: a rejection, results it could not
+ * read, and a check it read and can see failed. Adding one there without one
+ * here is how the two drift, which has now happened twice.
+ *
+ * `writing` comes first and outranks all of it: a reason already being typed
+ * holds the panel on the override path whatever the verdict says, so the
+ * headline has to say so even before there is a judgement to describe.
  *
  * Unreadable risks and artifacts deliberately do NOT appear here. They never
  * block an acceptance — `acceptance.ts` argues a child that admits a risk is
@@ -232,10 +235,11 @@ export function acceptCommand(missionId: string, taskId: string, reason?: string
  * are, not raised to a verdict they do not change.
  */
 export function summary(judgement: Judgement | undefined, writing = false): string {
+  if (writing) return 'Recording a reason';
   if (!judgement) return 'Checking completion claim';
   if (judgement.verdict === 'reject') return 'Evidence needs work';
   if ((judgement.unreadTests ?? 0) > 0) return 'Evidence could not be read';
-  if (writing) return 'Recording a reason';
+  if (judgement.tests?.some((test) => test.exitCode !== 0)) return 'A check failed';
   if (judgement.missing.length > 0) return `${judgement.missing.length} evidence gap${judgement.missing.length === 1 ? '' : 's'}`;
   return 'Ready for your decision';
 }

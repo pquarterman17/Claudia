@@ -28,6 +28,23 @@ describe('acceptance review summary', () => {
     expect(evidenceSupportsAcceptance(unread)).toBe(false);
   });
 
+  it('says a check failed rather than promising a decision', () => {
+    // `evidenceSupportsAcceptance` gained a failing-test check; the headline
+    // did not, and the reader who never expands the disclosure sees only the
+    // headline. The two have now drifted twice, which is why they are asserted
+    // together.
+    const failed = {
+      verdict: 'needs_human' as const, reason: 'green', missing: [],
+      tests: [{ command: 'npm test', exitCode: 1 }],
+    };
+    expect(summary(failed)).toBe('A check failed');
+    expect(evidenceSupportsAcceptance(failed)).toBe(false);
+  });
+
+  it('says it is recording a reason even before there is a verdict', () => {
+    expect(summary(undefined, true)).toBe('Recording a reason');
+  });
+
   it('does not read green while a reason is still being written', () => {
     // A verdict can turn green mid-sentence — a pulse re-judged, a page of
     // history landed. The panel holds the override path so the typed reason is

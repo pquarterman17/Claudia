@@ -78,17 +78,23 @@ export async function judgeReported(deps: PulseDeps, mission: Mission): Promise<
  * reason: judging READS the worktree, so a report nobody has read yet is a
  * directory still in use.
  *
- * Asked of the TASK's log, not the mission's. `sinceForMission(id)` is
- * `seq > 0 ORDER BY seq LIMIT 500` — the OLDEST 500 events of the mission — so
- * once a mission had that much history this answered `false` for a run judged
- * seconds ago. The append is keyed on the run, so nothing was duplicated; what
- * ran again, on every pulse, for as long as the run sat in `reported`, was the
- * half this check exists to skip: the git reads and the mission's verify
- * command, up to its 120-second timeout. A task's own log is bounded by its
- * attempts, so the same read answers truthfully here.
+ * From the newest end of the TASK's log. Two window bugs in sequence, the same
+ * pair `accept.ts` documents. `sinceForMission` is the OLDEST 500 events of a
+ * mission, so once a mission had that much history this answered `false` for a
+ * run judged seconds ago. Narrowing to the task looked like the fix, on the
+ * reasoning that a task's log is bounded by its attempts — and it is not: a
+ * stuck run escalates once a minute, because the reason carries the elapsed
+ * minutes and the keyed note stops deduplicating.
+ *
+ * The append is keyed on the run, so a wrong answer duplicates nothing. What
+ * it costs is the half this check exists to skip — the git reads and the
+ * mission's verify command, up to its 120-second timeout, re-run on every
+ * pulse for as long as the run sits in `reported` — and it pins the task in
+ * `unreadTaskIds`, so its worktree is never retired. Only a newest-first read
+ * is bounded by recency rather than by a hope about volume.
  */
 export function hasJudgement(store: FleetStore, taskId: string, runId: string): boolean {
-  const events = store.events.sinceForTask(taskId);
+  const events = store.events.tailForTask(taskId);
   return events.ok && events.value.some((event) => event.kind === 'task_judged' && event.runId === runId);
 }
 

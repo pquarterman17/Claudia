@@ -25,7 +25,7 @@ export function MissionVerify({ missionId, verify }: { missionId: string; verify
       <p style={{ fontSize: 10.5, color: '#595d6c', margin: '4px 0' }}>
         {verify === undefined ? (
           <>
-            No checks. Nothing runs against a finished child’s worktree, so every verdict is “check it”.{' '}
+            No checks. Nothing runs against a finished child’s worktree, so every completion claim reaches you with no test results.{' '}
           </>
         ) : (
           <>

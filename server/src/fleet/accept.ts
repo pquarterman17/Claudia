@@ -51,9 +51,13 @@ export function acceptTask(store: FleetStore, missionId: string, taskId: string,
   // could disagree — a pulse commits between them — and "which attempt" and
   // "its verdict" disagreeing is the whole failure this command guards.
   const log = store.events.tailForTask(taskId);
-  const events = log.ok ? log.value : [];
-  const run = currentRunId(store, taskId, events);
-  const judged = latestJudgement(events, run);
+  // Returned, not swallowed. An unreadable log is not evidence that nothing
+  // judged this task, and saying so would put a false sentence — "nothing has
+  // judged this task yet" — into the `overrode` field of the record this
+  // command exists to produce.
+  if (!log.ok) return { ok: false, message: log.message };
+  const run = currentRunId(store, taskId, log.value);
+  const judged = latestJudgement(log.value, run);
   const reason = (override ?? '').trim();
   const blocker = judged === undefined ? 'nothing has judged this task yet' : refusalFor(judged);
 
@@ -131,8 +135,10 @@ function refusalFor(judged: Judgement): string | undefined {
  * Two narrowings, and both of them are the difference between a check and a
  * rubber stamp.
  *
- * By RUN, because a judgement describes the worktree of the run that produced
- * it. A task that was sent back to `ready` and ran again has an old verdict
+ * By RUN — `currentRunFor`, the one definition of that in `shared`, so this and
+ * the board cannot answer it differently on any log that names one.
+ *
+ * A judgement describes the worktree of the run that produced it. A task that was sent back to `ready` and ran again has an old verdict
  * about a tree that no longer exists — and the case that matters is the second
  * attempt reporting BEFORE the pulse judges it, where taking the newest
  * verdict by sequence hands back attempt 1's `accept` and waves attempt 2
@@ -164,27 +170,24 @@ function latestJudgement(events: readonly FleetEvent[], run: string | undefined)
 }
 
 /**
- * The attempt whose report is on the table.
+ * The attempt on the table, and what to do when the log will not say.
  *
- * The run named by the newest `task_reported`, because that note is written in
- * exactly one place: the branch of `applyTaskIntent` that moves a task INTO
- * `reported`. So it names the claim that put the task in the state this
- * command is being asked to act on, which is the definition of the attempt
- * under review.
+ * `currentRunFor` answers from the newest `task_reported`. When no such note is
+ * in reach — a log written before runs were denormalised onto events, a task
+ * moved to `reported` by hand — this falls back to the highest attempt, and
+ * the board deliberately does NOT: it goes on showing the newest verdict so a
+ * human can still read the evidence.
  *
- * It is not "the highest attempt", which is what this used to say. Runs of one
- * task can overlap and can finish out of order — a second attempt dispatched
- * while the first was stuck can report first, hit the `stillHeld` branch, and
- * never move the task at all. Reading the highest attempt there answered with
- * a run whose claim nobody is looking at, and the board, reading the log,
- * answered with the one they are. The two have to agree or the panel offers a
- * decision this refuses, and `web/src/judged.ts` derives it the same way from
- * the same events.
+ * That is the one place the two are allowed to differ, and the asymmetry is
+ * the point. The board chooses wording; this decides. Failing closed here
+ * keeps the property that matters — a second attempt is never accepted on the
+ * first one's verdict — and the cost is that on such a log the board can offer
+ * an accept this refuses, with a message saying why. A refused click is worth
+ * more than a silent acceptance of the wrong tree.
  *
- * Falls back to the highest attempt when no such note exists: a task moved to
- * `reported` by hand or by a test has a claim on the table that the log does
- * not describe, and refusing every acceptance there would be worse than
- * scoping to the newest run.
+ * The runs read is a second read, outside the event snapshot above. It is
+ * reached only on this fallback, where there is no snapshot answer to be
+ * consistent with.
  */
 function currentRunId(store: FleetStore, taskId: string, events: readonly FleetEvent[]): string | undefined {
   const reported = currentRunFor(events);

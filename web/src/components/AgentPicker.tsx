@@ -1,6 +1,7 @@
 import type { SessionSummary } from '@claudia/shared';
 import { useState } from 'react';
 import { AGENT_KINDS } from '../agent-kinds';
+import { belowAnchor, useAnchor } from '../use-anchor';
 import { useDismiss } from '../use-dismiss';
 import { send } from '../store';
 
@@ -41,6 +42,11 @@ export function AgentPicker({ session }: { session: SessionSummary }) {
   // the next single click, which is the one thing the confirm step exists to
   // stop happening by accident.
   const wrap = useDismiss<HTMLSpanElement>(open, () => { setOpen(false); setConfirming(null); });
+  // Anchored to the BUTTON and positioned against the viewport: this menu
+  // hangs below a 34px header that clips what overflows it, so an absolutely
+  // positioned one showed three pixels of itself and the terminal behind the
+  // rest. See `use-anchor.ts`.
+  const anchor = useAnchor<HTMLButtonElement>(open);
   const current = session.agent ?? 'claude';
   const isCodex = current === 'codex';
   const started = hasConversation(session);
@@ -62,6 +68,7 @@ export function AgentPicker({ session }: { session: SessionSummary }) {
   return (
     <span ref={wrap} style={{ position: 'relative', flex: 'none' }}>
       <button
+        ref={anchor.ref}
         type="button"
         onClick={() => {
           setOpen(!open);
@@ -88,14 +95,11 @@ export function AgentPicker({ session }: { session: SessionSummary }) {
         {isCodex ? 'Codex' : 'Claude'}
       </button>
 
-      {open && (
+      {open && anchor.rect && (
         <div
           role="menu"
           style={{
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            marginTop: 4,
+            ...belowAnchor(anchor.rect),
             zIndex: 20,
             minWidth: 210,
             background: '#1a1c28',

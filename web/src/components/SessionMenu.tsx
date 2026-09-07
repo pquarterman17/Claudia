@@ -5,6 +5,7 @@ import { fmtModel } from '../format';
 import { PERMISSION_MODES } from '../permission-modes';
 import { COLORS } from '../status';
 import { send } from '../store';
+import { belowAnchor, useAnchor } from '../use-anchor';
 import { useDismiss } from '../use-dismiss';
 
 /**
@@ -32,6 +33,8 @@ export function SessionMenu({ session, yolo, checkpoints, onRename }: {
 }) {
   const [open, setOpen] = useState(false);
   const wrap = useDismiss<HTMLSpanElement>(open, () => setOpen(false));
+  // Against the viewport, not the tile: the header clips what overflows it.
+  const anchor = useAnchor<HTMLButtonElement>(open);
   const can = capabilitiesFor(session.agent);
 
   const removeSession = () => {
@@ -43,6 +46,7 @@ export function SessionMenu({ session, yolo, checkpoints, onRename }: {
   return (
     <span ref={wrap} style={{ display: 'contents' }}>
       <button
+        ref={anchor.ref}
         className="btn btn-ghost"
         aria-expanded={open}
         aria-haspopup="menu"
@@ -52,8 +56,8 @@ export function SessionMenu({ session, yolo, checkpoints, onRename }: {
       >
         ⋯
       </button>
-      {open && (
-        <div role="menu" aria-label={`Actions for ${session.title ?? session.name}`} style={{ position: 'absolute', right: 12, zIndex: 10, minWidth: 190, padding: 4, background: '#1d1f2c', border: '1px solid #33364a', borderRadius: 6, boxShadow: '0 6px 18px rgba(0, 0, 0, 0.4)' }}>
+      {open && anchor.rect && (
+        <div role="menu" aria-label={`Actions for ${session.title ?? session.name}`} style={{ ...belowAnchor(anchor.rect, 'right'), zIndex: 20, minWidth: 190, padding: 4, background: '#1d1f2c', border: '1px solid #33364a', borderRadius: 6, boxShadow: '0 6px 18px rgba(0, 0, 0, 0.4)' }}>
           <div style={{ padding: '4px 6px 6px', fontSize: 10, color: '#75798c' }}>{fmtModel(session.model)} · {yolo ? 'approvals skipped' : 'approvals on'}</div>
           <div style={{ padding: '2px 6px 3px', fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: '#4a4e5e' }}>
             Permission mode

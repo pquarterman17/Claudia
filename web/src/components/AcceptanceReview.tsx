@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Task } from '@claudia/shared';
+import type { ClientCommand, Task } from '@claudia/shared';
 import { evidenceSupportsAcceptance, type Judgement } from '../judged';
 import { send } from '../store';
 
@@ -22,8 +22,24 @@ export function AcceptanceReview({ missionId, task, judgement }: {
   judgement: Judgement | undefined;
 }) {
   const [override, setOverride] = useState<string | undefined>();
-  const supported = evidenceSupportsAcceptance(judgement);
+  // A reason already being typed keeps the override open even if a fresh
+  // verdict would otherwise offer the plain button. `accept.ts` spends a long
+  // comment on the reason being the whole point of an override, and tearing
+  // the input down under somebody mid-sentence — a pulse re-judged, a page of
+  // history landed — loses it silently and unsent.
+  const writing = override !== undefined && override.trim() !== '';
+  const supported = evidenceSupportsAcceptance(judgement) && !writing;
   const tone = judgement?.verdict === 'reject' ? '#e07070' : supported ? '#7ee0a3' : '#e0a34f';
+
+  // The reason survives the send. `send` is fire-and-forget over a socket and
+  // the refusal comes back as a notice — a task no longer `reported`, a store
+  // write that lost a race — by which time a cleared input has already made
+  // the reviewer retype from memory. That friction is what trains people to
+  // write "ok" instead of a reason. The panel stops rendering once the task
+  // leaves `reported`, so a successful accept clears it anyway.
+  const accept = (reason: string): void => {
+    send(acceptCommand(missionId, task.id, reason));
+  };
 
   return (
     // Acceptance deliberately lives inside the disclosure: opening the
@@ -55,7 +71,7 @@ export function AcceptanceReview({ missionId, task, judgement }: {
 
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
           {supported ? (
-            <button className="btn btn-ghost" style={positive} onClick={() => send({ type: 'accept_task', missionId, taskId: task.id })}>
+            <button className="btn btn-ghost" style={positive} onClick={() => send(acceptCommand(missionId, task.id))}>
               accept task
             </button>
           ) : override === undefined ? (
@@ -70,6 +86,13 @@ export function AcceptanceReview({ missionId, task, judgement }: {
                   autoFocus
                   value={override}
                   onChange={(event) => setOverride(event.target.value)}
+                  onKeyDown={(event) => {
+                    // Enter submits, as it does in all three task inputs next
+                    // door. This one sits in a `div` rather than a `form`, so
+                    // without a handler there is no implicit submit and the
+                    // reason can only be committed with the mouse.
+                    if (event.key === 'Enter' && override.trim() !== '') accept(override);
+                  }}
                   placeholder="Explain why this evidence is sufficient"
                   style={field}
                 />
@@ -78,10 +101,7 @@ export function AcceptanceReview({ missionId, task, judgement }: {
                 className="btn btn-ghost"
                 style={warning}
                 disabled={override.trim() === ''}
-                onClick={() => {
-                  send({ type: 'accept_task', missionId, taskId: task.id, override });
-                  setOverride(undefined);
-                }}
+                onClick={() => accept(override)}
               >
                 record override and accept
               </button>
@@ -103,7 +123,15 @@ function Evidence({ judgement }: { judgement: Judgement }) {
         <Fact name="Files" value={judgement.filesChanged === undefined ? undefined : String(judgement.filesChanged)} />
         <Fact name="Head" value={shortSha(judgement.headSha)} mono />
         <Fact name="Base" value={shortSha(judgement.baseSha)} mono />
-        <Fact name="Ancestry" value={judgement.descendsFromBase === undefined ? undefined : judgement.descendsFromBase ? 'Verified' : 'Does not descend from base'} />
+        {/* `judge()` refuses outright on this one — a green test run over a
+            diff that does not build on the recorded base is evidence about
+            some other tree — so it carries the weight every other failure in
+            this panel carries, rather than reading as branch metadata. */}
+        <Fact
+          name="Ancestry"
+          value={judgement.descendsFromBase === undefined ? undefined : judgement.descendsFromBase ? 'Verified' : 'Does not descend from base'}
+          tone={judgement.descendsFromBase === false ? '#e07070' : undefined}
+        />
       </section>
       <section aria-label="Test evidence">
         <Label>Checks</Label>
@@ -130,8 +158,8 @@ function Evidence({ judgement }: { judgement: Judgement }) {
             Pull request{judgement.prState ? ` — ${judgement.prState}` : ''}
           </a>
         ) : judgement.prState ? <Fact name="Pull request" value={judgement.prState} /> : <Missing>No pull request recorded</Missing>}
-        <List label="Artifacts" values={judgement.artifacts} empty="None reported" />
-        <List label="Risks" values={judgement.risks} empty="None reported" risk />
+        <List label="Artifacts" values={judgement.artifacts} unread={judgement.unreadArtifacts} empty="None reported" />
+        <List label="Risks" values={judgement.risks} unread={judgement.unreadRisks} empty="None reported" risk />
       </section>
     </div>
   );
@@ -141,15 +169,26 @@ function Label({ children }: { children: React.ReactNode }) {
   return <div style={{ color: '#75798c', fontSize: 9.5, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>{children}</div>;
 }
 
-function Fact({ name, value, mono = false }: { name: string; value: string | undefined; mono?: boolean }) {
-  return <div style={copy}><span style={{ color: '#75798c' }}>{name}: </span><span style={{ fontFamily: mono ? 'ui-monospace, monospace' : undefined }}>{value || 'not recorded'}</span></div>;
+function Fact({ name, value, mono = false, tone }: { name: string; value: string | undefined; mono?: boolean; tone?: string }) {
+  return <div style={copy}><span style={{ color: '#75798c' }}>{name}: </span><span style={{ fontFamily: mono ? 'ui-monospace, monospace' : undefined, color: tone }}>{value || 'not recorded'}</span></div>;
 }
 
-function List({ label, values, empty, risk = false }: { label: string; values: string[] | undefined; empty: string; risk?: boolean }) {
+function List({ label, values, unread = 0, empty, risk = false }: {
+  label: string;
+  values: string[] | undefined;
+  unread?: number;
+  empty: string;
+  risk?: boolean;
+}) {
+  // Said, not omitted. An entry the board could not read is the one case where
+  // `empty` would be a lie rather than a fact, so it takes the line instead.
+  const unreadable = unread > 0 ? `${unread} could not be read` : undefined;
+  const said = values?.length ? values.join(' · ') : undefined;
   return (
     <div style={{ marginTop: 7 }}>
       <span style={{ ...copy, color: '#75798c' }}>{label}: </span>
-      <span style={{ ...copy, color: risk && values?.length ? '#e0a34f' : '#c8cadb' }}>{values?.length ? values.join(' · ') : empty}</span>
+      <span style={{ ...copy, color: risk && said ? '#e0a34f' : '#c8cadb' }}>{said ?? (unreadable === undefined ? empty : '')}</span>
+      {unreadable && <span style={{ ...copy, color: '#e0a34f' }}>{said ? ` · ${unreadable}` : unreadable}</span>}
     </div>
   );
 }
@@ -158,9 +197,38 @@ function Missing({ children }: { children: React.ReactNode }) {
   return <div style={{ ...copy, color: '#75798c' }}>{children}</div>;
 }
 
+/**
+ * The one line a reviewer reads without opening the disclosure.
+ *
+ * It has to answer the same question the button below it answers, or the
+ * collapsed row promises something the panel then refuses. `unreadTests` is
+ * here for exactly that reason: `evidenceSupportsAcceptance` fails closed on
+ * it, so a headline that skipped it said "Ready for your decision" over a
+ * panel offering only the override.
+ *
+ * Unreadable risks and artifacts deliberately do NOT appear here. They never
+ * block an acceptance — `acceptance.ts` argues a child that admits a risk is
+ * behaving better than one that does not — so they are reported where they
+ * are, not raised to a verdict they do not change.
+ */
+/**
+ * The command each path sends, as a value rather than an inline literal.
+ *
+ * Separated so it can be asserted on: the difference between the two buttons
+ * is whether `override` is present at all, and `acceptTask` reads a blank
+ * reason as no reason. A regression that sent an empty override on the plain
+ * path would record a decision as having been argued for when it was not, and
+ * nothing rendered to HTML would show it.
+ */
+export function acceptCommand(missionId: string, taskId: string, reason?: string): ClientCommand {
+  const override = reason?.trim();
+  return { type: 'accept_task', missionId, taskId, ...(override ? { override: reason } : {}) };
+}
+
 export function summary(judgement: Judgement | undefined): string {
   if (!judgement) return 'Checking completion claim';
   if (judgement.verdict === 'reject') return 'Evidence needs work';
+  if ((judgement.unreadTests ?? 0) > 0) return 'Evidence could not be read';
   if (judgement.missing.length > 0) return `${judgement.missing.length} evidence gap${judgement.missing.length === 1 ? '' : 's'}`;
   return 'Ready for your decision';
 }

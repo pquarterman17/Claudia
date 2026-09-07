@@ -34,13 +34,20 @@ import type { LaunchOrder, PulseDeps, PulseResult } from './pulse.js';
  * the transaction rolled back, and NEITHER run was terminalized. The runs are
  * ended independently; the task moves once, after every run has been read.
  */
-interface TaskIntent {
+export interface TaskIntent {
   to: 'ready' | 'failed' | 'reported';
   reason: string;
   /** Present only for a retry, and only then is a launch owed. */
   attempt?: number;
   key?: string;
-  /** The run making a completion claim, so later attempts get distinct notes. */
+  /**
+   * The run this intent came from.
+   *
+   * On EVERY intent, not only a completion claim. The board reads run identity
+   * off the notes to tell which attempt a verdict describes, and an intent
+   * that does not carry its run produces a note that does not either — which
+   * is a note the board cannot place.
+   */
   runId?: string;
 }
 
@@ -190,8 +197,8 @@ export function applyWatchdogOutcomes(
         if (!ended.ok) throw new Error(ended.message);
         const intent: TaskIntent =
           action.kind === 'retry'
-            ? { to: 'ready', reason: action.reason, attempt: action.attempt, key: action.key }
-            : { to: 'failed', reason: action.reason };
+            ? { to: 'ready', reason: action.reason, attempt: action.attempt, key: action.key, runId: run.id }
+            : { to: 'failed', reason: action.reason, runId: run.id };
         wanted.set(run.taskId, worseOf(wanted.get(run.taskId), intent));
         continue;
       }
@@ -210,15 +217,25 @@ export function applyWatchdogOutcomes(
  * over the task, not the run — so disagreement means something has already
  * gone strange. Giving up is the answer that cannot overspend, and the bound
  * on spending is the property worth keeping when the inputs are confusing.
+ *
+ * Between two intents of equal severity the LATER one wins, and that is a
+ * correctness rule rather than a preference. `observations` is walked in
+ * started-at order and attempts are sequential, so the last intent of a given
+ * severity belongs to the highest attempt — which is the run `acceptTask`
+ * calls current (`listByTask` is ordered by attempt, and it takes the last).
+ * Keeping the first meant the note named attempt 1 while acceptance judged
+ * attempt 2, so a board scoping to the note and a server scoping to the run
+ * could settle on different verdicts for the same click.
  */
-function worseOf(existing: TaskIntent | undefined, next: TaskIntent): TaskIntent {
+export function worseOf(existing: TaskIntent | undefined, next: TaskIntent): TaskIntent {
   if (existing === undefined) return next;
-  // `failed` still wins, and now it wins over `reported` too: one run claiming
-  // to have finished does not answer another run of the same task having
-  // failed, and the answer that cannot overspend is still the one to keep when
-  // two runs of one task disagree. The claim is not lost — its run row records
-  // it — only the task's status defers to the worse news.
-  return existing.to === 'failed' ? existing : next.to === 'failed' ? next : existing;
+  // `failed` still wins, and it wins over `reported` too: one run claiming to
+  // have finished does not answer another run of the same task having failed,
+  // and the answer that cannot overspend is still the one to keep when two
+  // runs of one task disagree. The claim is not lost — its run row records it
+  // — only the task's status defers to the worse news.
+  if (existing.to === 'failed' && next.to !== 'failed') return existing;
+  return next;
 }
 
 function applyTaskIntent(
@@ -235,7 +252,13 @@ function applyTaskIntent(
     // Another run of this task is alive. Ending its sibling must not requeue
     // the task out from under it, or the survivor finishes into a task that
     // has already been handed to somebody else.
-    note(store, mission.id, taskId, 'run_ended_task_held', `${intent.reason}; another run of this task is still active`);
+    //
+    // Named with its run, like every other note here. This branch and the
+    // refused-route one below are where a run ends without the task moving,
+    // and they are exactly the branches a second attempt takes — so a board
+    // that learns run identity only from `task_reported` learns nothing in
+    // the cases where two attempts overlap, which are the cases it exists for.
+    note(store, mission.id, taskId, 'run_ended_task_held', `${intent.reason}; another run of this task is still active`, intent.runId);
     return;
   }
   // Read from the STORE, not from the snapshot this pulse opened with. Found
@@ -257,7 +280,7 @@ function applyTaskIntent(
     // Blocked is also the correct state to leave it in: the reconciler
     // unblocks it when its dependencies resolve, and bounds the retry by the
     // same attempt count this did.
-    note(store, mission.id, taskId, 'task_left_as_is', `${intent.reason}; the task is ${from ?? 'unknown'}`);
+    note(store, mission.id, taskId, 'task_left_as_is', `${intent.reason}; the task is ${from ?? 'unknown'}`, intent.runId);
     return;
   }
   for (const status of route) {
@@ -265,7 +288,7 @@ function applyTaskIntent(
     if (!moved.ok) throw new Error(moved.message);
   }
   if (intent.to === 'failed') {
-    note(store, mission.id, taskId, 'task_given_up', intent.reason);
+    note(store, mission.id, taskId, 'task_given_up', intent.reason, intent.runId);
     return;
   }
   if (intent.to === 'reported') {
@@ -283,5 +306,5 @@ function applyTaskIntent(
   }
   result.deferred += 1;
   const why = deps.launch ? 'no free child slot; the reconciler will dispatch it when one opens' : 'no launcher is wired yet';
-  note(store, mission.id, taskId, 'retry_deferred', `${intent.reason} (${why})`);
+  note(store, mission.id, taskId, 'retry_deferred', `${intent.reason} (${why})`, intent.runId);
 }

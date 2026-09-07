@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { FleetEvent, Task, TaskStatus } from '@claudia/shared';
 import { send } from '../store';
 import { judgementFor } from '../judged';
@@ -47,6 +47,19 @@ export function MissionTasks({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [acceptance, setAcceptance] = useState('');
+
+  // Computed once per timeline, not once per keystroke. The three inputs below
+  // are controlled state on this component, so every character typed into any
+  // of them re-renders the whole list — and `judgementFor` walks the capped
+  // 200-event window and re-parses every matching payload, including a `new
+  // URL` per PR link, once for each reported task.
+  const judgements = useMemo(() => {
+    const found = new Map<string, ReturnType<typeof judgementFor>>();
+    for (const task of tasks ?? []) {
+      if (task.status === 'reported') found.set(task.id, judgementFor(events, task.id));
+    }
+    return found;
+  }, [events, tasks]);
 
   const add = (): void => {
     const trimmed = title.trim();
@@ -111,7 +124,7 @@ export function MissionTasks({
                 ))}
               </div>
               {task.status === 'reported' && (
-                <AcceptanceReview missionId={missionId} task={task} judgement={judgementFor(events, task.id)} />
+                <AcceptanceReview missionId={missionId} task={task} judgement={judgements.get(task.id)} />
               )}
             </li>
           ))}

@@ -82,6 +82,43 @@ describe('finding a verdict', () => {
     expect(judged?.reason).toBe('second attempt checked');
   });
 
+  it('scopes to the current run even when no report note was written', () => {
+    // The case the `task_reported` reset could not see. `applyTaskIntent`
+    // returns before writing that note when another run still holds the task,
+    // and again when the task's route is refused — while `judgeReported`
+    // judges every reported run regardless. Run identity is on every event,
+    // so the newest one names the attempt whatever branch the pulse took.
+    const held = judgementFor([
+      event({ runId: 'r1', payload: GOOD }),
+      event({ seq: 2, runId: 'r2', kind: 'run_ended_task_held', payload: { reason: 'another run is still active' } }),
+    ], 't1');
+    expect(held).toBeUndefined();
+
+    const refused = judgementFor([
+      event({ runId: 'r1', payload: GOOD }),
+      event({ seq: 2, runId: 'r2', kind: 'task_left_as_is', payload: { reason: 'the task is blocked' } }),
+    ], 't1');
+    expect(refused).toBeUndefined();
+  });
+
+  it('keeps a verdict whose run is still the one being talked about', () => {
+    const found = judgementFor([
+      event({ runId: 'r2', kind: 'task_reported', payload: { reason: 'ended' } }),
+      event({ seq: 2, runId: 'r2', payload: GOOD }),
+      event({ seq: 3, runId: 'r2', kind: 'escalated', payload: { reason: 'still r2' } }),
+    ], 't1');
+    expect(found?.verdict).toBe('needs_human');
+  });
+
+  it('falls back to the newest verdict on a log that names no runs at all', () => {
+    // What a log written before runs were denormalised onto events looks like.
+    // Scoping to a run nothing names would hide every verdict in it.
+    const legacy = (seq: number, payload: unknown): FleetEvent =>
+      ({ seq, missionId: 'm1', taskId: 't1', actor: 'system', kind: 'task_judged', at: 1, payload }) as FleetEvent;
+    const found = judgementFor([legacy(1, GOOD), legacy(2, { ...GOOD, verdict: 'accept' })], 't1');
+    expect(found?.verdict).toBe('accept');
+  });
+
   it('answers nothing when there is nothing', () => {
     expect(judgementFor(undefined, 't1')).toBeUndefined();
     expect(judgementFor([], 't1')).toBeUndefined();
@@ -164,16 +201,33 @@ describe('a payload that is not what it should be', () => {
     expect(found?.branch).toBeUndefined();
   });
 
-  it('drops malformed nested review evidence', () => {
+  it('counts malformed nested review evidence rather than dropping it', () => {
+    // Silence about a risk has to mean silence. `risks: 'none'` is a value the
+    // board could not read, and reporting it as "None reported" told a
+    // reviewer the child flagged nothing.
     const found = judgementFor([event({ payload: {
       ...GOOD,
       evidence: { tests: [{ command: 3, exitCode: 'zero' }, null], risks: 'none', artifacts: [2], prState: 'maybe' },
     } })], 't1');
     expect(found?.tests).toEqual([]);
     expect(found?.unreadTests).toBe(2);
-    expect(found?.risks).toBeUndefined();
+    expect(found?.risks).toEqual([]);
+    expect(found?.unreadRisks).toBe(1);
     expect(found?.artifacts).toEqual([]);
+    expect(found?.unreadArtifacts).toBe(1);
     expect(found?.prState).toBeUndefined();
+  });
+
+  it('separates a list nobody wrote from one it could not read', () => {
+    const absent = judgementFor([event({ payload: GOOD })], 't1');
+    expect(absent?.risks).toBeUndefined();
+    expect(absent?.unreadRisks).toBe(0);
+
+    const partial = judgementFor([event({ payload: {
+      ...GOOD, evidence: { risks: ['a real risk', { note: 'data loss possible' }] },
+    } })], 't1');
+    expect(partial?.risks).toEqual(['a real risk']);
+    expect(partial?.unreadRisks).toBe(1);
   });
 
   it('does not turn an unsafe PR URL from a malformed event into a link', () => {

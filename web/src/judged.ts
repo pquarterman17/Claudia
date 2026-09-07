@@ -26,8 +26,10 @@ export interface Judgement {
   prState?: 'draft' | 'open' | 'merged' | 'closed';
   risks?: string[];
   artifacts?: string[];
-  /** Results present in the event but too malformed to show as evidence. */
+  /** Entries present in the event but too malformed to show as evidence. */
   unreadTests?: number;
+  unreadRisks?: number;
+  unreadArtifacts?: number;
   /**
    * What the mission's own verify command did, in one line.
    *
@@ -42,25 +44,59 @@ export interface Judgement {
 const VERDICTS = new Set(['accept', 'reject', 'needs_human']);
 const PR_STATES = new Set(['draft', 'open', 'merged', 'closed']);
 
-/** The latest judgement for one task, or nothing if it has not been judged. */
+/**
+ * The verdict on the attempt currently on the table, or nothing.
+ *
+ * Scoped by RUN, because a judgement describes the worktree of the run that
+ * produced it. A task sent back to `ready` and run again has an older verdict
+ * about a tree that no longer exists, and the case that bites is the ordinary
+ * one: the second attempt reports before the pulse judges it, and taking the
+ * newest verdict by position hands back attempt 1's `accept`.
+ *
+ * The first version of this reset on `task_reported`, which read well and was
+ * not sound. That note is written only when the task's own status move
+ * succeeds — `applyTaskIntent` returns earlier when another run still holds
+ * the task, and again when the route is refused — while `judgeReported` judges
+ * every reported run regardless. So the marker went missing in exactly the
+ * overlapping-attempt cases it was there for. Run identity is on every event
+ * instead, which is a fact about the claim rather than a side effect of a
+ * transition, and it is the same thing `accept_task` scopes by server-side.
+ */
 export function judgementFor(events: readonly FleetEvent[] | undefined, taskId: string): Judgement | undefined {
+  const mine = (events ?? []).filter((event) => event.taskId === taskId);
+  const current = currentRun(mine);
   let latest: Judgement | undefined;
-  for (const event of events ?? []) {
-    if (event.taskId !== taskId) continue;
-    // A fresh report supersedes every earlier attempt's evidence. The client
-    // does not hold run rows, but the timeline gives us the ordering needed to
-    // avoid putting attempt 1's verdict beside attempt 2's completion claim.
-    if (event.kind === 'task_reported') {
-      latest = undefined;
-      continue;
-    }
+  for (const event of mine) {
     if (event.kind !== 'task_judged') continue;
+    // A judgement that does not name the current run cannot be shown to
+    // describe it. Refusing it costs an override, with its reason; accepting
+    // it would spend one attempt's evidence on another.
+    if (current !== undefined && event.runId !== current) continue;
     const read = readJudgement(event.payload);
     // Kept only if it parses. A malformed payload should leave the previous
     // good one standing rather than blanking the panel.
     if (read) latest = read;
   }
   return latest;
+}
+
+/**
+ * The attempt the log last said anything about.
+ *
+ * Any run-scoped event will do — a report, a verdict, a run that ended while
+ * its task was held. Events are seq-ordered by both merge paths in
+ * `fleet-state.ts`, and attempts are sequential, so the last one named is the
+ * newest attempt that has done anything at all.
+ *
+ * `undefined` means no event here names a run, which is what a log written
+ * before runs were denormalised onto events looks like. There the old
+ * behaviour — the newest verdict, whichever attempt it belongs to — is the
+ * only answer available, and it is what this returns to.
+ */
+function currentRun(events: readonly FleetEvent[]): string | undefined {
+  let current: string | undefined;
+  for (const event of events) if (event.runId !== undefined) current = event.runId;
+  return current;
 }
 
 function readJudgement(payload: unknown): Judgement | undefined {
@@ -72,6 +108,7 @@ function readJudgement(payload: unknown): Judgement | undefined {
   const tests = readTests(evidence['tests']);
   const risks = readStrings(evidence['risks']);
   const artifacts = readStrings(evidence['artifacts']);
+  const strings = { unreadRisks: risks?.unread ?? 0, unreadArtifacts: artifacts?.unread ?? 0 };
   const prUrl = safeWebUrl(evidence['prUrl']);
   return {
     verdict: verdict as Judgement['verdict'],
@@ -90,8 +127,9 @@ function readJudgement(payload: unknown): Judgement | undefined {
     ...(typeof evidence['prState'] === 'string' && PR_STATES.has(evidence['prState'])
       ? { prState: evidence['prState'] as Judgement['prState'] }
       : {}),
-    ...(risks !== undefined ? { risks } : {}),
-    ...(artifacts !== undefined ? { artifacts } : {}),
+    ...(risks !== undefined ? { risks: risks.values } : {}),
+    ...(artifacts !== undefined ? { artifacts: artifacts.values } : {}),
+    ...strings,
     ...(typeof record['checks'] === 'string' ? { checks: record['checks'] } : {}),
   };
 }
@@ -115,9 +153,27 @@ function readTests(value: unknown): { values: NonNullable<Judgement['tests']>; u
   return { values: tests, unread };
 }
 
-function readStrings(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  return value.filter((item): item is string => typeof item === 'string');
+/**
+ * A list the child wrote about itself, and how much of it could not be read.
+ *
+ * `undefined` means the field was absent — nobody reported any, which is a
+ * real answer. Anything else present but unreadable counts as unread rather
+ * than vanishing: a `risks` of `'none'`, or of `[{note: 'data loss'}]`, used
+ * to render as "None reported", which affirmatively tells a reviewer the child
+ * flagged nothing when the board simply could not read what it flagged. Risks
+ * are the one self-reported field this panel treats as a safety signal, and
+ * silence about them has to mean silence.
+ */
+function readStrings(value: unknown): { values: string[]; unread: number } | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return { values: [], unread: 1 };
+  const values: string[] = [];
+  let unread = 0;
+  for (const item of value) {
+    if (typeof item === 'string') values.push(item);
+    else unread += 1;
+  }
+  return { values, unread };
 }
 
 function safeWebUrl(value: unknown): string | undefined {

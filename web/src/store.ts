@@ -27,7 +27,7 @@ import {
 } from '@claudia/shared';
 import { foldFleet, NO_FLEET, type FleetState } from './fleet-state';
 import { foldMirror, type Mirrors } from './mirror-state';
-import { forgetSession, upsertSession } from './session-state';
+import { forgetSession, upsertSession, withoutKey } from './session-state';
 import { isSafeKey } from './safe-key';
 import { useSyncExternalStore } from 'react';
 
@@ -313,7 +313,7 @@ class Store {
         const was = this.state.sessions.find((s) => s.id === event.session.id)?.agent;
         const models =
           was !== undefined && was !== event.session.agent
-            ? Object.fromEntries(Object.entries(this.state.models).filter(([id]) => id !== event.session.id))
+            ? withoutKey(this.state.models, event.session.id)
             : this.state.models;
         this.set({ sessions: upsertSession(this.state.sessions, event.session), models });
         return;

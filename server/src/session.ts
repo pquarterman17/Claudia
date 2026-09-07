@@ -64,7 +64,7 @@ export class ClaudiaSession {
   private needsAction: NeedsAction | undefined;
   private readonly subAgents = new SubAgentTracker();
   private readonly promptQueue = new PromptQueue();
-  private readonly draft = new DraftBuffer();
+  private readonly draft = new DraftBuffer((text) => this.cb.onDraft(this.id, text));
   private readonly controls: SessionRuntimeControls;
   readonly transcript = new TranscriptLog();
   private customTitle: string | undefined;
@@ -177,8 +177,7 @@ export class ClaudiaSession {
     this.lastActivityAt = Date.now();
 
     if (routed.draftDelta !== undefined) {
-      const emit = this.draft.append(routed.draftDelta);
-      if (emit !== null) this.cb.onDraft(this.id, emit);
+      this.draft.append(routed.draftDelta);
       return; // a delta carries nothing else
     }
     if (routed.steps.length > 0 && this.draft.clear()) this.cb.onDraft(this.id, null);
@@ -331,7 +330,6 @@ export class ClaudiaSession {
       bumpGeneration: () => (this.queryGen += 1),
       resumeId: () => this.claudeSessionId,
       abandonForRestart: () => {
-        if (this.draft.clear()) this.cb.onDraft(this.id, null);
         this.abandonAll('Restarting this session', 'session restarted');
         this.queryGen += 1;
       },
@@ -371,13 +369,14 @@ export class ClaudiaSession {
    * running feed step, and the queue behind them. Stopping, failing and
    * relaunching all need exactly this and differ only in what they say. */
   private abandonAll(gateReason: string, stepReason: string): void {
+    // A half-written reply is not finishing now — and left behind, it is the prefix the next turn's deltas append to.
+    if (this.draft.clear()) this.cb.onDraft(this.id, null);
     this.gate.abandon(gateReason);
     abandonRunningSteps(this.tools, this.subAgents, (id, p) => this.cb.onFeedPatch(this.id, id, p), stepReason);
     this.promptQueue.clear();
   }
 
   stop(): void {
-    if (this.draft.clear()) this.cb.onDraft(this.id, null);
     this.abandonAll('Session stopped', 'session stopped');
     this.input.close();
     this.driver?.close();

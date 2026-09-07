@@ -62,25 +62,44 @@ export function useAnchor<T extends HTMLElement>(open: boolean): { ref: RefObjec
 }
 
 /**
- * A menu hung below `rect`, clamped to the viewport.
+ * A menu hung below `rect`, kept inside the viewport on all four sides.
  *
- * `maxHeight` rather than a flip: a menu that opens upward near the bottom of
- * the screen and downward elsewhere moves under the cursor between one session
- * and the next, and these lists are short enough that scrolling the last one
- * or two into view is the smaller cost.
+ * Horizontally as well as vertically, which the first version of this did not
+ * do: a left-aligned menu on a right-hand tile started 210px from the window
+ * edge and ran 49px off it, so the last of its rows was simply not there. That
+ * only showed up with more than one tile on the board — the case a menu on a
+ * FULL-WIDTH tile never reaches, and the one this was first checked against.
+ *
+ * `width` is the menu's own minimum, passed in because the style has to be
+ * computed before there is anything to measure. `maxWidth` then closes the gap
+ * for a menu whose content makes it wider than its minimum: the left edge is
+ * placed for `width`, and the right edge is bounded whatever it turns out to
+ * be.
+ *
+ * `maxHeight` rather than flipping upward near the bottom: a menu that opens
+ * up in some places and down in others moves under the cursor between one
+ * session and the next, and these lists are short enough that scrolling the
+ * last row into view is the smaller cost.
  */
 export function belowAnchor(
   rect: Pick<DOMRect, 'bottom' | 'left' | 'right'>,
   align: 'left' | 'right' = 'left',
+  width = 210,
   /** Taken as an argument so this stays a pure function the tests can run;
    * the components never pass it. */
   viewport: { width: number; height: number } = { width: window.innerWidth, height: window.innerHeight },
 ): CSSProperties {
   const gap = 4;
+  // Both alignments resolve to a left edge and are then clamped the same way.
+  // Expressing "right-aligned" as a `right` property instead would leave the
+  // opposite edge unbounded, which is the bug this function just had.
+  const preferred = align === 'left' ? rect.left : rect.right - width;
+  const left = Math.max(gap, Math.min(preferred, viewport.width - width - gap));
   return {
     position: 'fixed',
     top: rect.bottom + gap,
-    ...(align === 'left' ? { left: rect.left } : { right: Math.max(gap, viewport.width - rect.right) }),
+    left,
+    maxWidth: Math.max(width, viewport.width - left - gap),
     // A floor as well as a ceiling: a trigger near the bottom of the window
     // would otherwise compute a maxHeight of nothing and render a menu with no
     // rows in it, which reads as broken rather than as out of room.

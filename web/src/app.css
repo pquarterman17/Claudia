@@ -76,12 +76,8 @@ body,
 
 .mission-flow-next { color: #a8abbd; font-size: 11px; }
 .mission-flow-next > span { color: #75798c; margin-right: 4px; }
-.mission-flow-counts { margin-top: 6px; color: #75798c; font-size: 10px; }
-.mission-flow-counts { margin-bottom: 0; padding: 0; list-style: none; }
+.mission-flow-counts { margin: 6px 0 0; padding: 0; color: #75798c; font-size: 10px; list-style: none; }
 .mission-flow-counts strong { color: #c8cadb; font-weight: 600; }
-.mission-flow-counts [data-status='blocked'],
-.mission-flow-counts [data-status='failed'] { color: #c08a8a; }
-.mission-flow-counts [data-status='reported'] { color: #d2cefd; }
 
 .mission-flow-grid {
   display: grid;
@@ -103,14 +99,11 @@ body,
   background: #1b1d2a;
 }
 
-.mission-flow-task[data-status='running'] { border-left-color: #7ee0a3; }
-.mission-flow-task[data-status='reported'] { border-left-color: #a99ce8; }
-.mission-flow-task[data-status='blocked'],
-.mission-flow-task[data-status='failed'] { border-left-color: #e0a34f; }
 .mission-flow-task[data-status='accepted'] { opacity: .65; }
 .mission-flow-status { color: #75798c; font-size: 9px; letter-spacing: .35px; text-transform: uppercase; }
 .mission-flow-title { min-width: 0; overflow: hidden; color: #c8cadb; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .mission-flow-dependencies { grid-column: 2; min-width: 0; overflow: hidden; color: #75798c; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.mission-flow-terminal { margin: 7px 0 0; color: #595d6c; font-size: 9.5px; }
 
 @media (max-width: 520px) {
   .mission-flow { padding: 8px; }

@@ -1,4 +1,4 @@
-import type { ChildRun, FleetLimits, Mission, Task, TaskStatus } from '@claudia/shared';
+import { budgetHold, childCeiling, tasksInCycles, type ChildRun, type FleetLimits, type Mission, type Task, type TaskStatus } from '@claudia/shared';
 
 /**
  * What the fleet should do next, decided by arithmetic rather than by a model.
@@ -78,11 +78,6 @@ export type Decision =
  * fractional or negative ceiling reads as nonsense in the one line a person
  * looks at to find out why nothing is happening.
  */
-export function childCeiling(mission: Mission, policy: FleetPolicy): number | undefined {
-  const ceiling = Math.min(mission.maxChildren, policy.maxChildren);
-  return Number.isSafeInteger(ceiling) && ceiling >= 0 ? ceiling : undefined;
-}
-
 /** Whether a run is still occupying a slot. */
 export function isActiveRun(state: string): boolean {
   return ACTIVE_RUN_STATES.has(state);
@@ -114,7 +109,7 @@ export function reconcile(input: ReconcileInput): Decision[] {
   // Budgets are checked before capacity, because being out of budget is a
   // different answer from being busy: one clears itself when a run finishes,
   // the other does not clear until a human raises it.
-  const overspent = overBudget(mission, input.spend);
+  const overspent = budgetHold(mission, input.spend);
   if (overspent) return [{ kind: 'hold', reason: overspent }];
 
   const byId = new Map(tasks.map((t) => [t.id, t]));
@@ -253,34 +248,6 @@ export function reconcile(input: ReconcileInput): Decision[] {
 }
 
 /**
- * Whether the mission has spent what it was given.
- *
- * Found in review: these were persisted and never read, which is the worst
- * shape for a limit — visible in the UI, settable by a human, and enforcing
- * nothing. A budget nobody checks is a promise the app is quietly breaking.
- */
-function overBudget(mission: Mission, spend: MissionSpend | undefined): string | undefined {
-  if (!spend) return undefined;
-  // A spend nobody could measure is not a spend inside the budget. Found by
-  // audit: `NaN >= x` is false, so a single unusable number switched both
-  // ceilings off silently — and `tokens` is summed from model usage, where one
-  // missing field produces NaN. Refusing to dispatch on an unreadable spend is
-  // the same bias the rest of the fleet takes: an unknown is not permission.
-  const unreadable = [
-    mission.budgetSec !== undefined && !Number.isFinite(spend.elapsedSec) ? 'elapsed time' : undefined,
-    mission.budgetTokens !== undefined && !Number.isFinite(spend.tokens) ? 'token spend' : undefined,
-  ].filter((what): what is string => what !== undefined);
-  if (unreadable.length > 0) return `cannot read its ${unreadable.join(' or ')}`;
-  if (mission.budgetSec !== undefined && spend.elapsedSec >= mission.budgetSec) {
-    return `spent its ${mission.budgetSec}s budget`;
-  }
-  if (mission.budgetTokens !== undefined && spend.tokens >= mission.budgetTokens) {
-    return `spent its ${mission.budgetTokens}-token budget`;
-  }
-  return undefined;
-}
-
-/**
  * The reservation key for one attempt at one task.
  *
  * Deliberately not random: two pulses that reach the same conclusion must
@@ -316,35 +283,6 @@ function dependencyBlocker(task: Task, byId: Map<string, Task>): string | undefi
     return `waiting on "${dep.title}"`;
   }
   return undefined;
-}
-
-/**
- * Tasks that can never start because their dependencies loop.
- *
- * Worth its own pass rather than being left to look like ordinary waiting: a
- * cycle is a data error a human has to fix, and the fleet would otherwise sit
- * on it forever reporting that it is waiting for something.
- */
-function tasksInCycles(tasks: readonly Task[]): Set<string> {
-  const byId = new Map(tasks.map((t) => [t.id, t]));
-  const state = new Map<string, 'visiting' | 'done'>();
-  const cyclic = new Set<string>();
-
-  const walk = (id: string, stack: string[]): void => {
-    const seen = state.get(id);
-    if (seen === 'done') return;
-    if (seen === 'visiting') {
-      // Everything from where the cycle closes to here is part of it.
-      for (const member of stack.slice(stack.indexOf(id))) cyclic.add(member);
-      return;
-    }
-    state.set(id, 'visiting');
-    for (const dep of byId.get(id)?.dependsOn ?? []) walk(dep, [...stack, id]);
-    state.set(id, 'done');
-  };
-
-  for (const task of tasks) walk(task.id, []);
-  return cyclic;
 }
 
 /**

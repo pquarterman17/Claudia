@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { Escalation, FleetLimits, Mission, Task, TaskStatus } from '@claudia/shared';
 import { missionFlow } from '../mission-flow';
 import type { Spend } from './MissionBudget';
+import { TASK_STATUS_COLOR } from '../task-status';
 
 const LABEL: Readonly<Record<TaskStatus, string>> = {
   proposed: 'Proposed', ready: 'Ready', blocked: 'Blocked', running: 'Running',
@@ -12,6 +13,10 @@ const LABEL: Readonly<Record<TaskStatus, string>> = {
 export function MissionFlow({ tasks, mission, spend, limits, escalations }: { tasks: Task[] | undefined; mission: Mission; spend: Spend | undefined; limits: FleetLimits; escalations: Escalation[] | undefined }) {
   const model = useMemo(() => missionFlow(tasks ?? [], mission, spend, limits, escalations ?? []), [tasks, mission, spend, limits, escalations]);
   if (model.tasks.length === 0) return null;
+  // The detailed list immediately below already carries every terminal task.
+  // Keep this scan-first view on work that can still change or need a person.
+  const active = model.tasks.filter((task) => task.status !== 'accepted' && task.status !== 'cancelled');
+  const terminal = model.tasks.length - active.length;
 
   return (
     <section className="mission-flow" aria-labelledby="mission-flow-heading">
@@ -21,12 +26,12 @@ export function MissionFlow({ tasks, mission, spend, limits, escalations }: { ta
       </div>
       <ul className="mission-flow-counts" aria-label="Task status totals">
         {([...model.counts] as [TaskStatus, number][]).map(([status, count]) => (
-          <li key={status} data-status={status}><strong>{count}</strong> {LABEL[status]}</li>
+          <li key={status} data-status={status} style={{ color: TASK_STATUS_COLOR[status] }}><strong>{count}</strong> {LABEL[status]}</li>
         ))}
       </ul>
       <ol className="mission-flow-grid" aria-label="Task dependency flow">
-        {model.tasks.map((task) => (
-          <li key={task.id} className="mission-flow-task" data-status={task.status}>
+        {active.map((task) => (
+          <li key={task.id} className="mission-flow-task" data-status={task.status} style={{ borderLeftColor: TASK_STATUS_COLOR[task.status] }}>
             <span className="mission-flow-status">{LABEL[task.status]}</span>
             <span className="mission-flow-title">{task.title}</span>
             {task.dependencies.length > 0 && (
@@ -39,6 +44,7 @@ export function MissionFlow({ tasks, mission, spend, limits, escalations }: { ta
           </li>
         ))}
       </ol>
+      {terminal > 0 && <p className="mission-flow-terminal">{terminal} accepted or cancelled task{terminal === 1 ? '' : 's'} remain in the detailed list below</p>}
     </section>
   );
 }

@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
-import type { Escalation, FleetEvent, FleetLimits, Mission, Task, TaskStatus } from '@claudia/shared';
+import type { Escalation, FleetEvent, FleetLimits, Mission, Task } from '@claudia/shared';
 import { send } from '../store';
 import { judgementFor } from '../judged';
 import { HUMAN_MOVES, MOVE_LABEL } from '../task-moves';
 import { AcceptanceReview } from './AcceptanceReview';
 import { MissionFlow } from './MissionFlow';
 import type { Spend } from './MissionBudget';
+import { TASK_STATUS_COLOR } from '../task-status';
 
 /**
  * One mission's tasks, and the decisions that are the human's to make.
@@ -20,17 +21,6 @@ import type { Spend } from './MissionBudget';
  * the state machine on purpose — the fleet keeps the two edges it has to
  * observe for itself.
  */
-
-const STATUS_COLOR: Readonly<Record<TaskStatus, string>> = {
-  proposed: '#75798c',
-  ready: '#8ab4ff',
-  blocked: '#e0a34f',
-  running: '#7ee0a3',
-  reported: '#d2cefd',
-  accepted: '#5fbf7f',
-  failed: '#e07070',
-  cancelled: '#595d6c',
-};
 
 export function MissionTasks({
   missionId,
@@ -117,7 +107,7 @@ export function MissionTasks({
                     fontSize: 10,
                     textTransform: 'uppercase',
                     letterSpacing: 0.4,
-                    color: STATUS_COLOR[task.status],
+                    color: TASK_STATUS_COLOR[task.status],
                     minWidth: 62,
                   }}
                 >

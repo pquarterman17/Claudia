@@ -46,7 +46,7 @@ describe('mission flow model', () => {
     expect(blocked?.dependencies).toEqual([
       { title: 'Task 1', state: 'satisfied' }, { title: 'Task 2', state: 'waiting' }, { title: 'Unknown task missing', state: 'missing' },
     ]);
-    expect(model.next).toBe('Repair the missing dependency blocking “Task 3”');
+    expect(model.next).toBe('A dependency that no longer exists blocks “Task 3”');
   });
 
   it('puts a paused mission before review or dispatch advice', () => {
@@ -70,11 +70,11 @@ describe('mission flow model', () => {
   });
 
   it('calls cancelled dependencies terminal rather than finishable', () => {
-    expect(flow([task('1', 'cancelled'), task('2', 'blocked', ['1'])]).next).toBe('Repair the terminal dependency blocking “Task 2”');
+    expect(flow([task('1', 'cancelled'), task('2', 'blocked', ['1'])]).next).toBe('A cancelled or failed dependency blocks “Task 2”');
   });
 
   it('identifies dependency cycles as repair work', () => {
-    expect(flow([task('1', 'blocked', ['2']), task('2', 'blocked', ['1'])]).next).toBe('Repair the cycle dependency blocking “Task 1”');
+    expect(flow([task('1', 'blocked', ['2']), task('2', 'blocked', ['1'])]).next).toBe('A dependency cycle blocks “Task 1”');
   });
 
   it('orders a dense 16-task fixture deterministically', () => {
@@ -97,5 +97,12 @@ describe('mission flow view', () => {
 
   it('renders nothing while there are no loaded tasks', () => {
     expect(renderToStaticMarkup(<MissionFlow tasks={undefined} mission={mission} limits={limits} spend={undefined} escalations={[]} />)).toBe('');
+  });
+
+  it('summarises terminal work instead of duplicating its cards', () => {
+    const html = renderToStaticMarkup(<MissionFlow tasks={[task('1', 'accepted'), task('2', 'ready')]} mission={mission} limits={limits} spend={undefined} escalations={[]} />);
+    expect(html).toContain('1 accepted or cancelled task');
+    expect(html.match(/Task 1/g)).toBeNull();
+    expect(html).toContain('Task 2');
   });
 });

@@ -1,4 +1,4 @@
-import type { Escalation, FleetLimits, Mission, Task, TaskStatus } from '@claudia/shared';
+import { budgetHold, childCeiling, tasksInCycles, type Escalation, type FleetLimits, type Mission, type Task, type TaskStatus } from '@claudia/shared';
 import type { Spend } from './components/MissionBudget';
 
 export type DependencyState = 'satisfied' | 'waiting' | 'terminal' | 'missing' | 'cycle';
@@ -28,9 +28,9 @@ function nextAction(tasks: readonly FlowTask[], mission: Mission, spend: Spend |
   if (escalation) return `Resolve “${escalation.request}” in the decision inbox`;
   if (mission.status !== 'active') return `Mission is ${mission.status}`;
   if (mission.watch !== 'watching') return 'Start watching to continue this mission';
-  const budget = budgetProblem(mission, spend);
-  if (budget) return budget;
-  if (!Number.isSafeInteger(Math.min(mission.maxChildren, limits.maxChildren))) return 'Repair the unreadable child limit';
+  const budget = budgetHold(mission, spend);
+  if (budget) return budget.startsWith('spent its ') ? `Raise or clear the ${budget.includes('token') ? 'token' : 'elapsed-time'} budget` : 'Repair the unreadable mission spend';
+  if (childCeiling(mission, limits) === undefined) return 'Repair the unreadable child limit';
   const reported = tasks.find((task) => task.status === 'reported');
   if (reported) return `Review “${reported.title}”`;
   const failed = tasks.find((task) => task.status === 'failed');
@@ -38,7 +38,7 @@ function nextAction(tasks: readonly FlowTask[], mission: Mission, spend: Spend |
   const blocked = tasks.find((task) => task.status === 'blocked');
   if (blocked) {
     const broken = blocked.dependencies.find((item) => item.state === 'terminal' || item.state === 'missing' || item.state === 'cycle');
-    if (broken) return `Repair the ${broken.state} dependency blocking “${blocked.title}”`;
+    if (broken) return `${dependencyProblem(broken.state)} blocks “${blocked.title}”`;
     const waiting = blocked.dependencies.filter((item) => item.state === 'waiting');
     if (waiting.length > 0) return `Wait for ${waiting.map((item) => item.title).join(', ')} before “${blocked.title}”`;
     return `Inspect “${blocked.title}”; its attempts may be exhausted`;
@@ -50,6 +50,12 @@ function nextAction(tasks: readonly FlowTask[], mission: Mission, spend: Spend |
   return 'No task needs action';
 }
 
+function dependencyProblem(state: DependencyState): string {
+  if (state === 'cycle') return 'A dependency cycle';
+  if (state === 'missing') return 'A dependency that no longer exists';
+  return 'A cancelled or failed dependency';
+}
+
 function dependency(id: string, ownerId: string, byId: ReadonlyMap<string, Task>, cyclic: ReadonlySet<string>): { title: string; state: DependencyState } {
   const found = byId.get(id);
   if (!found) return { title: `Unknown task ${id}`, state: 'missing' };
@@ -57,30 +63,4 @@ function dependency(id: string, ownerId: string, byId: ReadonlyMap<string, Task>
   if (found.status === 'accepted') return { title: found.title, state: 'satisfied' };
   if (found.status === 'failed' || found.status === 'cancelled') return { title: found.title, state: 'terminal' };
   return { title: found.title, state: 'waiting' };
-}
-
-function budgetProblem(mission: Mission, spend: Spend | undefined): string | undefined {
-  if (!spend) return undefined;
-  if (mission.budgetSec !== undefined && !Number.isFinite(spend.elapsedSec)) return 'Repair the unreadable mission spend';
-  if (mission.budgetTokens !== undefined && (spend.tokens === null || !Number.isFinite(spend.tokens))) return 'Repair the unreadable mission spend';
-  if (mission.budgetSec !== undefined && spend.elapsedSec >= mission.budgetSec) return 'Raise or clear the elapsed-time budget';
-  if (mission.budgetTokens !== undefined && spend.tokens !== null && spend.tokens >= mission.budgetTokens) return 'Raise or clear the token budget';
-  return undefined;
-}
-
-function tasksInCycles(tasks: readonly Task[]): Set<string> {
-  const byId = new Map(tasks.map((task) => [task.id, task]));
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const cyclic = new Set<string>();
-  const path: string[] = [];
-  const visit = (id: string): void => {
-    if (visiting.has(id)) { for (const member of path.slice(path.indexOf(id))) cyclic.add(member); return; }
-    if (visited.has(id)) return;
-    visiting.add(id); path.push(id);
-    for (const dependencyId of byId.get(id)?.dependsOn ?? []) if (byId.has(dependencyId)) visit(dependencyId);
-    path.pop(); visiting.delete(id); visited.add(id);
-  };
-  for (const task of tasks) visit(task.id);
-  return cyclic;
 }

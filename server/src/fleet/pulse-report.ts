@@ -70,6 +70,12 @@ export function skipMission(mission: Mission, reason: string): undefined {
 }
 
 /** One line in the mission's timeline, keyed so a repeated tick cannot duplicate it. */
+/** Mission, task and run as one component, with no id able to impersonate a join. */
+function scopeOf(missionId: string, taskId: string | undefined, runId: string | undefined): string {
+  const parts = [missionId, ...(taskId === undefined ? [] : [taskId]), ...(runId === undefined ? [] : [runId])];
+  return parts.map(encodeURIComponent).join(':');
+}
+
 export function note(
   store: FleetStore,
   missionId: string,
@@ -90,10 +96,13 @@ export function note(
     // Keyed on the mission alone when there is no task, rather than on the
     // string "undefined" — the exact shape of a bug this repository has
     // already had once, in an escalation key that read "escalation:r1:undefined".
-    idempotencyKey: escalationKey(
-      taskId === undefined ? missionId : `${missionId}:${taskId}${runId === undefined ? '' : `:${runId}`}`,
-      `${kind}:${reason}`,
-    ),
+    // Each part encoded before the join, not the join encoded as one part.
+    // `escalationKey` encodes precisely because a raw join collides — its own
+    // comment gives ('r1', 'a:b') against ('r1:a', 'b') — and building its
+    // first argument by concatenating three ids with colons handed that class
+    // straight back. A colliding key here is silent: `append` returns the
+    // duplicate and `note` swallows it, so the losing note is simply gone.
+    idempotencyKey: escalationKey(scopeOf(missionId, taskId, runId), `${kind}:${reason}`),
   });
   // A duplicate key means this exact note is already in the log, which is the
   // idempotency doing its job rather than a failure worth aborting the pulse.

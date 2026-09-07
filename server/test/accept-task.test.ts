@@ -243,6 +243,34 @@ describe('the attempt on the table', () => {
     expect(accepted(store, missionId)?.['overrode']).toBeUndefined();
   });
 
+  it('reads the attempt whose report moved the task, not the highest one', () => {
+    // Runs of one task overlap and can finish out of order: a second attempt
+    // dispatched while the first was stuck can report first, hit the
+    // `stillHeld` branch and never move the task. Scoping to the highest
+    // attempt answered with a claim nobody is looking at, while the board —
+    // reading the same log — answered with the one they are.
+    const { store, missionId, taskId } = fixture();
+    const first = attemptOf(store, missionId, taskId);
+    const second = attemptOf(store, missionId, taskId);
+    judged(store, missionId, taskId, first, GREEN);
+    judged(store, missionId, taskId, second, BAD);
+    // Attempt 1's claim is the one that moved the task.
+    const reported = store.events.append({
+      missionId,
+      taskId,
+      runId: first,
+      actor: 'system',
+      kind: 'task_reported',
+      payload: { reason: 'the child ended its turn' },
+      idempotencyKey: `reported:${first}`,
+    });
+    if (!reported.ok) throw new Error(reported.message);
+
+    const outcome = acceptTask(store, missionId, taskId);
+    expect(outcome.ok, outcome.message).toBe(true);
+    expect(accepted(store, missionId)?.['overrode']).toBeUndefined();
+  });
+
   it('names the run it accepted, so the log says which tree was signed off', () => {
     const { store, missionId, taskId } = fixture();
     const run = attemptOf(store, missionId, taskId);

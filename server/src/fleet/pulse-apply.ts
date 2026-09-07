@@ -211,30 +211,39 @@ export function applyWatchdogOutcomes(
 }
 
 /**
- * `failed` beats `ready` when two runs of one task disagree.
+ * Which of two runs' intents the task defers to.
  *
- * They are computed from the same attempt count — `nextAction` measures spend
- * over the task, not the run — so disagreement means something has already
- * gone strange. Giving up is the answer that cannot overspend, and the bound
- * on spending is the property worth keeping when the inputs are confusing.
+ * Ranked by what the answer COSTS, because the property worth keeping when
+ * two runs of one task disagree is the bound on spending:
  *
- * Between two intents of equal severity the LATER one wins, and that is a
- * correctness rule rather than a preference. `observations` is walked in
- * started-at order and attempts are sequential, so the last intent of a given
- * severity belongs to the highest attempt — which is the run `acceptTask`
- * calls current (`listByTask` is ordered by attempt, and it takes the last).
- * Keeping the first meant the note named attempt 1 while acceptance judged
- * attempt 2, so a board scoping to the note and a server scoping to the run
- * could settle on different verdicts for the same click.
+ *   failed    ends the task. Spends nothing more.
+ *   reported  waits on a human. Spends nothing more.
+ *   ready     is a retry. It launches another child and pays for it.
+ *
+ * So `failed` beats everything — one run claiming to have finished does not
+ * answer another run of the same task having failed — and `reported` beats
+ * `ready`, because a completion claim already in hand is not worth discarding
+ * to pay for another attempt. The claim is never lost either way: its run row
+ * records it, and only the task's status defers.
+ *
+ * This replaces two rules that were both wrong. "Keep the first" made the
+ * answer depend on the order `observations` happened to be walked in: the same
+ * pair of runs bought a retry or waited on a human depending on which started
+ * first. "Keep the later" — mine, and the worse of the two — discarded a
+ * completion claim in favour of a retry every time, which is exactly the
+ * overspend this function exists to bound.
+ *
+ * Between intents of EQUAL rank the later one wins, and that part is load
+ * bearing: `observations` is walked in started-at order and attempts are
+ * sequential, so the last intent of a rank belongs to the highest attempt.
+ * Keeping the first meant the note named attempt 1 while the board and
+ * `acceptTask` were talking about attempt 2.
  */
+const COST: Readonly<Record<TaskIntent['to'], number>> = { failed: 2, reported: 1, ready: 0 };
+
 export function worseOf(existing: TaskIntent | undefined, next: TaskIntent): TaskIntent {
   if (existing === undefined) return next;
-  // `failed` still wins, and it wins over `reported` too: one run claiming to
-  // have finished does not answer another run of the same task having failed,
-  // and the answer that cannot overspend is still the one to keep when two
-  // runs of one task disagree. The claim is not lost — its run row records it
-  // — only the task's status defers to the worse news.
-  if (existing.to === 'failed' && next.to !== 'failed') return existing;
+  if (COST[existing.to] > COST[next.to]) return existing;
   return next;
 }
 

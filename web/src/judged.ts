@@ -81,21 +81,31 @@ export function judgementFor(events: readonly FleetEvent[] | undefined, taskId: 
 }
 
 /**
- * The attempt the log last said anything about.
+ * The attempt whose report is on the table.
  *
- * Any run-scoped event will do — a report, a verdict, a run that ended while
- * its task was held. Events are seq-ordered by both merge paths in
- * `fleet-state.ts`, and attempts are sequential, so the last one named is the
- * newest attempt that has done anything at all.
+ * The run named by the newest `task_reported`, which the server writes in
+ * exactly one place: the branch that moves a task INTO `reported`. So it names
+ * the claim that put the task in the state this panel is rendered for.
  *
- * `undefined` means no event here names a run, which is what a log written
- * before runs were denormalised onto events looks like. There the old
- * behaviour — the newest verdict, whichever attempt it belongs to — is the
- * only answer available, and it is what this returns to.
+ * The first version of this took the newest run named by ANY event, on the
+ * reasoning that attempts are sequential so the last one mentioned is the
+ * newest. That is false, and a review caught it: pulse notes name the run that
+ * ENDED, not the run holding the task, and runs can end out of attempt order —
+ * a second attempt dispatched while the first was stuck can report first and
+ * never move the task. The board then scoped to one attempt and `accept_task`
+ * to another, which is the disagreement this whole change exists to remove.
+ * `server/src/fleet/accept.ts` reads the same note the same way.
+ *
+ * `undefined` — no such note in the window, or a log written before runs were
+ * denormalised onto events — falls back to the newest verdict, whichever
+ * attempt it belongs to. Hiding every verdict there would be worse, and the
+ * server still refuses an acceptance it disagrees with.
  */
 function currentRun(events: readonly FleetEvent[]): string | undefined {
   let current: string | undefined;
-  for (const event of events) if (event.runId !== undefined) current = event.runId;
+  for (const event of events) {
+    if (event.kind === 'task_reported' && event.runId !== undefined) current = event.runId;
+  }
   return current;
 }
 
@@ -135,7 +145,13 @@ function readJudgement(payload: unknown): Judgement | undefined {
 }
 
 function readTests(value: unknown): { values: NonNullable<Judgement['tests']>; unread: number } | undefined {
-  if (!Array.isArray(value)) return undefined;
+  if (value === undefined) return undefined;
+  // Present but not a list: `tests: 'none'`, or an object. Counted as unread
+  // rather than absent, matching `readStrings` — and it matters more here than
+  // there, because `evidenceSupportsAcceptance` keys the plain-accept button
+  // on this field. Bailing to `undefined` rendered "None recorded" and left
+  // the one-click accept live over test evidence nothing could read.
+  if (!Array.isArray(value)) return { values: [], unread: 1 };
   const tests: NonNullable<Judgement['tests']> = [];
   let unread = 0;
   for (const item of value) {

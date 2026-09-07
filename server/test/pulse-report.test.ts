@@ -107,14 +107,46 @@ describe('which of two runs a task defers to', () => {
     expect(worseOf(reported, failed)).toBe(failed);
   });
 
-  it('names the later attempt when neither is worse than the other', () => {
+  it('never discards a completion claim to pay for a retry', () => {
+    // The regression this replaces. "Keep the later" turned a sibling run's
+    // retry into the winner over a claim already in hand: the task was routed
+    // `running -> failed -> ready`, a fresh child was reserved and paid for,
+    // `result.reported` never moved, and the human never saw the report.
+    // Ranked by cost instead — a retry spends, a claim does not — so the
+    // answer no longer depends on which run happened to be walked first.
+    const reported = { to: 'reported' as const, reason: 'the child finished', runId: 'r1' };
+    const retry = { to: 'ready' as const, reason: 'orphaned', attempt: 2, key: 'k', runId: 'r2' };
+    expect(worseOf(reported, retry)).toBe(reported);
+    expect(worseOf(retry, reported)).toBe(reported);
+  });
+
+  it('names the later attempt when two intents cost the same', () => {
     // Observations are walked in started-at order and attempts are sequential,
-    // so the last intent of a given severity is the highest attempt — the one
-    // `acceptTask` calls current. Keeping the first meant the note named
-    // attempt 1 while acceptance judged attempt 2.
+    // so the last intent of a given rank is the highest attempt. Keeping the
+    // first meant the note named attempt 1 while acceptance judged attempt 2.
     const first = { to: 'reported' as const, reason: 'attempt 1 finished', runId: 'r1' };
     const second = { to: 'reported' as const, reason: 'attempt 2 finished', runId: 'r2' };
     expect(worseOf(first, second).runId).toBe('r2');
     expect(worseOf(undefined, first).runId).toBe('r1');
+  });
+
+  it('keeps distinct keys for two runs without letting an id fake the join', () => {
+    // `escalationKey` encodes because a raw join collides. Building its first
+    // argument by concatenating ids with colons handed that class back, and a
+    // collision here is silent: the losing note is swallowed as a duplicate.
+    const mission = store.missions.create({ name: 'm4', body: '', cwd: '/repo' });
+    if (!mission.ok) throw new Error(mission.message);
+    const task = store.tasks.create({ missionId: mission.value.id, id: 'plain', title: 't', description: '', cwd: '/repo' });
+    const sneaky = store.tasks.create({ missionId: mission.value.id, id: 'plain:r1', title: 't', description: '', cwd: '/repo' });
+    if (!task.ok || !sneaky.ok) throw new Error('could not create tasks');
+
+    note(store, mission.value.id, task.value.id, 'task_reported', 'done', 'r1');
+    note(store, mission.value.id, sneaky.value.id, 'task_reported', 'done', undefined);
+
+    const one = store.events.sinceForTask(task.value.id);
+    const two = store.events.sinceForTask(sneaky.value.id);
+    if (!one.ok || !two.ok) throw new Error('could not read the log');
+    expect(one.value).toHaveLength(1);
+    expect(two.value).toHaveLength(1);
   });
 });

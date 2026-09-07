@@ -27,6 +27,15 @@ describe('acceptance review summary', () => {
     expect(summary(unread)).toBe('Evidence could not be read');
     expect(evidenceSupportsAcceptance(unread)).toBe(false);
   });
+
+  it('does not read green while a reason is still being written', () => {
+    // A verdict can turn green mid-sentence — a pulse re-judged, a page of
+    // history landed. The panel holds the override path so the typed reason is
+    // not lost, and the headline has to say the same thing the panel does.
+    const green = { verdict: 'needs_human' as const, reason: 'green', missing: [] };
+    expect(summary(green)).toBe('Ready for your decision');
+    expect(summary(green, true)).toBe('Recording a reason');
+  });
 });
 
 describe('the command each path sends', () => {

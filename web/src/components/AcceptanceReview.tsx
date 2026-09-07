@@ -46,7 +46,7 @@ export function AcceptanceReview({ missionId, task, judgement }: {
     // evidence is the small, explicit act that separates review from a click.
     <details style={panel}>
       <summary style={{ cursor: 'pointer', color: tone, fontSize: 11 }}>
-        {summary(judgement)} <span style={{ color: '#75798c' }}>— review evidence</span>
+        {summary(judgement, writing)} <span style={{ color: '#75798c' }}>— review evidence</span>
       </summary>
       <div style={{ display: 'grid', gap: 10, paddingTop: 10 }}>
         <section aria-label="Acceptance criteria">
@@ -198,20 +198,6 @@ function Missing({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * The one line a reviewer reads without opening the disclosure.
- *
- * It has to answer the same question the button below it answers, or the
- * collapsed row promises something the panel then refuses. `unreadTests` is
- * here for exactly that reason: `evidenceSupportsAcceptance` fails closed on
- * it, so a headline that skipped it said "Ready for your decision" over a
- * panel offering only the override.
- *
- * Unreadable risks and artifacts deliberately do NOT appear here. They never
- * block an acceptance — `acceptance.ts` argues a child that admits a risk is
- * behaving better than one that does not — so they are reported where they
- * are, not raised to a verdict they do not change.
- */
-/**
  * The command each path sends, as a value rather than an inline literal.
  *
  * Separated so it can be asserted on: the difference between the two buttons
@@ -225,10 +211,27 @@ export function acceptCommand(missionId: string, taskId: string, reason?: string
   return { type: 'accept_task', missionId, taskId, ...(override ? { override: reason } : {}) };
 }
 
-export function summary(judgement: Judgement | undefined): string {
+/**
+ * The one line a reviewer reads without opening the disclosure.
+ *
+ * It has to answer the same question the button below it answers, or the
+ * collapsed row promises something the panel then refuses. Two inputs are here
+ * for exactly that reason. `unreadTests`, because `evidenceSupportsAcceptance`
+ * fails closed on it. And `writing`, because a reason already being typed
+ * holds the panel on the override path — so a verdict turning green mid
+ * sentence would otherwise leave the headline saying "Ready for your decision"
+ * over a panel that still only offers the override.
+ *
+ * Unreadable risks and artifacts deliberately do NOT appear here. They never
+ * block an acceptance — `acceptance.ts` argues a child that admits a risk is
+ * behaving better than one that does not — so they are reported where they
+ * are, not raised to a verdict they do not change.
+ */
+export function summary(judgement: Judgement | undefined, writing = false): string {
   if (!judgement) return 'Checking completion claim';
   if (judgement.verdict === 'reject') return 'Evidence needs work';
   if ((judgement.unreadTests ?? 0) > 0) return 'Evidence could not be read';
+  if (writing) return 'Recording a reason';
   if (judgement.missing.length > 0) return `${judgement.missing.length} evidence gap${judgement.missing.length === 1 ? '' : 's'}`;
   return 'Ready for your decision';
 }

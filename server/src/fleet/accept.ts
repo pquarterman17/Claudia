@@ -157,13 +157,37 @@ function latestJudgement(store: FleetStore, taskId: string, run: string | undefi
 }
 
 /**
- * The attempt whose report is on the table, or nothing if the task never ran.
+ * The attempt whose report is on the table.
  *
- * `listByTask` is oldest attempt first, so the last row is the current one. A
- * task with no runs keeps the old unscoped behaviour: there is no attempt to
- * disagree with, and a judgement written by hand or by a test is all there is.
+ * The run named by the newest `task_reported`, because that note is written in
+ * exactly one place: the branch of `applyTaskIntent` that moves a task INTO
+ * `reported`. So it names the claim that put the task in the state this
+ * command is being asked to act on, which is the definition of the attempt
+ * under review.
+ *
+ * It is not "the highest attempt", which is what this used to say. Runs of one
+ * task can overlap and can finish out of order — a second attempt dispatched
+ * while the first was stuck can report first, hit the `stillHeld` branch, and
+ * never move the task at all. Reading the highest attempt there answered with
+ * a run whose claim nobody is looking at, and the board, reading the log,
+ * answered with the one they are. The two have to agree or the panel offers a
+ * decision this refuses, and `web/src/judged.ts` derives it the same way from
+ * the same events.
+ *
+ * Falls back to the highest attempt when no such note exists: a task moved to
+ * `reported` by hand or by a test has a claim on the table that the log does
+ * not describe, and refusing every acceptance there would be worse than
+ * scoping to the newest run.
  */
 function currentRunId(store: FleetStore, taskId: string): string | undefined {
+  const events = store.events.sinceForTask(taskId);
+  if (events.ok) {
+    let reported: string | undefined;
+    for (const event of events.value) {
+      if (event.kind === 'task_reported' && event.runId !== undefined) reported = event.runId;
+    }
+    if (reported !== undefined) return reported;
+  }
   const runs = store.runs.listByTask(taskId);
   if (!runs.ok || runs.value.length === 0) return undefined;
   return runs.value[runs.value.length - 1]?.id;

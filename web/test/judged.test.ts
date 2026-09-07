@@ -82,32 +82,47 @@ describe('finding a verdict', () => {
     expect(judged?.reason).toBe('second attempt checked');
   });
 
-  it('scopes to the current run even when no report note was written', () => {
-    // The case the `task_reported` reset could not see. `applyTaskIntent`
-    // returns before writing that note when another run still holds the task,
-    // and again when the task's route is refused — while `judgeReported`
-    // judges every reported run regardless. Run identity is on every event,
-    // so the newest one names the attempt whatever branch the pulse took.
-    const held = judgementFor([
+  it('scopes to the attempt whose report moved the task', () => {
+    const found = judgementFor([
       event({ runId: 'r1', payload: GOOD }),
-      event({ seq: 2, runId: 'r2', kind: 'run_ended_task_held', payload: { reason: 'another run is still active' } }),
+      event({ seq: 2, runId: 'r2', kind: 'task_reported', payload: { reason: 'the second attempt ended' } }),
     ], 't1');
-    expect(held).toBeUndefined();
+    expect(found).toBeUndefined();
 
-    const refused = judgementFor([
+    const judged = judgementFor([
       event({ runId: 'r1', payload: GOOD }),
-      event({ seq: 2, runId: 'r2', kind: 'task_left_as_is', payload: { reason: 'the task is blocked' } }),
+      event({ seq: 2, runId: 'r2', kind: 'task_reported', payload: {} }),
+      event({ seq: 3, runId: 'r2', payload: { ...GOOD, reason: 'second attempt checked' } }),
     ], 't1');
-    expect(refused).toBeUndefined();
+    expect(judged?.reason).toBe('second attempt checked');
   });
 
-  it('keeps a verdict whose run is still the one being talked about', () => {
+  it('is not fooled by a run that ended without moving the task', () => {
+    // The heuristic this replaces took the newest run named by ANY event, on
+    // the reasoning that attempts are sequential. Pulse notes name the run that
+    // ENDED, not the one holding the task, and a later attempt can report
+    // first and never move it — so the board scoped to r2 while `accept_task`,
+    // reading the report that actually moved the task, scoped to r1.
     const found = judgementFor([
-      event({ runId: 'r2', kind: 'task_reported', payload: { reason: 'ended' } }),
-      event({ seq: 2, runId: 'r2', payload: GOOD }),
-      event({ seq: 3, runId: 'r2', kind: 'escalated', payload: { reason: 'still r2' } }),
+      event({ runId: 'r1', kind: 'task_reported', payload: { reason: 'attempt 1 moved the task' } }),
+      event({ seq: 2, runId: 'r1', payload: GOOD }),
+      event({ seq: 3, runId: 'r2', kind: 'run_ended_task_held', payload: { reason: 'another run is still active' } }),
     ], 't1');
     expect(found?.verdict).toBe('needs_human');
+  });
+
+  it('counts a tests field of the wrong shape as unread, like the other lists', () => {
+    // `evidenceSupportsAcceptance` keys the plain-accept button on this field,
+    // so bailing to absent rendered "None recorded" and left one-click accept
+    // live over test evidence nothing could read.
+    for (const tests of ['none', {}, 7]) {
+      const found = judgementFor([event({ payload: { ...GOOD, missing: [], evidence: { tests } } })], 't1');
+      expect(found?.unreadTests).toBe(1);
+      expect(evidenceSupportsAcceptance(found)).toBe(false);
+    }
+    const absent = judgementFor([event({ payload: { ...GOOD, missing: [] } })], 't1');
+    expect(absent?.unreadTests).toBe(0);
+    expect(evidenceSupportsAcceptance(absent)).toBe(true);
   });
 
   it('falls back to the newest verdict on a log that names no runs at all', () => {

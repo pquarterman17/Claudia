@@ -8,16 +8,17 @@ architecture does not. The Claude Design export that started this is deliberatel
 
 **Status:** Active
 **Created:** 2026-07-25
-**Updated:** 2026-08-30
+**Updated:** 2026-09-07
 
 ## Strategic initiatives
 
 - [Argus-inspired mission orchestration](./ARGUS_PARITY_PLAN.md) — durable mission, task,
-  child-run, worktree, and fleet-event management. Core orchestration and acceptance shipped;
-  mission visualization, recovery actions, cleanup preview, and release hardening remain.
+  child-run, worktree, and fleet-event management. Core orchestration, acceptance, and the
+  task-level mission overview shipped; run health, recovery actions, cleanup preview, and release
+  hardening remain.
 
 All of Tier 1 and Tier 2 as originally scoped has shipped; what remains below is either
-genuinely new work or was deliberately deferred for a decision. 847 tests, clean typecheck.
+genuinely new work or was deliberately deferred for a decision. 2,251 tests, clean typecheck.
 Everything so far was built and verified on Windows only — see #13.
 
 ---

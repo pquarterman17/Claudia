@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import type { FleetEvent, MissionWatch, Task, TaskStatus } from '@claudia/shared';
+import type { Escalation, FleetEvent, FleetLimits, Mission, Task, TaskStatus } from '@claudia/shared';
 import { send } from '../store';
 import { judgementFor } from '../judged';
 import { HUMAN_MOVES, MOVE_LABEL } from '../task-moves';
 import { AcceptanceReview } from './AcceptanceReview';
 import { MissionFlow } from './MissionFlow';
+import type { Spend } from './MissionBudget';
 
 /**
  * One mission's tasks, and the decisions that are the human's to make.
@@ -37,7 +38,10 @@ export function MissionTasks({
   tasks,
   events,
   elided,
-  watch,
+  mission,
+  spend,
+  limits,
+  escalations,
 }: {
   missionId: string;
   cwd: string;
@@ -45,7 +49,10 @@ export function MissionTasks({
   events: FleetEvent[] | undefined;
   /** History the client was not sent, or dropped off the front of its own cap. */
   elided: number;
-  watch: MissionWatch;
+  mission: Mission;
+  spend: Spend | undefined;
+  limits: FleetLimits;
+  escalations: Escalation[] | undefined;
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -94,7 +101,7 @@ export function MissionTasks({
 
   return (
     <div style={{ padding: '8px 0 4px 16px', borderLeft: '1px solid #23263a', marginLeft: 4 }}>
-      <MissionFlow tasks={tasks} watch={watch} />
+      <MissionFlow tasks={tasks} mission={mission} spend={spend} limits={limits} escalations={escalations} />
       {(tasks ?? []).length === 0 ? (
         <p style={{ fontSize: 11, color: '#595d6c', margin: '0 0 8px' }}>
           No tasks yet. Describe one below — it starts as <em>proposed</em>, and nothing is dispatched until you

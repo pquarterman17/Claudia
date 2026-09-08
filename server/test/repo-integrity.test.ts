@@ -127,6 +127,11 @@ describe('board stylesheet', () => {
    * cannot drift apart in silence. A menu that outranks an overlay floats on
    * top of it and stays there: dismissal watches for pointerdown and Escape,
    * and the palette and the usage drawer both open from the keyboard.
+   *
+   * "Overlay" means the stylesheet and the command palette, and cannot be
+   * derived: the popovers that open inside a tile sit at 5 and 6 and are
+   * SUPPOSED to be under a header menu. So a new full-screen overlay written
+   * inline in some other component is the one thing this would miss.
    */
   it('stacks the board menus below every overlay', () => {
     const source = readFileSync(join(ROOT, 'web/src/use-anchor.tsx'), 'utf8');

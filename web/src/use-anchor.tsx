@@ -38,7 +38,13 @@ export interface AnchoredMenu<T extends HTMLElement> {
   trigger: RefObject<T | null>;
   /** Spread onto that control, so the pair is described as one thing. */
   triggerProps: { 'aria-haspopup': 'menu'; 'aria-expanded': boolean };
-  /** Wraps the menu's rows in the positioned, portaled, labelled box. */
+  /**
+   * Wraps the menu's rows in the positioned, portaled, labelled box. `style`
+   * decorates it — background, border, padding — but is applied UNDER the
+   * layer, which is the hook's to set: a caller that could raise its own menu
+   * would put it over a modal, and the test that pins the layer reads a
+   * constant it was no longer bound by.
+   */
   render: (children: ReactNode, style?: CSSProperties) => ReactNode;
 }
 
@@ -63,7 +69,7 @@ export function useAnchoredMenu<T extends HTMLElement>(
               ref={menu}
               role="menu"
               aria-label={label}
-              style={{ ...belowAnchor(rect, align, width), zIndex: MENU_LAYER, minWidth: width, ...style }}
+              style={{ ...belowAnchor(rect, align, width), minWidth: width, ...style, zIndex: MENU_LAYER }}
             >
               {children}
             </div>,

@@ -68,18 +68,23 @@ describe('size ratchet', () => {
 });
 
 /**
- * The board's menus escape their clipping ancestors with `position: fixed`.
+ * Two things the board's menus need from this stylesheet, neither of which is
+ * visible from the component that would break them.
  *
  * A tile header is 34px tall and hides what overflows it, so the agent picker
  * and the tile's overflow menu showed three pixels of themselves and the
  * terminal body through the rest until they were positioned against the
- * viewport instead. That only works while nothing between a menu and the
- * viewport establishes a containing block for fixed elements — `transform`,
- * `filter`, `contain` and `will-change` each do.
+ * viewport. They now render into `document.body` as well, which puts `.tile`
+ * out of reach — but `html` and `body` are still ancestors, and a `transform`,
+ * `filter`, `contain` or `will-change` on either would establish a containing
+ * block and trap the fixed menus inside it again.
  *
- * Asserted rather than remembered: the day someone adds a transform to `.tile`
- * for an animation, every menu on the board silently goes back to being
- * clipped, and nothing else in the suite would notice.
+ * They also have to stay UNDER the app's overlays. Leaving the tile's subtree
+ * means they compete with those directly instead of being buried beneath them,
+ * and a menu on top of a modal is a menu the modal cannot dismiss.
+ *
+ * Asserted rather than remembered: nothing else in the suite would notice
+ * either regression, and the web tests render no DOM to catch them in.
  */
 describe('board stylesheet', () => {
   /**
@@ -105,7 +110,7 @@ describe('board stylesheet', () => {
 
   it('creates no containing block for the fixed-position menus', () => {
     const css = readFileSync(join(ROOT, 'web/src/app.css'), 'utf8');
-    expect(containingBlockProps(css), 'these re-clip every board menu — see web/src/use-anchor.ts').toEqual([]);
+    expect(containingBlockProps(css), 'these re-clip every board menu — see web/src/use-anchor.tsx').toEqual([]);
   });
 
   it('would notice one written inline, which is how it would be written', () => {
@@ -115,5 +120,29 @@ describe('board stylesheet', () => {
       'transform: scale(1.02)',
     ]);
     expect(containingBlockProps('.x { text-transform: uppercase; }')).toEqual([]);
+  });
+
+  /**
+   * Read from both sides rather than pinned to a number here, so the two
+   * cannot drift apart in silence. A menu that outranks an overlay floats on
+   * top of it and stays there: dismissal watches for pointerdown and Escape,
+   * and the palette and the usage drawer both open from the keyboard.
+   *
+   * "Overlay" means the stylesheet and the command palette, and cannot be
+   * derived: the popovers that open inside a tile sit at 5 and 6 and are
+   * SUPPOSED to be under a header menu. So a new full-screen overlay written
+   * inline in some other component is the one thing this would miss.
+   */
+  it('stacks the board menus below every overlay', () => {
+    const source = readFileSync(join(ROOT, 'web/src/use-anchor.tsx'), 'utf8');
+    const menuLayer = Number(/const MENU_LAYER = (\d+)/.exec(source)?.[1]);
+    expect(menuLayer, 'MENU_LAYER is no longer a plain literal — this guard cannot read it').toBeGreaterThan(0);
+
+    const overlays = [
+      ...readFileSync(join(ROOT, 'web/src/app.css'), 'utf8').matchAll(/z-index:\s*(\d+)/g),
+      ...readFileSync(join(ROOT, 'web/src/components/CommandPalette.tsx'), 'utf8').matchAll(/zIndex:\s*(\d+)/g),
+    ].map((m) => Number(m[1]));
+    expect(overlays.length).toBeGreaterThan(0);
+    expect(Math.min(...overlays), `a menu at ${menuLayer} would cover an overlay`).toBeGreaterThan(menuLayer);
   });
 });

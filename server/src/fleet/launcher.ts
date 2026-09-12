@@ -7,7 +7,8 @@ import { ensureWorktree, worktreePath } from '../worktree.js';
 import type { LaunchChild, LaunchOrder } from './pulse.js';
 import { REPORT_PATH } from './child-report.js';
 import { randomUUID } from 'node:crypto';
-import { capabilityForTool, checkCapability, defaultGrant, type CapabilityRequest } from './capabilities.js';
+import { checkCapability, defaultGrant, type CapabilityRequest } from './capabilities.js';
+import { capabilityForTool } from './tool-capability.js';
 import { claimWorktree } from './worktree-owner.js';
 import { observeWorktree } from './worktree-observe.js';
 

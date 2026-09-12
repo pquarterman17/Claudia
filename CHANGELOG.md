@@ -9,7 +9,7 @@ tag. `.github/workflows/release.yml` runs the full gate on the tagged tree and
 refuses to publish if those three disagree — `node scripts/release-notes.mjs
 v0.2.0` says so before you tag, and prints the notes it would use.
 
-## [0.2.0] — 2026-09-07
+## [0.2.0] — 2026-09-12
 
 The fleet stops being a plan, and then stops being unreachable. Claudia can now
 hold a standing intention — a mission with tasks — and act on it without a
@@ -175,6 +175,53 @@ show what it is saying.
 - The attempt under review was recorded when a task entered `reported` and
   never cleared when it left, so a requeued task pointed at the attempt that
   had just been sent back
+- **Switching a tile's agent did nothing.** The control was there and the click
+  was read, but nothing relaunched the session, so a tile marked Codex went on
+  running Claude. The same change stopped a permission switch leaking a Codex
+  app-server: the old process was abandoned rather than closed, and every
+  toggle left another one behind
+- **The model picker was empty.** Models were requested once, before a session
+  could answer, and never again — so the list a human was asked to choose from
+  had nothing in it
+- **Menus did not close when you clicked away.** Every popover on the board
+  tracked its own open state and none watched for a click that landed
+  elsewhere, so two left open overlapped and the one underneath could only be
+  reached by finding the button that had opened it
+- **The tile header clipped every menu that hung below it.** The header is 34px
+  tall and hides its overflow, so a menu opening under it showed three of its
+  pixels and the terminal through the rest. They are positioned against the
+  viewport now, and rendered in a body-level portal so no ancestor can clip or
+  stack them — under the modal overlays, and still reachable from the keyboard
+- **A menu ran off the right of the window.** Clamping it vertically was not
+  enough: on a multi-column board a left-aligned menu started 210px from the
+  edge and ran 49px past it, losing its last column
+- **The composer squeezed its own prompt input to zero width.** Every control
+  on that row refuses to shrink except the prompt's wrapper, so on a
+  two-column board the nine trailing controls took the whole row and the input
+  the row exists for was 0px wide — in the DOM, focusable by keyboard, and
+  impossible to click
+- **Streamed replies arrived all at once.** The draft throttle fired on the
+  leading edge only, so a burst's first token appeared and the rest waited for
+  a delta that might not come for ten seconds. Measured over one turn, the
+  worst gap between screen updates fell from 11.5s to 2.4s. A failed session
+  now drops its draft too, rather than leaving it to prefix the next turn
+- **Closing the tab left everything running.** The browser going away is now
+  announced, sessions are reaped after a grace period long enough to survive a
+  reload, and the setting that governs it is honoured rather than ignored
+
+### Security
+
+- A fleet child's egress and destructive shell commands are refused rather than
+  put to a human: `curl`, `ssh`, `rsync` and the git subcommands that talk to a
+  remote need `net`, and forced removal, `git reset --hard`, `dd` and `sudo`
+  need `destructive` — neither of which a child holds by default. A tripwire
+  rather than a sandbox, and documented as one: a program name counts wherever
+  a program name can go, including behind a path or a wrapper, but no matcher
+  over shell text sees through `bash -c`. What contains a child is still the
+  approval banner it falls through to and the worktree it runs in
+- Package installs are deliberately left to the banner. They need the network
+  and they are also the first thing an honest child does, so refusing them
+  outright would cost more than it protects
 
 ### Infrastructure
 
@@ -195,7 +242,7 @@ show what it is saying.
 
 ### Testing
 
-- 2,327 tests (2,061 server, 266 web) across 126 files, on the same
+- 2,390 tests (2,117 server, 273 web) across 130 files, on the same
   Ubuntu/Windows × Node 22/24 matrix
 
 ## [0.1.0] — 2026-09-01

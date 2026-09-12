@@ -407,11 +407,18 @@ body,
   gap: 7px;
 }
 
+/* Wraps rather than letting one child absorb the whole deficit. Every control
+   on this row is `flex: none`; the prompt's wrapper was the only thing that
+   could give, so on a two-column board the nine trailing controls needed 578px
+   of a 576px row and the input the row exists for was squeezed to ZERO width —
+   present, focusable by keyboard, and impossible to click. */
 .composer {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  row-gap: 6px;
   padding: 7px 11px;
   border-top: 1px solid #2c2f3d;
   background: #181a26;

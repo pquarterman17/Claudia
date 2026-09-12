@@ -123,6 +123,27 @@ describe('board stylesheet', () => {
   });
 
   /**
+   * The composer row is all `flex: none` but one child, so whatever the row
+   * cannot fit comes off that child alone. On a two-column board its nine
+   * trailing controls wanted 578px of a 576px row and the prompt input — the
+   * control the row exists for — was squeezed to ZERO width: still in the DOM,
+   * still focusable by keyboard, and impossible to click.
+   *
+   * Neither half of the fix is visible from the other's file, and the web suite
+   * renders no layout to measure, so both are asserted as text.
+   */
+  it('lets the composer row wrap rather than collapse the prompt', () => {
+    const rule = /\.composer\s*\{([^}]*)\}/.exec(readFileSync(join(ROOT, 'web/src/app.css'), 'utf8'))?.[1];
+    expect(rule, 'no .composer rule to check').toBeDefined();
+    expect(rule, 'without wrapping, one child absorbs the whole deficit').toMatch(/flex-wrap:\s*wrap/);
+
+    const tsx = readFileSync(join(ROOT, 'web/src/components/Composer.tsx'), 'utf8');
+    const floor = /flex: '1 1 auto', minWidth: (\d+)/.exec(tsx)?.[1];
+    expect(floor, 'the prompt wrapper is no longer a plain literal — this guard cannot read it').toBeDefined();
+    expect(Number(floor), 'a floor of 0 is what collapsed it').toBeGreaterThan(0);
+  });
+
+  /**
    * Read from both sides rather than pinned to a number here, so the two
    * cannot drift apart in silence. A menu that outranks an overlay floats on
    * top of it and stays there: dismissal watches for pointerdown and Escape,

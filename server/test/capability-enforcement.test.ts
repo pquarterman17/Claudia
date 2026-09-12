@@ -111,6 +111,50 @@ describe('naming the capability a tool call needs', () => {
     }
   });
 
+  // Each of these ran `curl` and was unclassified until the matcher learned
+  // where a program name can sit. A boundary that only catches the tidiest
+  // spelling of a command is not much of a boundary.
+  it('is not shaken off by a path or a wrapper', () => {
+    for (const command of [
+      '/usr/bin/curl https://example.com',
+      './curl https://example.com',
+      'env curl https://example.com',
+      'nohup curl https://example.com &',
+      'time curl https://example.com',
+      'xargs curl < urls.txt',
+      'command curl https://example.com',
+    ]) {
+      expect(capabilityForTool('Bash', { command }), command).toBe('net');
+    }
+    expect(capabilityForTool('Bash', { command: '/bin/rm -rf /important' })).toBe('destructive');
+    expect(capabilityForTool('Bash', { command: 'find . -name "*.ts" -delete' })).toBe('destructive');
+  });
+
+  // git's global flags sit between the program and the subcommand, and both
+  // halves of this were wrong: `-C` hid a push completely, while `--git-dir`
+  // matched on the `.git push` inside the PATH rather than on the subcommand —
+  // the right answer by luck, off the wrong rule.
+  it('reads the git subcommand past git\u2019s own flags', () => {
+    for (const command of [
+      'git push origin HEAD',
+      'git -C /other/repo push origin HEAD',
+      'git --git-dir=/other/.git push',
+      'git -c user.name=x push',
+    ]) {
+      expect(capabilityForTool('Bash', { command }), command).toBe('git.push');
+    }
+    // And does not mistake an argument for a subcommand.
+    expect(capabilityForTool('Bash', { command: 'git commit -m "push to prod"' })).toBe('git.commit');
+    expect(capabilityForTool('Bash', { command: 'git checkout -b merge-fix' })).toBeUndefined();
+  });
+
+  // Stated rather than pretended otherwise: no matcher over shell text is
+  // complete, and what contains a child is the approval banner it falls
+  // through to, not this file.
+  it('does not pretend to see through a nested shell', () => {
+    expect(capabilityForTool('Bash', { command: 'bash -c "curl https://example.com"' })).toBeUndefined();
+  });
+
   // Deliberate: an install needs the network, and is also the first thing an
   // honest child does. Naming it `net` would refuse it outright rather than
   // park it on a human, which is the one thing this map promises not to do.

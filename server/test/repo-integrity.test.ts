@@ -136,10 +136,13 @@ describe('board stylesheet', () => {
     const rule = /\.composer\s*\{([^}]*)\}/.exec(readFileSync(join(ROOT, 'web/src/app.css'), 'utf8'))?.[1];
     expect(rule, 'no .composer rule to check').toBeDefined();
     expect(rule, 'without wrapping, one child absorbs the whole deficit').toMatch(/flex-wrap:\s*wrap/);
-    // And bounded: unbounded, eleven `flex: none` children wrapped to 251px
-    // and overflowed a tile that `overflow: hidden` then clipped, putting the
-    // input back out of reach by the opposite route.
-    expect(rule, 'unbounded wrapping clips the composer out of its own tile').toMatch(/max-height:\s*\d/);
+    // And NOT a scroll container. Bounding the wrap with `overflow-y: auto`
+    // looked like the missing half of this and clipped the slash-command
+    // palette and the @-mention dropdown clean away — both open UPWARD, from
+    // inside this row, so anything that scrolls here hides them.
+    expect(rule, 'the composer popovers open upward, out of this box').not.toMatch(
+      /overflow(?:-y)?:\s*(?:auto|scroll|hidden|clip)/,
+    );
 
     const tsx = readFileSync(join(ROOT, 'web/src/components/Composer.tsx'), 'utf8');
     const floor = /flex: '1 1 auto', minWidth: (\d+)/.exec(tsx)?.[1];

@@ -33,28 +33,32 @@ export function capabilityForTool(toolName: string, input: Record<string, unknow
  * Reading a shell command is imprecise by nature, so this only answers where
  * it is confident and returns undefined everywhere else.
  *
- * Git first and by subcommand, because those are the least ambiguous strings
- * in a shell. Word boundaries around the subcommand keep `git pushd` and a
- * branch called `merge` from reading as the real thing.
+ * A TRIPWIRE, not a sandbox, and the difference is worth stating plainly: no
+ * matcher over shell text can be complete. `bash -c "$(printf '\\x63url' …)"`
+ * defeats any of this, and so does an alias or a base64 round trip. What
+ * contains a child is the approval banner it falls through to and the worktree
+ * it runs in; this only spares a human from being asked about the obvious
+ * cases, and turns the blatant ones into a refusal instead of a prompt.
  */
 function capabilityForCommand(command: string): Capability | undefined {
   // Talking to a remote. `fetch` is harmless in itself, but it is still egress
   // and a child working in its own worktree has no ordinary need of it; if a
   // mission does, the grant is the place to say so.
-  if (/\bgit\s+(?:clone|fetch|pull|remote|ls-remote)\b/.test(command)) return 'net';
+  if (git(command, ['clone', 'fetch', 'pull', 'remote', 'ls-remote'])) return 'net';
   // Throwing work away, rather than writing it. Plain `git clean` refuses
   // without a force flag, so reaching for it at all is the destructive intent.
-  if (/\bgit\s+reset\s+--hard\b/.test(command)) return 'destructive';
-  if (/\bgit\s+clean\b/.test(command)) return 'destructive';
-  if (/\bgit\s+branch\s+(?:-D|--delete\s+--force|--force\s+--delete)\b/.test(command)) return 'destructive';
-  if (/\bgit\s+push\b/.test(command)) return 'git.push';
-  if (/\bgit\s+merge\b/.test(command)) return 'git.merge';
-  if (/\bgit\s+commit\b/.test(command)) return 'git.commit';
+  if (git(command, ['clean'])) return 'destructive';
+  if (git(command, ['reset']) && /--hard\b/.test(command)) return 'destructive';
+  if (git(command, ['branch']) && /\s-D\b|--delete\s+--force|--force\s+--delete/.test(command)) return 'destructive';
+  if (git(command, ['push'])) return 'git.push';
+  if (git(command, ['merge'])) return 'git.merge';
+  if (git(command, ['commit'])) return 'git.commit';
   if (runs(command, EGRESS)) return 'net';
   if (runs(command, WRECKING)) return 'destructive';
   // `rm` earns its flags rather than its name: deleting one file it just wrote
   // is ordinary work, and recursive or forced removal is not.
   if (runs(command, ['rm']) && /\brm\s+(?:-\S*[rRf]|--(?:recursive|force))/.test(command)) return 'destructive';
+  if (runs(command, ['find']) && /\s-(?:delete|exec\b)/.test(command)) return 'destructive';
   // Deliberately unclassified: `npm`/`pip`/`cargo` installs need the network,
   // but they are also what an ordinary child does before it can run a test.
   // Naming them `net` would refuse honest work outright instead of parking it
@@ -68,20 +72,44 @@ const EGRESS = ['curl', 'wget', 'nc', 'ncat', 'netcat', 'telnet', 'ssh', 'scp', 
 /** Programs with no non-destructive reading. */
 const WRECKING = ['dd', 'shred', 'truncate', 'mkfs', 'fdisk', 'sudo', 'doas'];
 
+/** The start of a command: the line, or after a pipe, separator or subshell. */
+const AT = String.raw`(?:^|[\n;|&(]|\$\(|\x60)`;
+/**
+ * What can sit between that and the program name without changing which
+ * program runs: environment assignments, and the wrappers that take a command
+ * as their argument. Without these, `env curl …` and `nohup curl …` read as
+ * something this file has never heard of.
+ */
+const WRAPPERS = String.raw`[ \t]*(?:(?:\w+=\S*|env|sudo|doas|nohup|time|command|xargs|stdbuf)[ \t]+)*`;
+/** An absolute or relative path to it. `/usr/bin/curl` is still curl. */
+const PATHED = String.raw`(?:[\w.+-]*\/)*`;
+
 /**
  * Whether `command` actually RUNS one of `programs`, rather than mentioning
  * one.
  *
  * A bare `\bnc\b` matches the filename `sync.nc` and `\bcurl\b` matches a
  * branch named `curl` — either would refuse a child for doing nothing wrong,
- * and a boundary that misfires gets switched off. So a name only counts at a
- * command position: the start of the line, or after a pipe, separator,
- * subshell or newline, past any leading environment assignments.
+ * and a boundary that misfires gets switched off. So a name only counts where
+ * a program name goes.
  */
 function runs(command: string, programs: readonly string[]): boolean {
-  const at = String.raw`(?:^|[\n;|&(]|\$\(|\x60)`;
-  const leading = String.raw`[ \t]*(?:\w+=\S*[ \t]+)*`;
   // Not followed by a word character or dash, so `curl` and `curl.exe` count
   // while `curling` and `mkfs-helper` do not. `mkfs.ext4` is meant to count.
-  return new RegExp(`${at}${leading}(?:${programs.join('|')})(?![\\w-])`).test(command);
+  return new RegExp(`${AT}${WRAPPERS}${PATHED}(?:${programs.join('|')})(?![\\w-])`).test(command);
+}
+
+/**
+ * Whether `command` runs git with one of `subcommands`.
+ *
+ * Anchored the same way, and skipping git's own global flags, because both
+ * halves were wrong before: `git -C /other/repo push` was unclassified, while
+ * `git --git-dir=/other/.git push` matched — on the `.git push` inside the
+ * PATH rather than on the subcommand. Right answer, wrong rule.
+ */
+function git(command: string, subcommands: readonly string[]): boolean {
+  // A flag, optionally with a value. Leading dash required, so the subcommand
+  // itself can never be swallowed as one.
+  const flags = String.raw`(?:-{1,2}[\w-]+(?:[= \t]\S+)?[ \t]+)*`;
+  return new RegExp(`${AT}${WRAPPERS}${PATHED}git[ \\t]+${flags}(?:${subcommands.join('|')})(?![\\w-])`).test(command);
 }

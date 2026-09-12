@@ -419,13 +419,14 @@ body,
   align-items: center;
   gap: 8px;
   row-gap: 6px;
-  /* Bounded wrapping. Eleven `flex: none` children wrap to nearly one row each
-     once the tile is narrow: at 700px the row grew to 187px inside a 53px tile,
-     overflowed it, and `.tile`'s `overflow: hidden` clipped the input straight
-     back out of reach — trading an invisible prompt for an unreachable one.
-     Two rows and then scroll keeps this a strip rather than a panel. */
-  max-height: 72px;
-  overflow-y: auto;
+  /* No `overflow` here, and no `max-height` that would need one. Capping the
+     wrap looked like the right bound — eleven `flex: none` children wrap to
+     nearly one row each on a narrow tile — but it makes this a scroll
+     container, and the slash-command palette and the @-mention dropdown both
+     open UPWARD from inside this row. Measured: the cap clipped them clean
+     away. The case it protected (a tile the board's fit mode has left 53px or
+     less) has no room for a composer of any height and was already unusable
+     without it. */
   padding: 7px 11px;
   border-top: 1px solid #2c2f3d;
   background: #181a26;

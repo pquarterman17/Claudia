@@ -419,6 +419,13 @@ body,
   align-items: center;
   gap: 8px;
   row-gap: 6px;
+  /* Bounded wrapping. Eleven `flex: none` children wrap to nearly one row each
+     once the tile is narrow: at 700px the row grew to 187px inside a 53px tile,
+     overflowed it, and `.tile`'s `overflow: hidden` clipped the input straight
+     back out of reach — trading an invisible prompt for an unreachable one.
+     Two rows and then scroll keeps this a strip rather than a panel. */
+  max-height: 72px;
+  overflow-y: auto;
   padding: 7px 11px;
   border-top: 1px solid #2c2f3d;
   background: #181a26;

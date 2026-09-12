@@ -162,7 +162,9 @@ export function Composer({ session }: Props) {
         ›
       </span>
       <div
-        style={{ position: 'relative', flex: '1 1 auto', minWidth: 0, display: 'flex', flexDirection: 'column' }}
+        // A floor, not zero: this is the control the row exists for, so it is
+        // the last thing that should give way. Below it the row wraps instead.
+        style={{ position: 'relative', flex: '1 1 auto', minWidth: 140, display: 'flex', flexDirection: 'column' }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault();

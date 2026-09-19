@@ -66,3 +66,20 @@ export function isAllowedOrigin(origin: string | undefined): boolean {
     return false;
   }
 }
+
+/**
+ * Whether an HTTP or WebSocket request may be served at all.
+ *
+ * Both headers, because they stop different attacks and neither substitutes
+ * for the other: Host catches a domain rebound to 127.0.0.1, Origin catches a
+ * page that simply posted to the loopback literal — where the Host check
+ * passes by construction.
+ *
+ * One function because the socket had both checks and the HTTP server had only
+ * Host, which is not a thing either door should be able to decide for itself.
+ * `POST /hooks` mutates state and needs no preflight at a CORS-safelisted
+ * content type, so a visited page could put fabricated sessions on the board.
+ */
+export function isAllowedRequest(headers: { host?: string; origin?: string }): boolean {
+  return isAllowedHost(headers.host) && isAllowedOrigin(headers.origin);
+}

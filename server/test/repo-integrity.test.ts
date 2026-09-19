@@ -86,6 +86,25 @@ describe('size ratchet', () => {
  * Asserted rather than remembered: nothing else in the suite would notice
  * either regression, and the web tests render no DOM to catch them in.
  */
+/**
+ * Both doors ask the same question.
+ *
+ * The socket checked Host AND Origin from the start; the HTTP server checked
+ * only Host, and `POST /hooks` mutates state at a content type that needs no
+ * preflight — so any page the user visited could put fabricated sessions on
+ * the board. The checks live behind one `isAllowedRequest` now, and calling a
+ * half of it directly from the entry point is how that would come back.
+ */
+describe('loopback entry point', () => {
+  it('gates every door through the whole guard, not half of it', () => {
+    const index = readFileSync(join(ROOT, 'server/src/index.ts'), 'utf8');
+    expect(index, 'the entry point must ask the shared guard').toMatch(/isAllowedRequest\(/);
+    expect(index, 'half the guard is how POST /hooks became reachable from any page').not.toMatch(
+      /isAllowed(?:Host|Origin)\(/,
+    );
+  });
+});
+
 describe('board stylesheet', () => {
   /**
    * Declaration-wise, not line-wise.

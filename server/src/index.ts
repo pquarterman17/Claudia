@@ -18,7 +18,7 @@ import { isInstalled } from './hook-install.js';
 import { openBrowser, shouldOpenBrowser } from './open-browser.js';
 import { HookMonitor } from './hook-monitor.js';
 import { updateMemories } from './memory-action.js';
-import { isAllowedHost, isAllowedOrigin } from './origin-guard.js';
+import { isAllowedRequest } from './origin-guard.js';
 import { SessionManager } from './session-manager.js';
 import { createStaticHandler } from './static-files.js';
 import { SettingsStore } from './settings-store.js';
@@ -39,9 +39,10 @@ const serveStatic = createStaticHandler(join(import.meta.dirname, '..', '..', 'w
 const handleHook = createHookHandler(monitor, () => gateway.broadcastObserved());
 
 const httpServer = createServer((req, res) => {
-  // Refuse before doing any work: a request naming a host that is not loopback
-  // reached us through DNS rebinding, not through a link the user clicked.
-  if (!isAllowedHost(req.headers.host)) {
+  // Refuse before doing any work. Both headers — see `isAllowedRequest`, which
+  // the socket below shares, because a rule only one door applies is the bug
+  // this had: `POST /hooks` was reachable from any page the user visited.
+  if (!isAllowedRequest(req.headers)) {
     res.writeHead(403, { 'content-type': 'text/plain' }).end('Claudia only serves loopback hosts\n');
     return;
   }
@@ -79,7 +80,7 @@ const wss = new WebSocketServer({
   // megabytes just to have the command rejected afterwards.
   maxPayload: MAX_FRAME_BYTES,
   verifyClient: ({ origin, req }: { origin?: string; req: IncomingMessage }) => {
-    if (isAllowedOrigin(origin) && isAllowedHost(req.headers.host)) return true;
+    if (isAllowedRequest({ host: req.headers.host, origin })) return true;
     console.warn(`[claudia] refused a socket from origin=${origin ?? '(none)'} host=${req.headers.host ?? '(none)'}`);
     return false;
   },

@@ -10,6 +10,21 @@ updates:
       all-minor-and-patch:
         update-types: ["minor", "patch"]
 
+  # The Tauri shell's 479 crates. Missing until now, which mattered more than
+  # the count suggests: security ALERTS fire per ecosystem whether or not it is
+  # listed here, but the fix PR only comes from a listed one — so a Rust
+  # advisory would have been reported and then sat there with nothing arriving
+  # to close it. `cargo audit` reports no vulnerabilities today (7 unmaintained
+  # or unsound transitives, all reached through tauri); this is about the next
+  # one.
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: monthly
+    groups:
+      all-minor-and-patch:
+        update-types: ["minor", "patch"]
+
   # Workflow actions are dependencies too, and a compromised action runs with
   # whatever the job's token allows.
   - package-ecosystem: github-actions

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isAllowedHost, isAllowedOrigin, isLoopbackHostname } from '../src/origin-guard.js';
+import { isAllowedHost, isAllowedOrigin, isAllowedRequest, isLoopbackHostname } from '../src/origin-guard.js';
 
 describe('isLoopbackHostname', () => {
   it('accepts every spelling of this machine', () => {
@@ -59,5 +59,42 @@ describe('isAllowedOrigin — cross-origin WebSocket defence', () => {
     // "null" is a browser context we cannot attribute, which is different from
     // having no browser behind the request.
     expect(isAllowedOrigin('null')).toBe(false);
+  });
+});
+
+/**
+ * The two checks together, which is how both doors must ask.
+ *
+ * Wiring, not arithmetic: the socket asked for both from the start and the
+ * HTTP server asked only about Host, so `POST /hooks` — which mutates state
+ * and needs no preflight at a CORS-safelisted content type — was reachable
+ * from any page the user happened to visit. Reproduced against a running
+ * server before the fix: a POST bearing `Origin: https://evil.example.com`
+ * put a session on the board with a `cwd` of the attacker's choosing.
+ *
+ * The Host check cannot catch that on its own. An attacking page targets the
+ * loopback LITERAL, so the Host header reads `127.0.0.1:4317` and passes.
+ */
+describe('isAllowedRequest', () => {
+  it('turns away a page that posted straight at the loopback literal', () => {
+    // Exactly what the Host check waves through, which is the point.
+    expect(isAllowedHost('127.0.0.1:4317')).toBe(true);
+    expect(isAllowedRequest({ host: '127.0.0.1:4317', origin: 'https://evil.example.com' })).toBe(false);
+  });
+
+  it('still lets a real hook in, which carries no Origin at all', () => {
+    // The CLI posts these, not a browser. Refusing them would break the
+    // feature this endpoint exists for.
+    expect(isAllowedRequest({ host: '127.0.0.1:4317' })).toBe(true);
+  });
+
+  it('lets our own UI through, including the dev server on its own port', () => {
+    expect(isAllowedRequest({ host: '127.0.0.1:4317', origin: 'http://127.0.0.1:4318' })).toBe(true);
+    expect(isAllowedRequest({ host: 'localhost:4317', origin: 'http://localhost:4317' })).toBe(true);
+  });
+
+  it('needs both: a rebound domain fails on Host even with no Origin', () => {
+    expect(isAllowedRequest({ host: 'attacker.test:4317' })).toBe(false);
+    expect(isAllowedRequest({ origin: 'http://127.0.0.1:4317' })).toBe(false);
   });
 });

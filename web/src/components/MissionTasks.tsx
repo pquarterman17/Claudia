@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Escalation, FleetEvent, FleetLimits, Mission, Task } from '@claudia/shared';
 import { send } from '../store';
 import { judgementFor } from '../judged';
@@ -7,6 +7,7 @@ import { AcceptanceReview } from './AcceptanceReview';
 import { MissionFlow } from './MissionFlow';
 import type { Spend } from './MissionBudget';
 import { TASK_STATUS_COLOR } from '../task-status';
+import { dependencyChoices, dependencyView } from '../task-dependencies';
 
 /**
  * One mission's tasks, and the decisions that are the human's to make.
@@ -47,6 +48,7 @@ export function MissionTasks({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [acceptance, setAcceptance] = useState('');
+  const [dependsOn, setDependsOn] = useState<string[]>([]);
 
   // Computed once per timeline, not once per keystroke, and in ONE pass over
   // the window rather than one per reported task. The inputs below are
@@ -83,11 +85,25 @@ export function MissionTasks({
       description: description.trim(),
       cwd,
       ...(acceptance.trim() ? { acceptance: acceptance.trim() } : {}),
+      ...(dependsOn.length ? { dependsOn } : {}),
     });
     setTitle('');
     setDescription('');
     setAcceptance('');
+    setDependsOn([]);
   };
+
+  const choices = dependencyChoices(tasks ?? []);
+  // A task can be cancelled from another browser while this form is open.
+  // Do not retain that now-impossible dependency invisibly after the picker
+  // removes it from the choices.
+  useEffect(() => {
+    const available = new Set(choices.map((task) => task.id));
+    setDependsOn((current) => {
+      const retained = current.filter((id) => available.has(id));
+      return retained.length === current.length ? current : retained;
+    });
+  }, [tasks]);
 
   return (
     <div style={{ padding: '8px 0 4px 16px', borderLeft: '1px solid #23263a', marginLeft: 4 }}>
@@ -135,6 +151,24 @@ export function MissionTasks({
               {task.status === 'reported' && (
                 <AcceptanceReview missionId={missionId} task={task} judgement={judgements.get(task.id)} />
               )}
+              {task.dependsOn.length > 0 && (
+                <div aria-label={`Dependencies for ${task.title}`} style={dependencyLine}>
+                  <span style={{ color: '#595d6c' }}>after</span>
+                  {dependencyView(task, tasks ?? []).map((dependency) => (
+                    <span
+                      key={dependency.id}
+                      title={dependency.missing ? 'This referenced task is not in the mission.' : undefined}
+                      style={{
+                        ...dependencyChip,
+                        color: dependency.status ? TASK_STATUS_COLOR[dependency.status] : '#e07070',
+                        borderColor: dependency.missing ? '#663845' : '#33364a',
+                      }}
+                    >
+                      {dependency.title}{dependency.status ? ` · ${dependency.status}` : ' · missing'}
+                    </span>
+                  ))}
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -173,6 +207,30 @@ export function MissionTasks({
           aria-label="Acceptance criteria"
           style={{ ...field(240), resize: 'vertical', fontFamily: 'inherit' }}
         />
+        {choices.length > 0 && (
+          <details style={dependencyPicker}>
+            <summary style={{ cursor: 'pointer', color: dependsOn.length ? '#8ab4ff' : '#75798c' }}>
+              {dependsOn.length === 0
+                ? 'No dependencies'
+                : `After ${dependsOn.length} task${dependsOn.length === 1 ? '' : 's'}`}
+            </summary>
+            <fieldset style={{ border: 0, margin: '5px 0 0', padding: 0, display: 'grid', gap: 4 }}>
+              <legend className="sr-only">Tasks that must be accepted first</legend>
+              {choices.map((task) => (
+                <label key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#a8abbd' }}>
+                  <input
+                    type="checkbox"
+                    checked={dependsOn.includes(task.id)}
+                    onChange={(event) => setDependsOn((current) =>
+                      event.target.checked ? [...current, task.id] : current.filter((id) => id !== task.id))}
+                  />
+                  <span style={{ flex: 1 }}>{task.title}</span>
+                  <span style={{ color: TASK_STATUS_COLOR[task.status], fontSize: 9.5 }}>{task.status}</span>
+                </label>
+              ))}
+            </fieldset>
+          </details>
+        )}
         <button onClick={add} disabled={title.trim() === ''} className="btn btn-ghost" style={action}>
           add task
         </button>
@@ -219,4 +277,31 @@ const action: React.CSSProperties = {
   borderRadius: 5,
   color: '#a8abbd',
   cursor: 'pointer',
+};
+
+const dependencyLine: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  flexWrap: 'wrap',
+  gap: 4,
+  margin: '3px 0 0 70px',
+  fontSize: 9.5,
+};
+
+const dependencyChip: React.CSSProperties = {
+  padding: '1px 5px',
+  border: '1px solid #33364a',
+  borderRadius: 999,
+  background: '#15172480',
+};
+
+const dependencyPicker: React.CSSProperties = {
+  flex: '1 1 180px',
+  minWidth: 160,
+  alignSelf: 'flex-start',
+  fontSize: 10.5,
+  padding: '4px 7px',
+  border: '1px solid #2a2d40',
+  borderRadius: 5,
+  background: '#15172480',
 };

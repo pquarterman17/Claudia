@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { tasksInCycles, type DependencyState, type Escalation, type FleetEvent, type FleetLimits, type Mission, type Task } from '@claudia/shared';
+import { tasksInCycles, type Escalation, type FleetEvent, type FleetLimits, type Mission, type Task } from '@claudia/shared';
 import { send } from '../store';
 import { judgementFor } from '../judged';
 import { HUMAN_MOVES, MOVE_LABEL } from '../task-moves';
 import { AcceptanceReview } from './AcceptanceReview';
 import { MissionFlow } from './MissionFlow';
 import type { Spend } from './MissionBudget';
-import { TASK_STATUS_COLOR } from '../task-status';
-import { dependencyChoices, dependencyView, retainedDependencies } from '../task-dependencies';
+import { DEPENDENCY_COLOR, DEPENDENCY_EXPLANATION, TASK_STATUS_COLOR } from '../task-status';
+import { availableDependencyIds, dependencyChoices, dependencyView, retainedDependencies } from '../task-dependencies';
 
 /**
  * One mission's tasks, and the decisions that are the human's to make.
@@ -50,17 +50,20 @@ export function MissionTasks({
   const [acceptance, setAcceptance] = useState('');
   const [dependsOn, setDependsOn] = useState<string[]>([]);
 
-  // Computed once per timeline, not once per keystroke, and in ONE pass over
-  // the window rather than one per reported task. The inputs below are
-  // controlled state on this component, so every character typed into any of
-  // them re-renders the whole list; `judgementFor` walks the capped 200-event
-  // window and re-parses every matching payload, including a `new URL` per PR
-  // link, so calling it per task was that walk N times over.
-  const derived = useMemo(() => {
+  // The graph changes with tasks, not with the event stream or form fields.
+  // MissionFlow receives the same indexes so cycle detection runs once.
+  const graph = useMemo(() => {
     const allTasks = tasks ?? [];
     const byId = new Map(allTasks.map((task) => [task.id, task]));
     const cyclic = tasksInCycles(allTasks);
     const choices = dependencyChoices(allTasks);
+    return { byId, cyclic, choices };
+  }, [tasks]);
+
+  const judgements = useMemo(() => {
+    // Computed once per timeline, not once per reported task. `judgementFor`
+    // walks the capped event window and parses its payloads, so calling it in
+    // the task render would repeat that work on every form-field keystroke.
     const reported = new Set((tasks ?? []).filter((task) => task.status === 'reported').map((task) => task.id));
     const byTask = new Map<string, FleetEvent[]>();
     for (const event of events ?? []) {
@@ -72,7 +75,7 @@ export function MissionTasks({
     const found = new Map<string, ReturnType<typeof judgementFor>>();
     const runOf = new Map((tasks ?? []).map((task) => [task.id, task.currentRunId]));
     for (const id of reported) found.set(id, judgementFor(byTask.get(id), id, runOf.get(id)));
-    return { judgements: found, byId, cyclic, choices };
+    return found;
   }, [events, tasks]);
 
   const add = (): void => {
@@ -101,13 +104,13 @@ export function MissionTasks({
   // Do not retain that now-impossible dependency invisibly after the picker
   // removes it from the choices.
   useEffect(() => {
-    const available = new Set(dependencyChoices(tasks ?? []).map((task) => task.id));
+    const available = availableDependencyIds(tasks ?? []);
     setDependsOn((current) => retainedDependencies(current, available));
   }, [tasks]);
 
   return (
     <div style={{ padding: '8px 0 4px 16px', borderLeft: '1px solid #23263a', marginLeft: 4 }}>
-      <MissionFlow tasks={tasks} mission={mission} spend={spend} limits={limits} escalations={escalations} />
+      <MissionFlow tasks={tasks} mission={mission} spend={spend} limits={limits} escalations={escalations} byId={graph.byId} cyclic={graph.cyclic} />
       {(tasks ?? []).length === 0 ? (
         <p style={{ fontSize: 11, color: '#595d6c', margin: '0 0 8px' }}>
           No tasks yet. Describe one below — it starts as <em>proposed</em>, and nothing is dispatched until you
@@ -149,15 +152,15 @@ export function MissionTasks({
                 ))}
               </div>
               {task.status === 'reported' && (
-                <AcceptanceReview missionId={missionId} task={task} judgement={derived.judgements.get(task.id)} />
+                <AcceptanceReview missionId={missionId} task={task} judgement={judgements.get(task.id)} />
               )}
               {task.dependsOn.length > 0 && (
                 <div aria-label={`Dependencies for ${task.title}`} style={dependencyLine}>
                   <span style={{ color: '#595d6c' }}>after</span>
-                  {dependencyView(task, derived.byId, derived.cyclic).map((dependency) => (
+                  {dependencyView(task, graph.byId, graph.cyclic).map((dependency) => (
                     <span
                       key={dependency.id}
-                      title={dependency.state === 'missing' ? 'This referenced task is not in the mission.' : undefined}
+                      title={DEPENDENCY_EXPLANATION[dependency.state]}
                       style={{
                         ...dependencyChip,
                         color: DEPENDENCY_COLOR[dependency.state],
@@ -207,7 +210,7 @@ export function MissionTasks({
           aria-label="Acceptance criteria"
           style={{ ...field(240), resize: 'vertical', fontFamily: 'inherit' }}
         />
-        {derived.choices.length > 0 && (
+        {graph.choices.length > 0 && (
           <details style={dependencyPicker}>
             <summary style={{ cursor: 'pointer', color: dependsOn.length ? '#8ab4ff' : '#75798c' }}>
               {dependsOn.length === 0
@@ -216,7 +219,7 @@ export function MissionTasks({
             </summary>
             <fieldset style={{ border: 0, margin: '5px 0 0', padding: 0, display: 'grid', gap: 4 }}>
               <legend className="sr-only">Tasks this one should wait for</legend>
-              {derived.choices.map((task) => (
+              {graph.choices.map((task) => (
                 <label key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#a8abbd' }}>
                   <input
                     type="checkbox"
@@ -304,13 +307,4 @@ const dependencyPicker: React.CSSProperties = {
   border: '1px solid #2a2d40',
   borderRadius: 5,
   background: '#15172480',
-};
-
-const DEPENDENCY_COLOR: Readonly<Record<DependencyState, string>> = {
-  satisfied: '#5fbf7f',
-  waiting: '#e0a34f',
-  unapproved: '#d2cefd',
-  terminal: '#e07070',
-  missing: '#e07070',
-  cycle: '#e07070',
 };

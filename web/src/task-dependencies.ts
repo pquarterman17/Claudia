@@ -1,4 +1,4 @@
-import { dependencyState, isTerminalDependencyStatus, type DependencyState, type Task } from '@claudia/shared';
+import { byDispatchOrder, dependencyState, isTerminalDependencyStatus, type DependencyState, type Task } from '@claudia/shared';
 
 export interface TaskDependencyView {
   id: string;
@@ -17,7 +17,12 @@ export interface TaskDependencyView {
 export function dependencyChoices(tasks: readonly Task[]): Task[] {
   return tasks
     .filter((task) => !isTerminalDependencyStatus(task.status))
-    .sort((a, b) => a.priority - b.priority || a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+    .sort(byDispatchOrder);
+}
+
+/** The selectable ids without paying for the picker's presentation sort. */
+export function availableDependencyIds(tasks: readonly Task[]): Set<string> {
+  return new Set(tasks.filter((task) => !isTerminalDependencyStatus(task.status)).map((task) => task.id));
 }
 
 /** Resolve stored ids without hiding corrupt or stale references. */

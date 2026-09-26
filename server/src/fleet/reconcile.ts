@@ -1,4 +1,4 @@
-import { budgetHold, childCeiling, dependencyState, tasksInCycles, type ChildRun, type FleetLimits, type Mission, type Task, type TaskStatus } from '@claudia/shared';
+import { budgetHold, byDispatchOrder, childCeiling, dependencyState, tasksInCycles, type ChildRun, type FleetLimits, type Mission, type Task, type TaskStatus } from '@claudia/shared';
 
 /**
  * What the fleet should do next, decided by arithmetic rather than by a model.
@@ -210,7 +210,7 @@ export function reconcile(input: ReconcileInput): Decision[] {
   // Priority first, then creation order, so two pulses over unchanged state
   // dispatch the same task — the tie-break is not decoration, it is what makes
   // the function deterministic.
-  candidates.sort((a, b) => a.priority - b.priority || a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+  candidates.sort(byDispatchOrder);
 
   for (const task of candidates.slice(0, capacity)) {
     const attempt = (attemptsByTask.get(task.id) ?? 0) + 1;

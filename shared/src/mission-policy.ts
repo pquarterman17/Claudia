@@ -93,6 +93,11 @@ export function isTerminalDependencyStatus(status: Task['status']): boolean {
   return status === 'failed' || status === 'cancelled';
 }
 
+/** Dispatch order: what the reconciler picks next, and what every view draws. */
+export function byDispatchOrder(a: Task, b: Task): number {
+  return a.priority - b.priority || a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1);
+}
+
 export function dependencyState(owner: Task, dependencyId: string, byId: ReadonlyMap<string, Task>, cyclic: ReadonlySet<string>): DependencyState {
   const dependency = byId.get(dependencyId);
   if (dependency === undefined) return 'missing';

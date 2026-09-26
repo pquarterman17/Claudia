@@ -9,8 +9,8 @@ const LABEL: Readonly<Record<TaskStatus, string>> = {
 };
 
 /** The scan-first view: what is moving, what is held, and what needs a person. */
-export function MissionFlow({ tasks, mission, spend, limits, escalations }: { tasks: Task[] | undefined; mission: Mission; spend: MissionSpendLike | undefined; limits: FleetLimits; escalations: Escalation[] | undefined }) {
-  const model = useMemo(() => missionFlow(tasks ?? [], mission, spend, limits, escalations ?? []), [tasks, mission, spend, limits, escalations]);
+export function MissionFlow({ tasks, mission, spend, limits, escalations, byId, cyclic }: { tasks: Task[] | undefined; mission: Mission; spend: MissionSpendLike | undefined; limits: FleetLimits; escalations: Escalation[] | undefined; byId?: ReadonlyMap<string, Task>; cyclic?: ReadonlySet<string> }) {
+  const model = useMemo(() => missionFlow(tasks ?? [], mission, spend, limits, escalations ?? [], Date.now(), byId && cyclic ? { byId, cyclic } : undefined), [tasks, mission, spend, limits, escalations, byId, cyclic]);
   // Only an unloaded mission renders nothing. A mission with no tasks yet is a
   // real state with real advice — "Start watching to continue this mission" is
   // the most useful line in the app on a mission that has just been created,

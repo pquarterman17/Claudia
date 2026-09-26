@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { tasksInCycles, type Escalation, type FleetEvent, type FleetLimits, type Mission, type Task } from '@claudia/shared';
+import { missionGraph, type Escalation, type FleetEvent, type FleetLimits, type Mission, type Task } from '@claudia/shared';
 import { send } from '../store';
 import { judgementFor } from '../judged';
 import { HUMAN_MOVES, MOVE_LABEL } from '../task-moves';
@@ -54,16 +54,18 @@ export function MissionTasks({
   // MissionFlow receives the same indexes so cycle detection runs once.
   const graph = useMemo(() => {
     const allTasks = tasks ?? [];
-    const byId = new Map(allTasks.map((task) => [task.id, task]));
-    const cyclic = tasksInCycles(allTasks);
+    const mission = missionGraph(allTasks);
     const choices = dependencyChoices(allTasks);
-    return { byId, cyclic, choices };
+    return { mission, choices };
   }, [tasks]);
 
   const judgements = useMemo(() => {
-    // Computed once per timeline, not once per reported task. `judgementFor`
-    // walks the capped event window and parses its payloads, so calling it in
-    // the task render would repeat that work on every form-field keystroke.
+    // Computed once per timeline, not once per keystroke, and in ONE pass over
+    // the window rather than one per reported task. The inputs below are
+    // controlled state on this component, so every character typed into any of
+    // them re-renders the whole list; `judgementFor` walks the capped 200-event
+    // window and re-parses every matching payload, including a `new URL` per PR
+    // link, so calling it per task was that walk N times over.
     const reported = new Set((tasks ?? []).filter((task) => task.status === 'reported').map((task) => task.id));
     const byTask = new Map<string, FleetEvent[]>();
     for (const event of events ?? []) {
@@ -110,7 +112,7 @@ export function MissionTasks({
 
   return (
     <div style={{ padding: '8px 0 4px 16px', borderLeft: '1px solid #23263a', marginLeft: 4 }}>
-      <MissionFlow tasks={tasks} mission={mission} spend={spend} limits={limits} escalations={escalations} byId={graph.byId} cyclic={graph.cyclic} />
+      <MissionFlow mission={mission} spend={spend} limits={limits} escalations={escalations} graph={tasks === undefined ? undefined : graph.mission} />
       {(tasks ?? []).length === 0 ? (
         <p style={{ fontSize: 11, color: '#595d6c', margin: '0 0 8px' }}>
           No tasks yet. Describe one below — it starts as <em>proposed</em>, and nothing is dispatched until you
@@ -157,7 +159,7 @@ export function MissionTasks({
               {task.dependsOn.length > 0 && (
                 <div aria-label={`Dependencies for ${task.title}`} style={dependencyLine}>
                   <span style={{ color: '#595d6c' }}>after</span>
-                  {dependencyView(task, graph.byId, graph.cyclic).map((dependency) => (
+                  {dependencyView(task, graph.mission.byId, graph.mission.cyclic).map((dependency) => (
                     <span
                       key={dependency.id}
                       title={DEPENDENCY_EXPLANATION[dependency.state]}

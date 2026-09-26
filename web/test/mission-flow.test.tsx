@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { Escalation, FleetLimits, Mission, MissionSpendLike, Task, TaskStatus } from '@claudia/shared';
+import { missionGraph, type Escalation, type FleetLimits, type Mission, type MissionSpendLike, type Task, type TaskStatus } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
 import { MissionFlow } from '../src/components/MissionFlow';
 import { missionFlow } from '../src/mission-flow';
@@ -23,7 +23,7 @@ function task(id: string, status: TaskStatus, dependsOn: string[] = [], priority
 const mission: Mission = { id: 'm1', name: 'Mission', body: '', status: 'active', watch: 'watching', pulseSec: 60, maxChildren: 4, cwd: '/repo', agent: 'claude', createdAt: 1, updatedAt: 1 };
 const limits: FleetLimits = { maxChildren: 12, maxAttempts: 3 };
 const flow = (tasks: Task[], over: Partial<Mission> = {}, spend?: MissionSpendLike) =>
-  missionFlow(tasks, { ...mission, ...over }, spend, limits, []);
+  missionFlow(missionGraph(tasks), { ...mission, ...over }, spend, limits, []);
 const escalation = (over: Partial<Escalation>): Escalation => ({
   id: 'e1', missionId: 'm1', source: 'system', request: 'Bash', reason: 'needs approval',
   severity: 'blocking', resolution: 'pending', createdAt: 1, ...over,
@@ -66,7 +66,7 @@ describe('mission flow model', () => {
   });
 
   it('puts a pending escalation ahead of task advice', () => {
-    expect(missionFlow([task('1', 'reported')], mission, undefined, limits, [escalation({})]).next)
+    expect(missionFlow(missionGraph([task('1', 'reported')]), mission, undefined, limits, [escalation({})]).next)
       .toBe('Resolve “Bash” in the decision inbox');
   });
 
@@ -91,7 +91,7 @@ describe('mission flow model', () => {
   });
 
   it('does not promise a pulse the reconciler will refuse for an unreadable attempt limit', () => {
-    expect(missionFlow([task('1', 'ready')], mission, undefined, { maxChildren: 12, maxAttempts: Number.NaN }, []).next)
+    expect(missionFlow(missionGraph([task('1', 'ready')]), mission, undefined, { maxChildren: 12, maxAttempts: Number.NaN }, []).next)
       .toBe('Repair the unreadable attempt limit');
   });
 
@@ -106,19 +106,19 @@ describe('mission flow model', () => {
   });
 
   it('stops offering an escalation the fleet has stopped offering', () => {
-    const model = missionFlow([task('1', 'reported')], mission, undefined, limits, [escalation({ expiresAt: 500 })], 900);
+    const model = missionFlow(missionGraph([task('1', 'reported')]), mission, undefined, limits, [escalation({ expiresAt: 500 })], 900);
     expect(model.next).toBe('Review “Task 1”');
   });
 
   it('keeps an unexpired escalation ahead of task advice', () => {
-    const model = missionFlow([task('1', 'reported')], mission, undefined, limits, [escalation({ expiresAt: 1_000 })], 900);
+    const model = missionFlow(missionGraph([task('1', 'reported')]), mission, undefined, limits, [escalation({ expiresAt: 1_000 })], 900);
     expect(model.next).toBe('Resolve “Bash” in the decision inbox');
   });
 
   it('does not send a person to answer an escalation on an archived mission', () => {
     // The reconciler holds on `mission is archived` and never acts on the
     // answer, so the escalation is the one action that changes nothing.
-    const model = missionFlow([task('1', 'reported')], { ...mission, status: 'archived' }, undefined, limits, [escalation({})], 900);
+    const model = missionFlow(missionGraph([task('1', 'reported')]), { ...mission, status: 'archived' }, undefined, limits, [escalation({})], 900);
     expect(model.next).toBe('Mission is archived');
   });
 
@@ -140,7 +140,7 @@ describe('mission flow model', () => {
 
 describe('mission flow view', () => {
   it('renders status text, next action, and an accessible dependency label', () => {
-    const html = renderToStaticMarkup(<MissionFlow tasks={[task('1', 'running'), task('2', 'blocked', ['1'])]} mission={mission} limits={limits} spend={undefined} escalations={[]} />);
+    const html = renderToStaticMarkup(<MissionFlow graph={missionGraph([task('1', 'running'), task('2', 'blocked', ['1'])])} mission={mission} limits={limits} spend={undefined} escalations={[]} />);
     expect(html).toContain('Task status totals');
     expect(html).toContain('Task dependency flow');
     expect(html).toContain('Depends on');
@@ -149,20 +149,20 @@ describe('mission flow view', () => {
   });
 
   it('renders nothing while there are no loaded tasks', () => {
-    expect(renderToStaticMarkup(<MissionFlow tasks={undefined} mission={mission} limits={limits} spend={undefined} escalations={[]} />)).toBe('');
+    expect(renderToStaticMarkup(<MissionFlow graph={undefined} mission={mission} limits={limits} spend={undefined} escalations={[]} />)).toBe('');
   });
 
   it('still advises a mission that has no tasks yet', () => {
     // The case a brand-new mission is in, and the one where "start watching" is
     // the most useful sentence in the app.
-    const html = renderToStaticMarkup(<MissionFlow tasks={[]} mission={{ ...mission, watch: 'paused' }} limits={limits} spend={undefined} escalations={[]} />);
+    const html = renderToStaticMarkup(<MissionFlow graph={missionGraph([])} mission={{ ...mission, watch: 'paused' }} limits={limits} spend={undefined} escalations={[]} />);
     expect(html).toContain('Start watching to continue this mission');
     expect(html).not.toContain('Task dependency flow');
     expect(html).not.toContain('Task status totals');
   });
 
   it('summarises terminal work instead of duplicating its cards', () => {
-    const html = renderToStaticMarkup(<MissionFlow tasks={[task('1', 'accepted'), task('2', 'ready')]} mission={mission} limits={limits} spend={undefined} escalations={[]} />);
+    const html = renderToStaticMarkup(<MissionFlow graph={missionGraph([task('1', 'accepted'), task('2', 'ready')])} mission={mission} limits={limits} spend={undefined} escalations={[]} />);
     expect(html).toContain('1 accepted or cancelled task');
     expect(html.match(/Task 1/g)).toBeNull();
     expect(html).toContain('Task 2');

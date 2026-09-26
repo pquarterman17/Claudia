@@ -1,6 +1,6 @@
 import { dependencyState, TASK_TRANSITIONS, tasksInCycles, type Task } from '@claudia/shared';
 import { describe, expect, it } from 'vitest';
-import { dependencyChoices, dependencyView, retainedDependencies } from '../src/task-dependencies';
+import { availableDependencyIds, dependencyChoices, dependencyView, retainedDependencies } from '../src/task-dependencies';
 
 function task(id: string, status: Task['status'], dependsOn: string[] = []): Task {
   return {
@@ -63,5 +63,10 @@ describe('mission task dependency presentation', () => {
       const terminal = dependencyState(owner, candidate.id, byId, new Set()) === 'terminal';
       expect(offered.has(candidate.id)).toBe(!terminal);
     }
+  });
+
+  it('offers exactly the dependency ids the prune keeps', () => {
+    const all = (Object.keys(TASK_TRANSITIONS) as Task['status'][]).map((status) => task(status, status));
+    expect(availableDependencyIds(all)).toEqual(new Set(dependencyChoices(all).map((candidate) => candidate.id)));
   });
 });

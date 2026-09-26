@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { Escalation, FleetLimits, Mission, MissionSpendLike, Task, TaskStatus } from '@claudia/shared';
+import type { Escalation, FleetLimits, Mission, MissionGraph, MissionSpendLike, TaskStatus } from '@claudia/shared';
 import { missionFlow } from '../mission-flow';
 import { TASK_STATUS_COLOR } from '../task-status';
 
@@ -9,14 +9,14 @@ const LABEL: Readonly<Record<TaskStatus, string>> = {
 };
 
 /** The scan-first view: what is moving, what is held, and what needs a person. */
-export function MissionFlow({ tasks, mission, spend, limits, escalations, byId, cyclic }: { tasks: Task[] | undefined; mission: Mission; spend: MissionSpendLike | undefined; limits: FleetLimits; escalations: Escalation[] | undefined; byId?: ReadonlyMap<string, Task>; cyclic?: ReadonlySet<string> }) {
-  const model = useMemo(() => missionFlow(tasks ?? [], mission, spend, limits, escalations ?? [], Date.now(), byId && cyclic ? { byId, cyclic } : undefined), [tasks, mission, spend, limits, escalations, byId, cyclic]);
+export function MissionFlow({ mission, spend, limits, escalations, graph }: { mission: Mission; spend: MissionSpendLike | undefined; limits: FleetLimits; escalations: Escalation[] | undefined; graph: MissionGraph | undefined }) {
+  const model = useMemo(() => graph ? missionFlow(graph, mission, spend, limits, escalations ?? []) : undefined, [mission, spend, limits, escalations, graph]);
   // Only an unloaded mission renders nothing. A mission with no tasks yet is a
   // real state with real advice — "Start watching to continue this mission" is
   // the most useful line in the app on a mission that has just been created,
   // and suppressing the whole section on `[]` was the one case that never
   // showed it.
-  if (tasks === undefined) return null;
+  if (model === undefined) return null;
   // The detailed list immediately below already carries every terminal task.
   // Keep this scan-first view on work that can still change or need a person.
   const active = model.tasks.filter((task) => task.status !== 'accepted' && task.status !== 'cancelled');

@@ -6,6 +6,10 @@ export interface TaskDependencyView {
   state: DependencyState;
 }
 
+function selectable(tasks: readonly Task[]): Task[] {
+  return tasks.filter((task) => !isTerminalDependencyStatus(task.status));
+}
+
 /**
  * Dependencies a newly proposed task may name.
  *
@@ -15,14 +19,12 @@ export interface TaskDependencyView {
  * now possible, even though the dependency is already satisfied.
  */
 export function dependencyChoices(tasks: readonly Task[]): Task[] {
-  return tasks
-    .filter((task) => !isTerminalDependencyStatus(task.status))
-    .sort(byDispatchOrder);
+  return selectable(tasks).sort(byDispatchOrder);
 }
 
 /** The selectable ids without paying for the picker's presentation sort. */
 export function availableDependencyIds(tasks: readonly Task[]): Set<string> {
-  return new Set(tasks.filter((task) => !isTerminalDependencyStatus(task.status)).map((task) => task.id));
+  return new Set(selectable(tasks).map((task) => task.id));
 }
 
 /** Resolve stored ids without hiding corrupt or stale references. */
@@ -39,7 +41,7 @@ export function dependencyView(
 }
 
 /** Preserve identity when pruning has nothing to do, avoiding a render loop. */
-export function retainedDependencies(current: string[], available: ReadonlySet<string>): string[] {
+export function retainedDependencies<T extends readonly string[]>(current: T, available: ReadonlySet<string>): T | string[] {
   const retained = current.filter((id) => available.has(id));
   return retained.length === current.length ? current : retained;
 }

@@ -1,4 +1,4 @@
-import { budgetHold, byDispatchOrder, childCeiling, dependencyState, tasksInCycles, type DependencyState, type Escalation, type FleetLimits, type Mission, type MissionSpendLike, type Task, type TaskStatus } from '@claudia/shared';
+import { budgetHold, byDispatchOrder, childCeiling, dependencyState, type DependencyState, type Escalation, type FleetLimits, type Mission, type MissionGraph, type MissionSpendLike, type TaskStatus } from '@claudia/shared';
 
 export interface FlowTask { id: string; title: string; status: TaskStatus; dependencies: { title: string; state: DependencyState }[]; }
 export interface MissionFlowModel { tasks: FlowTask[]; counts: Map<TaskStatus, number>; next: string; }
@@ -6,9 +6,8 @@ export interface MissionFlowModel { tasks: FlowTask[]; counts: Map<TaskStatus, n
 const STATUS_ORDER: readonly TaskStatus[] = ['reported', 'failed', 'blocked', 'running', 'ready', 'proposed', 'accepted', 'cancelled'];
 
 /** A compact overview. Predictions use the same durable inputs as the reconciler. */
-export function missionFlow(tasks: readonly Task[], mission: Mission, spend: MissionSpendLike | undefined, limits: FleetLimits, escalations: readonly Escalation[], now = Date.now(), graph?: { byId: ReadonlyMap<string, Task>; cyclic: ReadonlySet<string> }): MissionFlowModel {
-  const byId = graph?.byId ?? new Map(tasks.map((task) => [task.id, task]));
-  const cyclic = graph?.cyclic ?? tasksInCycles(tasks);
+export function missionFlow(graph: MissionGraph, mission: Mission, spend: MissionSpendLike | undefined, limits: FleetLimits, escalations: readonly Escalation[], now = Date.now()): MissionFlowModel {
+  const { tasks, byId, cyclic } = graph;
   const unorderedCounts = new Map<TaskStatus, number>();
   for (const task of tasks) unorderedCounts.set(task.status, (unorderedCounts.get(task.status) ?? 0) + 1);
   const counts = new Map(STATUS_ORDER.flatMap((status) => {

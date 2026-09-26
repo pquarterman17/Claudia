@@ -93,6 +93,21 @@ export function isTerminalDependencyStatus(status: Task['status']): boolean {
   return status === 'failed' || status === 'cancelled';
 }
 
+/** One task list and the indexes derived from that exact list. */
+export interface MissionGraph {
+  tasks: readonly Task[];
+  byId: ReadonlyMap<string, Task>;
+  cyclic: ReadonlySet<string>;
+}
+
+export function missionGraph(tasks: readonly Task[]): MissionGraph {
+  return {
+    tasks,
+    byId: new Map(tasks.map((task) => [task.id, task])),
+    cyclic: tasksInCycles(tasks),
+  };
+}
+
 /** Dispatch order: what the reconciler picks next, and what every view draws. */
 export function byDispatchOrder(a: Task, b: Task): number {
   return a.priority - b.priority || a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1);

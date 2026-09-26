@@ -1,4 +1,4 @@
-import { budgetHold, childCeiling, dependencyState, tasksInCycles, type DependencyState, type Escalation, type FleetLimits, type Mission, type MissionSpendLike, type Task, type TaskStatus } from '@claudia/shared';
+import { budgetHold, byDispatchOrder, childCeiling, dependencyState, type DependencyState, type Escalation, type FleetLimits, type Mission, type MissionGraph, type MissionSpendLike, type TaskStatus } from '@claudia/shared';
 
 export interface FlowTask { id: string; title: string; status: TaskStatus; dependencies: { title: string; state: DependencyState }[]; }
 export interface MissionFlowModel { tasks: FlowTask[]; counts: Map<TaskStatus, number>; next: string; }
@@ -6,9 +6,8 @@ export interface MissionFlowModel { tasks: FlowTask[]; counts: Map<TaskStatus, n
 const STATUS_ORDER: readonly TaskStatus[] = ['reported', 'failed', 'blocked', 'running', 'ready', 'proposed', 'accepted', 'cancelled'];
 
 /** A compact overview. Predictions use the same durable inputs as the reconciler. */
-export function missionFlow(tasks: readonly Task[], mission: Mission, spend: MissionSpendLike | undefined, limits: FleetLimits, escalations: readonly Escalation[], now = Date.now()): MissionFlowModel {
-  const byId = new Map(tasks.map((task) => [task.id, task]));
-  const cyclic = tasksInCycles(tasks);
+export function missionFlow(graph: MissionGraph, mission: Mission, spend: MissionSpendLike | undefined, limits: FleetLimits, escalations: readonly Escalation[], now = Date.now()): MissionFlowModel {
+  const { tasks, byId, cyclic } = graph;
   const unorderedCounts = new Map<TaskStatus, number>();
   for (const task of tasks) unorderedCounts.set(task.status, (unorderedCounts.get(task.status) ?? 0) + 1);
   const counts = new Map(STATUS_ORDER.flatMap((status) => {
@@ -20,7 +19,7 @@ export function missionFlow(tasks: readonly Task[], mission: Mission, spend: Mis
     // it two tasks of equal priority and equal `createdAt` fall back to the
     // order the store happened to return, so the same mission draws itself
     // differently on two renders. Determinism is the property this view claims.
-    .sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || a.priority - b.priority || a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1))
+    .sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || byDispatchOrder(a, b))
     .map((task) => ({ id: task.id, title: task.title, status: task.status, dependencies: task.dependsOn.map((id) => ({ title: byId.get(id)?.title ?? `Unknown task ${id}`, state: dependencyState(task, id, byId, cyclic) })) }));
   return { tasks: flowTasks, counts, next: nextAction(flowTasks, mission, spend, limits, escalations, now) };
 }

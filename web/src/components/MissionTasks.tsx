@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Escalation, FleetEvent, FleetLimits, Mission, Task } from '@claudia/shared';
+import { tasksInCycles, type DependencyState, type Escalation, type FleetEvent, type FleetLimits, type Mission, type Task } from '@claudia/shared';
 import { send } from '../store';
 import { judgementFor } from '../judged';
 import { HUMAN_MOVES, MOVE_LABEL } from '../task-moves';
@@ -7,7 +7,7 @@ import { AcceptanceReview } from './AcceptanceReview';
 import { MissionFlow } from './MissionFlow';
 import type { Spend } from './MissionBudget';
 import { TASK_STATUS_COLOR } from '../task-status';
-import { dependencyChoices, dependencyView } from '../task-dependencies';
+import { dependencyChoices, dependencyView, retainedDependencies } from '../task-dependencies';
 
 /**
  * One mission's tasks, and the decisions that are the human's to make.
@@ -56,7 +56,11 @@ export function MissionTasks({
   // them re-renders the whole list; `judgementFor` walks the capped 200-event
   // window and re-parses every matching payload, including a `new URL` per PR
   // link, so calling it per task was that walk N times over.
-  const judgements = useMemo(() => {
+  const derived = useMemo(() => {
+    const allTasks = tasks ?? [];
+    const byId = new Map(allTasks.map((task) => [task.id, task]));
+    const cyclic = tasksInCycles(allTasks);
+    const choices = dependencyChoices(allTasks);
     const reported = new Set((tasks ?? []).filter((task) => task.status === 'reported').map((task) => task.id));
     const byTask = new Map<string, FleetEvent[]>();
     for (const event of events ?? []) {
@@ -68,7 +72,7 @@ export function MissionTasks({
     const found = new Map<string, ReturnType<typeof judgementFor>>();
     const runOf = new Map((tasks ?? []).map((task) => [task.id, task.currentRunId]));
     for (const id of reported) found.set(id, judgementFor(byTask.get(id), id, runOf.get(id)));
-    return found;
+    return { judgements: found, byId, cyclic, choices };
   }, [events, tasks]);
 
   const add = (): void => {
@@ -93,16 +97,12 @@ export function MissionTasks({
     setDependsOn([]);
   };
 
-  const choices = dependencyChoices(tasks ?? []);
   // A task can be cancelled from another browser while this form is open.
   // Do not retain that now-impossible dependency invisibly after the picker
   // removes it from the choices.
   useEffect(() => {
-    const available = new Set(choices.map((task) => task.id));
-    setDependsOn((current) => {
-      const retained = current.filter((id) => available.has(id));
-      return retained.length === current.length ? current : retained;
-    });
+    const available = new Set(dependencyChoices(tasks ?? []).map((task) => task.id));
+    setDependsOn((current) => retainedDependencies(current, available));
   }, [tasks]);
 
   return (
@@ -149,22 +149,22 @@ export function MissionTasks({
                 ))}
               </div>
               {task.status === 'reported' && (
-                <AcceptanceReview missionId={missionId} task={task} judgement={judgements.get(task.id)} />
+                <AcceptanceReview missionId={missionId} task={task} judgement={derived.judgements.get(task.id)} />
               )}
               {task.dependsOn.length > 0 && (
                 <div aria-label={`Dependencies for ${task.title}`} style={dependencyLine}>
                   <span style={{ color: '#595d6c' }}>after</span>
-                  {dependencyView(task, tasks ?? []).map((dependency) => (
+                  {dependencyView(task, derived.byId, derived.cyclic).map((dependency) => (
                     <span
                       key={dependency.id}
-                      title={dependency.missing ? 'This referenced task is not in the mission.' : undefined}
+                      title={dependency.state === 'missing' ? 'This referenced task is not in the mission.' : undefined}
                       style={{
                         ...dependencyChip,
-                        color: dependency.status ? TASK_STATUS_COLOR[dependency.status] : '#e07070',
-                        borderColor: dependency.missing ? '#663845' : '#33364a',
+                        color: DEPENDENCY_COLOR[dependency.state],
+                        borderColor: dependency.state === 'missing' ? '#663845' : '#33364a',
                       }}
                     >
-                      {dependency.title}{dependency.status ? ` · ${dependency.status}` : ' · missing'}
+                      {dependency.title} · {dependency.state}
                     </span>
                   ))}
                 </div>
@@ -207,7 +207,7 @@ export function MissionTasks({
           aria-label="Acceptance criteria"
           style={{ ...field(240), resize: 'vertical', fontFamily: 'inherit' }}
         />
-        {choices.length > 0 && (
+        {derived.choices.length > 0 && (
           <details style={dependencyPicker}>
             <summary style={{ cursor: 'pointer', color: dependsOn.length ? '#8ab4ff' : '#75798c' }}>
               {dependsOn.length === 0
@@ -215,8 +215,8 @@ export function MissionTasks({
                 : `After ${dependsOn.length} task${dependsOn.length === 1 ? '' : 's'}`}
             </summary>
             <fieldset style={{ border: 0, margin: '5px 0 0', padding: 0, display: 'grid', gap: 4 }}>
-              <legend className="sr-only">Tasks that must be accepted first</legend>
-              {choices.map((task) => (
+              <legend className="sr-only">Tasks this one should wait for</legend>
+              {derived.choices.map((task) => (
                 <label key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#a8abbd' }}>
                   <input
                     type="checkbox"
@@ -304,4 +304,13 @@ const dependencyPicker: React.CSSProperties = {
   border: '1px solid #2a2d40',
   borderRadius: 5,
   background: '#15172480',
+};
+
+const DEPENDENCY_COLOR: Readonly<Record<DependencyState, string>> = {
+  satisfied: '#5fbf7f',
+  waiting: '#e0a34f',
+  unapproved: '#d2cefd',
+  terminal: '#e07070',
+  missing: '#e07070',
+  cycle: '#e07070',
 };

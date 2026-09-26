@@ -88,12 +88,17 @@ export function tasksInCycles(tasks: readonly Task[]): Set<string> {
  */
 export type DependencyState = 'satisfied' | 'waiting' | 'unapproved' | 'terminal' | 'missing' | 'cycle';
 
+/** A dependency in either state can never become accepted. */
+export function isTerminalDependencyStatus(status: Task['status']): boolean {
+  return status === 'failed' || status === 'cancelled';
+}
+
 export function dependencyState(owner: Task, dependencyId: string, byId: ReadonlyMap<string, Task>, cyclic: ReadonlySet<string>): DependencyState {
   const dependency = byId.get(dependencyId);
   if (dependency === undefined) return 'missing';
   if (cyclic.has(owner.id) && cyclic.has(dependencyId)) return 'cycle';
   if (dependency.status === 'accepted') return 'satisfied';
-  if (dependency.status === 'failed' || dependency.status === 'cancelled') return 'terminal';
+  if (isTerminalDependencyStatus(dependency.status)) return 'terminal';
   if (dependency.status === 'proposed') return 'unapproved';
   return 'waiting';
 }

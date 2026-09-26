@@ -41,7 +41,7 @@ export function dependencyView(
 }
 
 /** Preserve identity when pruning has nothing to do, avoiding a render loop. */
-export function retainedDependencies<T extends readonly string[]>(current: T, available: ReadonlySet<string>): T | string[] {
+export function retainedDependencies(current: string[], available: ReadonlySet<string>): string[] {
   const retained = current.filter((id) => available.has(id));
   return retained.length === current.length ? current : retained;
 }

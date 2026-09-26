@@ -6,7 +6,7 @@ import { HUMAN_MOVES, MOVE_LABEL } from '../task-moves';
 import { AcceptanceReview } from './AcceptanceReview';
 import { MissionFlow } from './MissionFlow';
 import type { Spend } from './MissionBudget';
-import { DEPENDENCY_COLOR, DEPENDENCY_EXPLANATION, TASK_STATUS_COLOR } from '../task-status';
+import { DEPENDENCY_COLOR, DEPENDENCY_EXPLANATION, TASK_STATUS_COLOR, dependencyPickerStatusColor } from '../task-status';
 import { availableDependencyIds, dependencyChoices, dependencyView, retainedDependencies } from '../task-dependencies';
 
 /**
@@ -52,11 +52,11 @@ export function MissionTasks({
 
   // The graph changes with tasks, not with the event stream or form fields.
   // MissionFlow receives the same indexes so cycle detection runs once.
-  const graph = useMemo(() => {
+  const derived = useMemo(() => {
     const allTasks = tasks ?? [];
-    const mission = missionGraph(allTasks);
+    const graph = missionGraph(allTasks);
     const choices = dependencyChoices(allTasks);
-    return { mission, choices };
+    return { graph, choices };
   }, [tasks]);
 
   const judgements = useMemo(() => {
@@ -112,7 +112,7 @@ export function MissionTasks({
 
   return (
     <div style={{ padding: '8px 0 4px 16px', borderLeft: '1px solid #23263a', marginLeft: 4 }}>
-      <MissionFlow mission={mission} spend={spend} limits={limits} escalations={escalations} graph={tasks === undefined ? undefined : graph.mission} />
+      <MissionFlow mission={mission} spend={spend} limits={limits} escalations={escalations} graph={tasks === undefined ? undefined : derived.graph} />
       {(tasks ?? []).length === 0 ? (
         <p style={{ fontSize: 11, color: '#595d6c', margin: '0 0 8px' }}>
           No tasks yet. Describe one below — it starts as <em>proposed</em>, and nothing is dispatched until you
@@ -158,8 +158,8 @@ export function MissionTasks({
               )}
               {task.dependsOn.length > 0 && (
                 <div aria-label={`Dependencies for ${task.title}`} style={dependencyLine}>
-                  <span style={{ color: '#595d6c' }}>after</span>
-                  {dependencyView(task, graph.mission.byId, graph.mission.cyclic).map((dependency) => (
+                  <span style={{ color: '#8f94a8' }}>after</span>
+                  {dependencyView(task, derived.graph.byId, derived.graph.cyclic).map((dependency) => (
                     <span
                       key={dependency.id}
                       title={DEPENDENCY_EXPLANATION[dependency.state]}
@@ -212,16 +212,16 @@ export function MissionTasks({
           aria-label="Acceptance criteria"
           style={{ ...field(240), resize: 'vertical', fontFamily: 'inherit' }}
         />
-        {graph.choices.length > 0 && (
+        {derived.choices.length > 0 && (
           <details style={dependencyPicker}>
-            <summary style={{ cursor: 'pointer', color: dependsOn.length ? '#8ab4ff' : '#75798c' }}>
+            <summary style={{ cursor: 'pointer', color: dependsOn.length ? '#8ab4ff' : '#8f94a8' }}>
               {dependsOn.length === 0
                 ? 'No dependencies'
                 : `After ${dependsOn.length} task${dependsOn.length === 1 ? '' : 's'}`}
             </summary>
             <fieldset style={{ border: 0, margin: '5px 0 0', padding: 0, display: 'grid', gap: 4 }}>
               <legend className="sr-only">Tasks this one should wait for</legend>
-              {graph.choices.map((task) => (
+              {derived.choices.map((task) => (
                 <label key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#a8abbd' }}>
                   <input
                     type="checkbox"
@@ -230,7 +230,7 @@ export function MissionTasks({
                       event.target.checked ? [...current, task.id] : current.filter((id) => id !== task.id))}
                   />
                   <span style={{ flex: 1 }}>{task.title}</span>
-                  <span style={{ color: TASK_STATUS_COLOR[task.status], fontSize: 9.5 }}>{task.status}</span>
+                  <span style={{ color: dependencyPickerStatusColor(task.status), fontSize: 9.5 }}>{task.status}</span>
                 </label>
               ))}
             </fieldset>

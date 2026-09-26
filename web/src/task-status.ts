@@ -2,7 +2,7 @@ import type { DependencyState, TaskStatus } from '@claudia/shared';
 
 /** One status palette for the overview and detailed task rows. */
 export const TASK_STATUS_COLOR: Readonly<Record<TaskStatus, string>> = {
-  proposed: '#8f94a8', ready: '#8ab4ff', blocked: '#e0a34f', running: '#7ee0a3',
+  proposed: '#75798c', ready: '#8ab4ff', blocked: '#e0a34f', running: '#7ee0a3',
   reported: '#d2cefd', accepted: '#5fbf7f', failed: '#e07070', cancelled: '#595d6c',
 };
 
@@ -10,11 +10,18 @@ export const TASK_STATUS_COLOR: Readonly<Record<TaskStatus, string>> = {
 export const DEPENDENCY_COLOR: Readonly<Record<DependencyState, string>> = {
   satisfied: TASK_STATUS_COLOR.accepted,
   waiting: TASK_STATUS_COLOR.blocked,
-  unapproved: TASK_STATUS_COLOR.proposed,
+  // Brighter than the proposed-status token because chips use 9.5px text;
+  // #75798c falls below AA on their translucent dark background.
+  unapproved: '#8f94a8',
   terminal: TASK_STATUS_COLOR.failed,
   missing: '#c08a8a',
   cycle: '#d991e8',
 };
+
+/** Status labels inside the 9.5px dependency picker; muted states need lift. */
+export function dependencyPickerStatusColor(status: TaskStatus): string {
+  return status === 'proposed' || status === 'cancelled' ? '#8f94a8' : TASK_STATUS_COLOR[status];
+}
 
 export const DEPENDENCY_EXPLANATION: Readonly<Record<DependencyState, string>> = {
   satisfied: 'Accepted; this prerequisite is complete.',

@@ -22,8 +22,8 @@
     "tauri": "tauri"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.2",
-    "npm-run-all2": "^9.0.3",
+    "@tauri-apps/cli": "^2.12.4",
+    "npm-run-all2": "^9.0.4",
     "typescript": "^7.0.2"
   },
   "engines": {
